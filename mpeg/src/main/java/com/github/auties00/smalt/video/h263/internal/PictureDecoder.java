@@ -415,12 +415,6 @@ final class PictureDecoder {
                     var reference = header.trp >= 0 ? stream.stored(referenceLayer, header.trp) : null;
                     pictureForward.add(reference != null ? reference : stream.previousAnchor(referenceLayer));
                 }
-                if (!pictureForward.isEmpty() && !pictureBackward.isEmpty() && pictureForward.getFirst() != null
-                        && pictureBackward.getFirst() != null) {
-                    var forwardReference = pictureForward.getFirst().temporalReference;
-                    trd = delta(forwardReference, pictureBackward.getFirst().temporalReference);
-                    trb = delta(forwardReference, header.temporalReference);
-                }
             }
             case PictureHeader.EI -> upward = stream.anchor(referenceLayer);
             default -> {
@@ -439,8 +433,12 @@ final class PictureDecoder {
                 throw new MediaException.Malformed("H.263 picture without its reference picture");
             }
         }
-        if (type == PictureHeader.B && (pictureBackward.isEmpty() || pictureBackward.getFirst() == null)) {
-            throw new MediaException.Malformed("H.263 B-picture without its backward reference picture");
+        if (type == PictureHeader.B) {
+            // A B-picture with a forward reference has its backward one: the multi-picture buffer lists the backward
+            // references first, and a layer's stored pictures and its anchor are set and cleared together.
+            var forwardReference = pictureForward.getFirst().temporalReference;
+            trd = delta(forwardReference, pictureBackward.getFirst().temporalReference);
+            trb = delta(forwardReference, header.temporalReference);
         }
         if (upward != null) {
             upwardHorizontal = header.width > upward.width;
@@ -466,7 +464,7 @@ final class PictureDecoder {
         pool.release(warped);
         warped = null;
         var type = header.type;
-        if (type == PictureHeader.I || type == PictureHeader.EI || pictureForward.isEmpty()) {
+        if (type == PictureHeader.I || type == PictureHeader.EI) {
             return;
         }
         var reference = pictureForward.getFirst();
@@ -489,14 +487,16 @@ final class PictureDecoder {
         if (header.resampling) {
             accuracy = header.warpingAccuracy;
             if (type == PictureHeader.EP) {
-                var lower = upward;
-                if (lower != null && lower.warping != null) {
-                    for (var i = 0; i < 8; i++) {
-                        parameters[i] = header.warping[i] < 0 ? lower.warping[i]
-                                : 2 * lower.warping[i] + header.warping[i];
-                    }
-                    fillMode = lower.fillMode;
-                    System.arraycopy(lower.fillColor, 0, fill, 0, 3);
+                // The lower layer picture's parameters, those of no resampling (zero, clipping) when it did not
+                // resample, doubled in each upsampled dimension and refined by the bit sent for it (P.2.2, P.2.3).
+                var lower = upward.warping;
+                for (var i = 0; i < 8; i++) {
+                    var base = lower == null ? 0 : lower[i];
+                    parameters[i] = header.warping[i] < 0 ? base : 2 * base + header.warping[i];
+                }
+                if (lower != null) {
+                    fillMode = upward.fillMode;
+                    System.arraycopy(upward.fillColor, 0, fill, 0, 3);
                 }
             } else {
                 System.arraycopy(header.warping, 0, parameters, 0, 8);
@@ -504,10 +504,7 @@ final class PictureDecoder {
                 System.arraycopy(header.fillColor, 0, fill, 0, 3);
             }
         }
-        if (picture.warping == null) {
-            picture.warping = new int[8];
-        }
-        System.arraycopy(parameters, 0, picture.warping, 0, 8);
+        picture.warping = parameters.clone();
         picture.fillMode = fillMode;
         System.arraycopy(fill, 0, picture.fillColor, 0, 3);
         var control = type == PictureHeader.B ? pictureBackward.getFirst().rounding : header.rounding;
@@ -686,7 +683,8 @@ final class PictureDecoder {
     }
 
     /**
-     * Decodes macroblocks of the current segment until a start code or the end of the data.
+     * Decodes macroblocks of the current segment until a start code or the end of the data. Corrupt data marks the
+     * picture damaged and leaves its macroblocks to concealment instead of throwing.
      *
      * @param reader the stream
      * @return the bit position of the start code that ended the segment, or -1 at the end of the data or of the
@@ -696,9 +694,8 @@ final class PictureDecoder {
         if (parser.partitioned()) {
             return decodePartitioned(reader);
         }
-        var count = columns * rows;
         try {
-            while (next >= 0 && next < count) {
+            while (next >= 0) {
                 if (next != sliceStart && boundary(next)) {
                     var start = startCode(reader);
                     if (start >= 0) {
@@ -721,7 +718,7 @@ final class PictureDecoder {
                     return startCode(reader);
                 }
                 decodedCount++;
-                coded[mb.index] = mb.coded || mb.intra();
+                coded[mb.index] = mb.coded;
                 quants[mb.index] = mb.quant;
                 if (hasWaiting) {
                     reconstruct(waiting);
@@ -764,7 +761,7 @@ final class PictureDecoder {
      * @return the bit position of the start code that follows the slice, or -1 at the end of the data
      */
     private long decodePartitioned(BitReader reader) {
-        if (next < 0 || exhausted(reader)) {
+        if (exhausted(reader)) {
             next = -1;
             return skipToStartCode(reader);
         }
@@ -777,7 +774,7 @@ final class PictureDecoder {
             sliceMbs = grown;
         }
         var available = 0;
-        for (var mb = next; mb >= 0 && available < limit && !parser.parsed[mb]; mb = advance(mb)) {
+        for (var mb = next; mb >= 0 && !parser.parsed[mb]; mb = advance(mb)) {
             sliceMbs[available++].reset(mb, mb % columns, mb / columns);
             parser.segments[mb] = segment;
         }
@@ -816,16 +813,16 @@ final class PictureDecoder {
         }
         var savedCurrent = current;
         var savedWaiting = waiting;
-        flushWaiting();
         none.reset(-1, -1, -1);
         try {
+            flushWaiting();
             for (var i = 0; i < count; i++) {
                 var mb = sliceMbs[i];
                 if (!parser.parsed[mb.index]) {
                     continue;
                 }
                 decodedCount++;
-                coded[mb.index] = mb.coded || mb.intra();
+                coded[mb.index] = mb.coded;
                 quants[mb.index] = mb.quant;
             }
             for (var i = 0; i < count; i++) {
@@ -971,7 +968,7 @@ final class PictureDecoder {
         }
         picture.damaged = damaged;
         recordSegments();
-        var deblocking = header.has(LayerState.DF) && header.type != PictureHeader.B;
+        var deblocking = header.has(LayerState.DF);
         var segments = header.has(LayerState.ISD) ? parser.segments : null;
         if (deblocking || header.reducedResolution) {
             LoopFilter.filter(picture, columns, rows, scale, coded, quants, segments, deblocking,
@@ -1021,9 +1018,7 @@ final class PictureDecoder {
             for (var cy = 0; cy < scale; cy++) {
                 for (var cx = 0; cx < scale; cx++) {
                     var cell = ((y >> 4) + cy) * picture.gridWidth + (x >> 4) + cx;
-                    if (cell < picture.segmentMap.length) {
-                        picture.segmentMap[cell] = id;
-                    }
+                    picture.segmentMap[cell] = id;
                 }
             }
         }
@@ -1172,7 +1167,7 @@ final class PictureDecoder {
      * @throws MediaException.Malformed if the index exceeds the references
      */
     private PlusPicture reference(int index) {
-        if (index >= forward.size() || forward.get(index) == null) {
+        if (index >= forward.size()) {
             throw MacroblockParser.CORRUPT;
         }
         var result = forward.get(index);
@@ -1263,7 +1258,7 @@ final class PictureDecoder {
     private int[] remoteVector(Macroblock mb, int row, int column, int block, int ownX, int ownY) {
         remoteResult[0] = ownX;
         remoteResult[1] = ownY;
-        if (row < 0 || column < 0 || column >= columns || row >= rows) {
+        if (row < 0 || column < 0 || column >= columns) {
             return remoteResult;
         }
         var other = row * columns + column;
@@ -1274,10 +1269,7 @@ final class PictureDecoder {
         if (separated && parser.segments[other] != parser.segments[mb.index]) {
             return remoteResult;
         }
-        if (other == waiting.index && hasWaiting && other != mb.index) {
-            return remoteFrom(waiting, block, ownX, ownY);
-        }
-        if (other == current.index && other != mb.index) {
+        if (other == current.index) {
             return remoteFrom(current, block, ownX, ownY);
         }
         var cell = cellOf(row, column, block);
@@ -1360,9 +1352,6 @@ final class PictureDecoder {
         }
         for (var block = 0; block < 4; block++) {
             var cell = (row * 2 + (block >> 1)) * gridWidth + column * 2 + (block & 1);
-            if (cell >= picture.modes.length) {
-                continue;
-            }
             picture.modes[cell] = mode;
             for (var sub = 0; sub < 4; sub++) {
                 picture.vectorX[cell * 4 + sub] = vectorX == null ? 0 : vectorX[block];
@@ -1594,7 +1583,7 @@ final class PictureDecoder {
                 var cell = cellOf(mb.row, mb.column, block);
                 var vx = 0;
                 var vy = 0;
-                if (cell >> 2 < subsequent.modes.length && subsequent.modes[cell >> 2] == PlusPicture.INTER) {
+                if (subsequent.modes[cell >> 2] == PlusPicture.INTER) {
                     vx = subsequent.vectorX[cell];
                     vy = subsequent.vectorY[cell];
                 }
@@ -1661,13 +1650,10 @@ final class PictureDecoder {
     /**
      * Returns a backward reference picture of a B-picture.
      *
-     * @param index 0, or 1 for the second backward reference
+     * @param index 0, or 1 for the second backward reference, which a segment that reads the index has
      * @return the picture
      */
     private PlusPicture backwardPicture(int index) {
-        if (index >= backward.size() || backward.get(index) == null) {
-            throw MacroblockParser.CORRUPT;
-        }
         var result = backward.get(index);
         if (result.width != header.width || result.height != header.height) {
             throw MacroblockParser.CORRUPT;

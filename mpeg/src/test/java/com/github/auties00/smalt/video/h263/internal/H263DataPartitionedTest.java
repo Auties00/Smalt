@@ -29,8 +29,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class H263DataPartitionedTest {
     @ParameterizedTest(name = "{0}")
     @CsvSource({"DPS_MCBPC_I, 9", "DPS_MCBPC_P, 26", "DPS_MBTYPE_B, 15", "DPS_MBTYPE_EP, 12", "DPS_MCBPC_EI, 18",
-            "DPS_MODB_PB, 3", "DPS_MODB_IMPROVED, 6"})
-    @DisplayName("holds the reversible codes of Tables V.1 to V.7, each its own mirror image")
+            "DPS_MODB_IMPROVED, 6"})
+    @DisplayName("holds the reversible codes of Tables V.1 to V.5 and V.7, each its own mirror image")
     void reversibleTables(String name, int count) throws ReflectiveOperationException {
         var table = (Vlc) PlusTables.class.getDeclaredField(name).get(null);
         var codes = codes(table);

@@ -304,10 +304,10 @@ final class PictureHeader {
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated H.263 picture header");
         }
-        if (quant < 1 || quant > 31) {
+        if (quant < 1) {
             throw new MediaException.Malformed("H.263 PQUANT " + quant);
         }
-        if (width < 4 || height < 4) {
+        if (height < 4) {
             throw new MediaException.Malformed("H.263 picture of size " + width + "x" + height);
         }
         dataPosition = reader.position();

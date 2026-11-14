@@ -361,18 +361,19 @@ public final class H263PlusStream {
                     header.type == PictureHeader.B);
             var decoder = decoders[number];
             var previous = decoder.header();
+            var begun = false;
             try {
                 decoder.begin(header, stream, time, reader);
+                begun = true;
+            } catch (MediaException.Malformed exception) {
+                damaged = true;
+                decoder.abandon();
+                spare = header;
+            }
+            if (begun) {
                 stream.decoding = decoder;
                 spare = previous != null ? previous : new PictureHeader();
                 position = decoder.decodeSegment(reader);
-            } catch (MediaException.Malformed exception) {
-                damaged = true;
-                if (stream.decoding == null) {
-                    decoder.abandon();
-                    spare = header;
-                }
-                position = -1;
             }
         }
         route(position, sink);
@@ -437,7 +438,7 @@ public final class H263PlusStream {
             try {
                 if (cpm) {
                     var slice = SLICE_SUB_BITSTREAMS[gn & 15];
-                    if ((gn & 16) != 0 && slice >= 0 && gn != 28) {
+                    if ((gn & 16) != 0 && slice >= 0) {
                         target = streams[slice].decoding;
                         if (target != null) {
                             target.sliceHeader(reader);
@@ -516,7 +517,7 @@ public final class H263PlusStream {
             var part = decoder.part;
             var previous = stream.anchor(header.layer);
             var trb = header.trb;
-            part.time = previous != null ? previous.time + (long) trb * stream.periodTicks : picture.time;
+            part.time = previous.time + (long) trb * stream.periodTicks;
             part.temporalReference = picture.temporalReference;
             part.layer = header.layer;
             queue(stream, part, false, false, sink);

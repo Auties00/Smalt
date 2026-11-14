@@ -312,7 +312,7 @@ final class ErpsLayer {
      * @return the map
      */
     private static boolean[] areas(BitReader reader, int count) {
-        if (count <= 0 || count > 1 << 16) {
+        if (count <= 0) {
             throw new MediaException.Malformed("H.263 sub-picture removal without a buffer structure");
         }
         var result = new boolean[count];

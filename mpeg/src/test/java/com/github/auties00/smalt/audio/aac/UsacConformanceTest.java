@@ -56,6 +56,31 @@ class UsacConformanceTest {
     }
 
     @TestFactory
+    @DisplayName("the DRC sequence plays under every effect request and target level")
+    Stream<DynamicTest> drcEffects() {
+        var archive = Conformance.archive("iso-23003-3-usac-smoke");
+        var mp4 = archive.fetch("compressedMp4/Ext_2_c1_LnDrc1_0x03.mp4");
+        var stream = AacTestSupport.parseMp4(Fixtures.read(mp4));
+        return Stream.of(EFFECTS).map(effect -> DynamicTest.dynamicTest(effect.name(), () -> {
+            for (var target : new int[]{-1, 4 * 16, 4 * 31}) {
+                var builder = AacDecoderOptions.builder().drcEffect(effect);
+                if (target >= 0) {
+                    builder.targetLevel(target);
+                }
+                try (var decoder = new AacDecoder(stream.track(), builder.build())) {
+                    var planes = AacTestSupport.decodeAll(decoder, stream.frames()).planes();
+                    assertTrue(planes.length > 0 && planes[0].length > 0, effect + " decodes");
+                    for (var plane : planes) {
+                        for (var value : plane) {
+                            assertTrue(Float.isFinite(value), effect + " gives finite samples");
+                        }
+                    }
+                }
+            }
+        }));
+    }
+
+    @TestFactory
     @DisplayName("every sequence decodes, and matches its reference at the lowest sampling rate of its test case")
     Stream<DynamicTest> full() {
         var streams = Conformance.archive("iso-23003-3-usac-streams");

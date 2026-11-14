@@ -470,8 +470,9 @@ The decoders under `image/src/test/resources/com/github/auties00/smalt/image/int
 - `xz/files`: files XZ Utils 5.8.1 writes with every preset, check, LZMA2 option, filter chain and the legacy
   .lzma format, plus damaged copies (`tools/testdata/xz/make-vectors.py`), listed in `files.tsv`; `xz.sha256`
   pins them.
-- `lerc/blobs`: Lerc2 blobs of every data type and version 2 to 6 that LERC 4.2.0 writes through imagecodecs,
-  and Lerc1 blobs, which LERC only reads, that the script writes itself with every tile coding and checks against
+- `lerc/blobs`: Lerc2 blobs of every data type and version 2 to 6 that LERC 4.2.0 writes through imagecodecs
+  (among them `float64-*-v6`, lossless floating-point doubles whose data makes LERC pick every predictor and every
+  byte-plane coding), and Lerc1 blobs, which LERC only reads, that the script writes itself with every tile coding and checks against
   LERC's decode (`tools/testdata/lerc/make-vectors.py`, which checks that every coding path occurs), listed in
   `blobs.tsv` with the SHA-256 of the values and masks LERC decodes; `lerc.sha256` pins them. Two TIFF vectors
   (`lerc-lerc1-*`) hold Lerc1 blobs of this directory, so the TIFF script runs after this one.
@@ -1186,11 +1187,14 @@ stream on every run when it codes a shape, so `nbit10-shape.m4v` is the output o
 the TMN 3.2 encoder of the University of British Columbia, run as a black box (its licence is not a permissive one, so
 its source is never read), and the `smalt-*` streams by `h263-annexes/h263enc.py`, an encoder written from the text of
 the Recommendation for the modes the TMN encoder lacks (Annexes C, K with rectangular slices, N, P, Q, R, U and V,
-and B-pictures, Improved PB-frames, SNR scalability and Annexes I, S and T combined with them). `golden.tsv` holds the
-MD5 of the reconstruction each stream implies with the double precision reference inverse DCT, which the annex
-decoder reproduces sample for sample with that transform. The script also decodes the `smalt-ist`, `smalt-b-ist` and
-`smalt-ipb-ist` streams (Annexes I, S and T without slices) with the TMN 3.2 decoder `tmndec -r` and fails unless it
-reproduces the encoder's reconstruction, and fails unless `smalt-dps-b-ist` and `smalt-dps-ipb-ist` (the same pictures
+and B-pictures, Improved PB-frames, SNR and spatial scalability, the arithmetic code of Annex E, the per-block vector
+predictors of F.2 and Annexes I, S and T combined with them). `golden.tsv` holds the MD5 of the reconstruction each
+stream implies with the double precision reference inverse DCT, which the annex decoder reproduces sample for sample
+with that transform; `smalt-bad-refs` is corrupt on purpose and has no row. The script also decodes the `smalt-ist`,
+`smalt-b-ist`, `smalt-ipb-ist`, `smalt-v1-umv` and `smalt-sac` streams, and the enhancement layers of `smalt-snr-gob`
+and `smalt-spatial`, with the TMN 3.2 decoder `tmndec -r` and fails unless it reproduces the encoder's reconstruction;
+Improved PB-frames with the arithmetic code (`smalt-ipb-sac`) have no outside check, since the TMN 3.2 encoder and
+decoder disagree on that combination with each other and with the Recommendation. It also fails unless `smalt-dps-b-ist` and `smalt-dps-ipb-ist` (the same pictures
 in data partitioned slices) reconstruct the same as their twins. The `smalt-encoder-*` streams are Advanced
 Prediction streams (Annex F, some with Annexes D, I, J and T) of Smalt's own H.263 encoder, which
 `H263EncoderTmnTest` writes with `-Dsmalt.test.writeTmnVectors=<directory>` and checks byte for byte on every build;

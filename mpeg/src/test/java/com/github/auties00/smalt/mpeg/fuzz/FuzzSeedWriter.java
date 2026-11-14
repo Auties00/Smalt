@@ -1541,7 +1541,8 @@ class FuzzSeedWriter {
                 "-c:v", "h263", "-q:v", "20"));
         // the optional modes of H.263 and the object tools of MPEG-4 Visual, from the committed test vectors
         for (var name : List.of("tmn-pb-sac", "tmn-snr", "smalt-b-rru", "smalt-erps-b", "smalt-isd-rect", "smalt-dps",
-                "smalt-dps-snr", "smalt-dps-ist", "smalt-dps-ipb-ist")) {
+                "smalt-dps-snr", "smalt-dps-ist", "smalt-dps-ipb-ist", "smalt-snr-gob-erps", "smalt-erps-four",
+                "smalt-spatial-rpr", "smalt-ipb-sac")) {
             write(MpegFuzzTest.class, "elementaryStream", "valid-h263-" + name + ".h263",
                     resource("/com/github/auties00/smalt/video/h263/annex/" + name + ".263"));
         }

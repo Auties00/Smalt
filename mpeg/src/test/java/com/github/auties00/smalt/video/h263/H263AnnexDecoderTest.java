@@ -45,13 +45,21 @@ class H263AnnexDecoderTest {
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {
-            "tmn-sac", "tmn-pb", "tmn-pb-sac", "tmn-ipb", "tmn-ipb-aic", "tmn-b", "tmn-snr", "tmn-spatial-horizontal",
+            "tmn-sac", "tmn-pb", "tmn-pb-sac", "tmn-ipb", "tmn-ipb-aic", "tmn-b", "tmn-snr",
+            "tmn-spatial-horizontal",
             "tmn-spatial-vertical", "tmn-spatial", "smalt-rpr", "smalt-rru", "smalt-rru-ap", "smalt-rru-df",
             "smalt-isd", "smalt-rect-aso", "smalt-isd-rect", "smalt-rps", "smalt-erps", "smalt-erps-b", "smalt-b",
             "smalt-b-rpr", "smalt-b-rru", "smalt-ipb", "smalt-ipb-df", "smalt-ipb-erps", "smalt-ipb-rru",
             "smalt-cpm", "smalt-dps", "smalt-dps-rru", "smalt-dps-b", "smalt-dps-ipb", "smalt-dps-ipb-rru",
             "smalt-dps-snr", "smalt-ist", "smalt-dps-ist", "smalt-b-ist", "smalt-dps-b-ist", "smalt-ipb-ist",
-            "smalt-dps-ipb-ist", "smalt-dps-snr-ist"
+            "smalt-dps-ipb-ist", "smalt-dps-snr-ist", "smalt-stuffing", "smalt-snr", "smalt-erps-gob", "smalt-rps-b",
+            "smalt-tall", "smalt-cpm-slices", "smalt-b-noumv", "smalt-erps-noumv", "smalt-erps-b-noumv",
+            "smalt-erps-b-gob", "smalt-dps-b-stuffing", "smalt-snr-rps", "smalt-v1-umv", "smalt-large-slices",
+            "smalt-large-cpm", "smalt-dps-b-modes", "smalt-dps-snr-modes", "smalt-erps-pr0", "smalt-erps-slices",
+            "smalt-erps-b-pr0", "smalt-snr-rpr", "smalt-dps-four", "smalt-erps-b-slices",
+            "smalt-sac", "smalt-sac-plus", "smalt-snr-gob", "smalt-snr-gob-erps", "smalt-dps-ipb-slices",
+            "smalt-erps-four", "smalt-rps-rpr", "smalt-erps-rpr", "smalt-spatial",
+            "smalt-spatial-rpr", "smalt-ipb-sac"
     })
     @DisplayName("hands out the annex engine's pictures in display order")
     void matchesAnnexEngine(String name) {

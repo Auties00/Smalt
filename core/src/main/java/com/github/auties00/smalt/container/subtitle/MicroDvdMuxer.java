@@ -41,14 +41,11 @@ public final class MicroDvdMuxer extends BufferedCueMuxer {
      * @param frameRate the frame rate the frame numbers count in, from 0.001 to 1000 frames per second; the
      * file declares it with three decimals and counts its frames at the declared rate, which is this one for
      * the NTSC rates (23.976, 29.97, 59.94 and the like) and for rates with at most three decimals
-     * @throws IllegalArgumentException if the frame rate is not positive or is outside that range
+     * @throws IllegalArgumentException if the frame rate is outside that range
      */
     public MicroDvdMuxer(MediaSink output, Rational frameRate) {
         super(Codec.SUBRIP, 1, output);
         Objects.requireNonNull(frameRate, "frameRate");
-        if (frameRate.numerator() <= 0 || frameRate.denominator() <= 0) {
-            throw new IllegalArgumentException("the frame rate must be positive, not " + frameRate);
-        }
         var declared = MicroDvdText.declarable(frameRate);
         if (declared == null) {
             throw new IllegalArgumentException("a MicroDVD file cannot declare the frame rate " + frameRate);

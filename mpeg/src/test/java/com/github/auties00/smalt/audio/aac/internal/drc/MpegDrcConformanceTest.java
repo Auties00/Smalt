@@ -36,7 +36,7 @@ class MpegDrcConformanceTest {
     /**
      * The command lines of the reference tool, without the output verbosity flag.
      */
-    private static final String COMMANDS = """
+    static final String COMMANDS = """
             -if audio-2ch-48000fs-32bit-sines.wav -ib bs-v0-1-uniDrc.bs -ii if-v0-1-uniDrcInterface.bs -of bs-v0-1__DrcToolDec-if-v0-1__Gc__audio-2ch-48000fs-32bit-sines.wav
             -if audio-2ch-48000fs-32bit-sines.wav -ib bs-v0-2-uniDrc.bs -ii if-v0-1-uniDrcInterface.bs -of bs-v0-2__DrcToolDec-if-v0-1-ld__Gc__audio-2ch-48000fs-32bit-sines.wav -dm 1
             -if audio-2ch-48000fs-32bit-sines.wav -ib bs-v0-3-uniDrc.bs -ii if-v0-1-uniDrcInterface.bs -of bs-v0-3__DrcToolDec-if-v0-1__GcMdDf__audio-2ch-48000fs-32bit-sines.wav
@@ -124,7 +124,7 @@ class MpegDrcConformanceTest {
             -if audio-5ch-48000fs-32bit-sinesWN.wav -ib bs-v1-122-uniDrc.bs -ii if-v1-17-uniDrcInterface.bs -of bs-v1-122__DrcToolDec-if-v1-17__GcMb__audio-5ch-48000fs-32bit-sinesWN.wav
             """;
 
-    private record Wav(float[][] planes, int rate, boolean isFloat) {
+    record Wav(float[][] planes, int rate, boolean isFloat) {
     }
 
     @TestFactory
@@ -149,7 +149,7 @@ class MpegDrcConformanceTest {
                 .map(line -> DynamicTest.dynamicTest(argument(line, "-of"), () -> run(archive, members, line)));
     }
 
-    private static String argument(String line, String flag) {
+    static String argument(String line, String flag) {
         var tokens = line.split(" ");
         for (var i = 0; i < tokens.length - 1; i++) {
             if (tokens[i].equals(flag)) {
@@ -252,7 +252,7 @@ class MpegDrcConformanceTest {
         }
     }
 
-    private static Wav readWav(byte[] data) {
+    static Wav readWav(byte[] data) {
         var position = 12;
         int channels = 0;
         int bits = 0;

@@ -8,7 +8,9 @@ the SHA-256 of the decoded values as LERC decodes them (as little-endian doubles
 mask zero) and of the masks (one byte per pixel and band). The script parses each blob and fails
 unless the set covers every coding path of the decoder: constant bands, uncompressed sweeps, bit-stuffed
 and lookup-table blocks, difference-coded depths, both 8-bit Huffman modes and the lossless
-floating-point mode.
+floating-point mode. The float64-*-v6 blobs after them are lossless floating-point doubles whose data makes LERC
+choose every predictor and every byte-plane coding (Huffman, run-length, raw and PackBits) with and without delta
+levels; the script fails unless they do.
 
 LERC writes only Lerc2, so the legacy Lerc1 blobs (lerc1-*) are written by this script as the format
 defines them, covering every count and value tile coding, run-length masks, the clamp to the largest
@@ -17,7 +19,9 @@ the one the script meant to code.
 
 Made with Python 3.14, numpy 2 and imagecodecs 2026.10.10 (LERC 4.2.0); other versions may code the
 blobs differently, which is why they are kept with the tests and pinned in lerc.sha256 next to the
-vector directory.
+vector directory. A rerun with the same versions may also code a few lossless floating-point float32 blobs with
+other bytes that decode to the same values (blobs.tsv unchanged); the committed copies were kept when the float64
+blobs were added.
 
     python -I tools/testdata/lerc/make-vectors.py <image/src/test/resources/com/github/auties00/smalt/image/internal/lerc/blobs>
 """
@@ -151,6 +155,59 @@ CASES.append(('uint8-constant', 'uint8', 16, 16, 1, 1, 0, None, False, None))
 CASES.append(('float32-constant-depth3', 'float32', 9, 7, 3, 1, 0, None, False, None))
 CASES.append(('uint16-single-pixel', 'uint16', 1, 1, 1, 1, 0, None, False, True))
 CASES.append(('uint32-wide-range', 'uint32', 64, 3, 1, 1, 0, None, False, False))
+
+
+# Lossless floating-point blobs (64x64, Lerc2 v6) whose data makes LERC choose each predictor and each byte-plane
+# coding (Huffman, run-length, raw and PackBits) for doubles, with delta levels; written after the Lerc1 blobs and
+# seeded from 1000 so that the blobs above keep their seeds.
+FLOAT_CASES = [
+    ('float64-noise-v6', 'float64', 1, 'noise'),
+    ('float64-noise-depth2-v6', 'float64', 2, 'noise'),
+    ('float64-steps-v6', 'float64', 1, 'steps'),
+    ('float64-smooth-v6', 'float64', 1, 'smooth'),
+    ('float64-halves-v6', 'float64', 1, 'halves'),
+    ('float64-rows-v6', 'float64', 1, 'rows'),
+    ('float64-smooth-depth2-v6', 'float64', 2, 'smooth'),
+]
+
+
+def float_pattern(pattern, depth, dtype, seed):
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:64, 0:64].astype(np.float64)
+    shape = (64, 64) if depth == 1 else (64, 64, depth)
+    if pattern == 'noise':
+        data = rng.random(shape)
+    elif pattern == 'steps':
+        data = np.floor(x / 8) * 1.5 + np.floor(y / 16) * 0.25 + rng.random(shape) * 1e-9
+    elif pattern == 'smooth':
+        planes = [np.sin(x / (7 + d)) * np.cos(y / (5 + d)) * 1000 for d in range(depth)]
+        data = planes[0] if depth == 1 else np.stack(planes, axis=-1)
+    elif pattern == 'halves':
+        data = np.round(rng.random(shape) * 100) + 0.5
+    else:
+        data = y * 3.1 + x * 1e-3 + rng.random(shape) * 1e-4
+    return data.astype(dtype)
+
+
+def float_planes(blob):
+    """Returns the predictor and the (delta level, coding) of each byte plane of a lossless floating-point band."""
+    version = struct.unpack_from('<i', blob, 6)[0]
+    p = 10 + 4
+    nints = 6 + (version >= 4) + (version >= 6)
+    ints = struct.unpack_from('<%di' % nints, blob, p)
+    p += 4 * nints + 4 + 8 * 5
+    depth, dt = ints[2], ints[6]
+    p += 4 + struct.unpack_from('<i', blob, p)[0]
+    width = 8 if dt == 7 else 4
+    p += 2 * width * depth + 2
+    predictor = blob[p]
+    p += 1
+    planes = []
+    for _ in range(width):
+        level, size, coding = blob[p + 1], struct.unpack_from('<I', blob, p + 2)[0], blob[p + 6]
+        planes.append((level, coding))
+        p += 6 + size
+    return predictor, planes
 
 
 def build(name, dtype, cols, rows, depth, bands, level, version, masked, smooth, seed):
@@ -410,10 +467,33 @@ def main():
         lines.append('\t'.join([name + '.lerc', '6', '1', str(cols), str(rows), str(bands),
                                 hashlib.sha256(canonical.astype('<f8').tobytes()).hexdigest(),
                                 hashlib.sha256(valid.astype(np.uint8).tobytes()).hexdigest(), 'lerc1']))
+    planes_seen = set()
+    for index, (name, dtype, depth, pattern) in enumerate(FLOAT_CASES):
+        data = float_pattern(pattern, depth, np.dtype(dtype), 1000 + index)
+        blob = imagecodecs.lerc_encode(data, level=0, version=6)
+        found = modes(blob)
+        if found != [(6, 'float-lossless')]:
+            raise SystemExit(name + ': LERC did not code the lossless floating-point mode: ' + str(found))
+        predictor, planes = float_planes(blob)
+        planes_seen.add(('predictor', np.dtype(dtype).itemsize, predictor))
+        planes_seen.update(('plane', mode) for _, mode in planes)
+        planes_seen.update(('level', level > 0) for level, _ in planes)
+        values = np.asarray(imagecodecs.lerc_decode(blob)).reshape(1, 64, 64, depth)
+        seen.update(kind for _, kind in found)
+        with open(os.path.join(directory, name + '.lerc'), 'wb') as file:
+            file.write(blob)
+        lines.append('\t'.join([name + '.lerc', str(TYPES[dtype]), str(depth), '64', '64', '1',
+                                hashlib.sha256(values.astype('<f8').tobytes()).hexdigest(),
+                                hashlib.sha256(np.ones((1, 64, 64), np.uint8).tobytes()).hexdigest(),
+                                'v6:float-lossless']))
     print('coding paths:', sorted(seen))
     for required in ('const', 'sweep', 'tiles', 'huffman', 'huffman-delta', 'float-lossless', 'lerc1'):
         if required not in seen:
             raise SystemExit('no vector covers ' + required)
+    for required in [('predictor', 8, p) for p in (0, 1, 2)] + [('plane', m) for m in (0, 1, 2, 3)] + [
+            ('level', True)]:
+        if required not in planes_seen:
+            raise SystemExit('no lossless floating-point vector covers ' + str(required))
     with open(os.path.join(directory, 'blobs.tsv'), 'w', newline='\n') as file:
         file.write('# blob\tdata type\tdepth\tcolumns\trows\tbands\tvalues sha256\tmasks sha256\tcoding\n'
                    + '\n'.join(sorted(lines)) + '\n')

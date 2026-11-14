@@ -110,7 +110,8 @@ public final class DvbSubtitleStream implements BitmapStream {
      * Constructs a decoder of one subtitle service.
      *
      * @param limits the bounds of the regions
-     * @param compositionPage the composition page identifier, or {@code -1} to decode the first page met
+     * @param compositionPage the composition page identifier, or {@code -1} to decode the page of the first display
+     * definition or page composition met
      * @param ancillaryPage the ancillary page identifier, or {@code -1}
      */
     public DvbSubtitleStream(MediaLimits limits, int compositionPage, int ancillaryPage) {
@@ -146,10 +147,11 @@ public final class DvbSubtitleStream implements BitmapStream {
             if (body + length > data.length) {
                 break;
             }
+            if (compositionPage < 0 && (type == PAGE_COMPOSITION || type == DISPLAY_DEFINITION)) {
+                // a display definition precedes the page composition of its display set
+                compositionPage = page;
+            }
             if (type == PAGE_COMPOSITION) {
-                if (compositionPage < 0) {
-                    compositionPage = page;
-                }
                 composers.add(page);
             }
             var composition = page == compositionPage;

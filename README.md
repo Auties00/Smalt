@@ -2006,6 +2006,11 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   does: LMVV repeats the last vector of the slice's prediction thread (P-vectors, including those of INTRA
   macroblocks of Improved PB-frames, and forward vectors), the start code emulation prevention of V.2.3.3 counts on
   through LMVV, and MVDB and MVDBW are coded in the vector partition after the thread vector of their macroblock.
+  Improved PB-frames with syntax-based arithmetic coding follow the models of E.7 and Table M.1; the TMN 3.2 encoder
+  writes that combination otherwise (Smalt refuses its streams as corrupt), and its own decoder reconstructs them
+  otherwise than the encoder does, so that mode is verified only on streams of Smalt's encoder written from the
+  Recommendation. An EP-picture of spatial scalability whose lower layer picture did not resample refines warping
+  parameters of zero with the bits its header sends (P.2.2), the parameters the lower layer picture implies.
 - The MPEG-4 Part 2 encoder codes progressive, rectangular, 8-bit video object layers of the Simple and Advanced
   Simple profiles; it does not use the tools its profiles leave optional for an encoder: interlaced coding, global
   motion compensation and, in the other profiles, shapes, sprites, scalability and N-bit samples. The H.263 encoder

@@ -373,9 +373,6 @@ public final class MicroDvdText {
      * with at most three decimals, or {@code null} when it is outside 0.001 to 1000 frames per second
      */
     public static Rational declarable(Rational rate) {
-        if (rate.numerator() <= 0 || rate.denominator() <= 0) {
-            return null;
-        }
         return rate(rateText(rate));
     }
 

@@ -75,7 +75,7 @@ class H263AnnexStreamsTest {
                     Arrays.stream(fields[3].split(",")).mapToInt(Integer::parseInt).toArray(), fields[4].split(","),
                     fields[5].split(",")));
         }
-        assertEquals(46, vectors.size(), "vectors in golden.tsv");
+        assertEquals(80, vectors.size(), "vectors in golden.tsv");
         return vectors;
     }
 
@@ -160,6 +160,181 @@ class H263AnnexStreamsTest {
             assertEquals(expected.size(), actual.size(), "pictures");
             for (var i = 0; i < expected.size(); i++) {
                 assertArrayEquals(expected.get(i).samples(), actual.get(i).samples(), "picture " + i);
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("vectors")
+    @DisplayName("decodes the stream again after a reset that drops a picture in progress")
+    void resetInFirstPicture(Vector vector) {
+        var data = resource(vector.file());
+        var stream = new H263PlusStream(MediaLimits.defaults());
+        var starts = pictureStarts(data);
+        var first = starts.get(0);
+        var end = starts.size() > 1 ? starts.get(1) : data.length;
+        // the first picture start code with only the first half of its data
+        try {
+            stream.decode(data, first, Math.max(8, (end - first) / 2), sink(new TreeMap<>()));
+        } catch (MediaException exception) {
+            assertNotNull(exception.getMessage());
+        }
+        stream.reset();
+        var again = new TreeMap<Integer, List<Decoded>>();
+        for (var k = 0; k < starts.size(); k++) {
+            decodeUnit(stream, data, starts, k, again);
+        }
+        stream.flush(sink(again));
+        var fresh = decode(data, false);
+        assertEquals(fresh.keySet(), again.keySet(), "sub-bitstreams");
+        for (var entry : fresh.entrySet()) {
+            var expected = entry.getValue();
+            var actual = again.get(entry.getKey());
+            assertEquals(expected.size(), actual.size(), "pictures");
+            for (var i = 0; i < expected.size(); i++) {
+                assertArrayEquals(expected.get(i).samples(), actual.get(i).samples(), "picture " + i);
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("vectors")
+    @DisplayName("starts at any picture, refusing as malformed only the pictures whose references are missing")
+    void startsAnywhere(Vector vector) {
+        var data = resource(vector.file());
+        var starts = pictureStarts(data);
+        var reference = decode(data, false);
+        var total = reference.values().stream().mapToInt(List::size).sum();
+        for (var first = 1; first < starts.size(); first++) {
+            var stream = new H263PlusStream(MediaLimits.defaults());
+            var out = new TreeMap<Integer, List<Decoded>>();
+            for (var k = first; k < starts.size(); k++) {
+                try {
+                    decodeUnit(stream, data, starts, k, out);
+                } catch (MediaException.Malformed expected) {
+                    assertNotNull(expected.getMessage());
+                }
+            }
+            try {
+                stream.flush(sink(out));
+            } catch (MediaException.Malformed expected) {
+                assertNotNull(expected.getMessage());
+            }
+            var count = out.values().stream().mapToInt(List::size).sum();
+            assertTrue(count <= total, "pictures decoded from picture " + first + ": " + count);
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("vectors")
+    @DisplayName("decodes only the first picture of data holding several, and ignores data without a start code")
+    void oneUnitAtATime(Vector vector) {
+        var data = resource(vector.file());
+        var starts = pictureStarts(data);
+        var stream = new H263PlusStream(MediaLimits.defaults());
+        var out = new TreeMap<Integer, List<Decoded>>();
+        stream.decode(new byte[]{1, 2, 3, 4, 5, 6, 7, 8}, 0, 8, sink(out));
+        assertTrue(out.isEmpty());
+        try {
+            stream.decode(data, starts.getFirst(), data.length - starts.getFirst(), sink(out));
+            stream.flush(sink(out));
+        } catch (MediaException.Malformed expected) {
+            assertNotNull(expected.getMessage());
+        }
+        var single = new TreeMap<Integer, List<Decoded>>();
+        var alone = new H263PlusStream(MediaLimits.defaults());
+        try {
+            decodeUnit(alone, data, starts, 0, single);
+            alone.flush(sink(single));
+        } catch (MediaException.Malformed expected) {
+            assertNotNull(expected.getMessage());
+        }
+        assertEquals(single.keySet(), out.keySet());
+        for (var entry : single.entrySet()) {
+            var expected = entry.getValue();
+            var actual = out.get(entry.getKey());
+            assertEquals(expected.size(), actual.size());
+            for (var i = 0; i < expected.size(); i++) {
+                assertArrayEquals(expected.get(i).samples(), actual.get(i).samples());
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("vectors")
+    @DisplayName("reports corrupt group of blocks and slice headers only as media exceptions")
+    void survivesCorruptSegmentHeaders(Vector vector) {
+        var original = resource(vector.file());
+        var headers = new ArrayList<Long>();
+        var bits = (long) original.length * 8;
+        // the start codes other than picture start codes: 16 zeros, a one and a group number other than 0
+        for (long at = 0, zeros = 0; at + 22 <= bits; at++) {
+            var bit = original[(int) (at >>> 3)] >>> (7 - (int) (at & 7)) & 1;
+            if (bit == 0) {
+                zeros++;
+                continue;
+            }
+            if (zeros >= 16 && field(original, at + 1, 5) != 0) {
+                headers.add(at - 16);
+            }
+            zeros = 0;
+        }
+        assertTimeoutPreemptively(Duration.ofSeconds(120), () -> {
+            var step = Math.max(1, headers.size() / 4);
+            for (var h = 0; h < headers.size(); h += step) {
+                var at = headers.get(h);
+                for (var mutation = 0; mutation < 4; mutation++) {
+                    var data = original.clone();
+                    var length = data.length;
+                    switch (mutation) {
+                        case 0 -> setField(data, at + 17, 5, 29);
+                        case 1 -> setField(data, at + 22, 12, 0);
+                        case 2 -> setField(data, at + 22, 12, 0xFFF);
+                        default -> length = (int) ((at + 24) >>> 3);
+                    }
+                    var truncated = Arrays.copyOf(data, length);
+                    var stream = new H263PlusStream(MediaLimits.defaults());
+                    var starts = pictureStarts(truncated);
+                    var out = new TreeMap<Integer, List<Decoded>>();
+                    for (var k = 0; k < starts.size(); k++) {
+                        try {
+                            decodeUnit(stream, truncated, starts, k, out);
+                        } catch (MediaException expected) {
+                            assertNotNull(expected.getMessage());
+                        }
+                    }
+                    try {
+                        stream.flush(sink(out));
+                    } catch (MediaException expected) {
+                        assertNotNull(expected.getMessage());
+                    }
+                }
+            }
+        });
+    }
+
+    private static int field(byte[] data, long at, int width) {
+        var value = 0;
+        for (var i = 0; i < width; i++) {
+            var position = at + i;
+            var bit = position >>> 3 < data.length
+                    ? data[(int) (position >>> 3)] >>> (7 - (int) (position & 7)) & 1 : 0;
+            value = value << 1 | bit;
+        }
+        return value;
+    }
+
+    private static void setField(byte[] data, long at, int width, int value) {
+        for (var i = 0; i < width; i++) {
+            var position = at + i;
+            if (position >>> 3 >= data.length) {
+                return;
+            }
+            var mask = 1 << (7 - (int) (position & 7));
+            if ((value >>> (width - 1 - i) & 1) != 0) {
+                data[(int) (position >>> 3)] |= (byte) mask;
+            } else {
+                data[(int) (position >>> 3)] &= (byte) ~mask;
             }
         }
     }

@@ -2581,11 +2581,17 @@ public final class VopParser {
 
     /**
      * Returns the bit position of a group of blocks resynchronization marker at the reader's
-     * position or after zero stuffing up to the next byte boundary.
+     * position or after zero stuffing up to the next byte boundary, first discarding the macroblock
+     * stuffing that ITU-T H.263 lets precede a start code (5.3.2): the stuffing MCBPC, after a COD
+     * of 0 outside I-pictures.
      *
      * @return the position, or {@code -1} when no marker follows
      */
     private long findGobHeader() {
+        var stuffing = vop.codingType == Vop.I ? 9 : 10;
+        while (reader.remaining() >= stuffing + 17 && reader.peek(stuffing) == 1) {
+            reader.skip(stuffing);
+        }
         var position = reader.position();
         if (reader.peek(17) == 1) {
             return position;

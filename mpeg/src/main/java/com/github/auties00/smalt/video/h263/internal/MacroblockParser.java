@@ -459,13 +459,7 @@ final class MacroblockParser {
             } else {
                 mb.coded = true;
                 mb.kind = switch (type) {
-                    case PictureHeader.I -> {
-                        var mbType = symbol >> 2;
-                        if (mbType != 3 && mbType != 4) {
-                            throw CORRUPT;
-                        }
-                        yield Macroblock.INTRA;
-                    }
+                    case PictureHeader.I -> Macroblock.INTRA;
                     case PictureHeader.P, PictureHeader.IMPROVED_PB -> interKind(mb, symbol >> 2);
                     case PictureHeader.B -> switch (symbol) {
                         case 0, 1 -> Macroblock.DIRECT;
@@ -490,23 +484,19 @@ final class MacroblockParser {
     }
 
     /**
-     * Returns the kind of a coded macroblock of a P-picture, PB-frame or Improved PB-frame in the Data Partitioned
-     * Slice mode and reads its MODB (V.2.1).
+     * Returns the kind of a coded macroblock of a P-picture or Improved PB-frame in the Data Partitioned Slice mode
+     * and reads its MODB (V.2.1). The PB-frames of Annex G need the PTYPE of a header without PLUSPTYPE, which the
+     * Data Partitioned Slice mode cannot have, so Table V.6 never applies.
      *
      * @param mb the macroblock
      * @param mbType the macroblock type
      * @return the kind
      */
     private int interKind(Macroblock mb, int mbType) {
-        if ((mbType == 5 && !extendedTypes) || ((mbType == 2 || mbType == 5) && !fourVectors)) {
+        if ((mbType == 2 || mbType == 5) && !fourVectors) {
             throw CORRUPT;
         }
-        if (pbFrame) {
-            var modb = vlc(PlusTables.DPS_MODB_PB);
-            mb.partMode = Macroblock.PB_BIDIRECTIONAL;
-            mb.partVector = modb >= 1;
-            mb.partCoded = modb == 2;
-        } else if (improvedPb) {
+        if (improvedPb) {
             var modb = vlc(PlusTables.DPS_MODB_IMPROVED);
             mb.partMode = modb < 2 ? Macroblock.PB_BIDIRECTIONAL : modb < 4 ? Macroblock.PB_FORWARD
                     : Macroblock.PB_BACKWARD;
@@ -598,7 +588,7 @@ final class MacroblockParser {
             return;
         }
         var isIntra = mb.intra();
-        if (!isIntra || pbFrame || improvedPb) {
+        if (!isIntra || improvedPb) {
             if (mb.kind == Macroblock.INTER4V) {
                 for (var block = 0; block < 4; block++) {
                     threadVector(mb, block);
@@ -611,7 +601,7 @@ final class MacroblockParser {
                 }
             }
         }
-        var candidate = !isIntra || pbFrame || mb.partMode == Macroblock.PB_BIDIRECTIONAL;
+        var candidate = !isIntra || mb.partMode == Macroblock.PB_BIDIRECTIONAL;
         if (!candidate) {
             Arrays.fill(mb.forwardX, 0);
             Arrays.fill(mb.forwardY, 0);
@@ -700,7 +690,7 @@ final class MacroblockParser {
                 } else {
                     readInterBlocks(mb.coefficients, mb.pattern, mb.quant, true);
                 }
-                if (pbFrame || improvedPb) {
+                if (improvedPb) {
                     readInterBlocks(mb.partCoefficients, mb.partPattern, Math.min(31, (5 + dbquant) * mb.quant / 4),
                             false);
                 }
@@ -756,11 +746,7 @@ final class MacroblockParser {
         }
         mb.coded = true;
         mb.kind = Macroblock.INTRA;
-        var mbType = mcbpc >> 2;
-        if (mbType != 3 && mbType != 4) {
-            throw CORRUPT;
-        }
-        intraTail(mb, mcbpc & 3, mbType == 4);
+        intraTail(mb, mcbpc & 3, mcbpc >> 2 == 4);
         return true;
     }
 
@@ -807,9 +793,6 @@ final class MacroblockParser {
         mb.coded = true;
         var mbType = mcbpc >> 2;
         var cbpc = mcbpc & 3;
-        if (mbType == 5 && !extendedTypes) {
-            throw CORRUPT;
-        }
         if ((mbType == 2 || mbType == 5) && !fourVectors) {
             throw CORRUPT;
         }
@@ -1421,7 +1404,7 @@ final class MacroblockParser {
         mb.partY = pairY;
         partX[mb.index] = pairX;
         partY[mb.index] = pairY;
-        partForward[mb.index] = mb.partMode == Macroblock.PB_FORWARD;
+        partForward[mb.index] = true;
     }
 
     /**
@@ -1488,7 +1471,7 @@ final class MacroblockParser {
             throw CORRUPT;
         }
         var value = predictor + symbol - 32;
-        if (umv && !plus) {
+        if (umv) {
             if (predictor < -31 && value < -63) {
                 value += 64;
             } else if (predictor > 32 && value > 63) {

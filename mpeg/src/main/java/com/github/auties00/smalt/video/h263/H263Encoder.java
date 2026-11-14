@@ -281,7 +281,7 @@ public final class H263Encoder implements VideoEncoder {
      * until the next call
      */
     private YuvPicture toYuv420(Picture picture) {
-        if (picture instanceof YuvPicture yuv && yuv.chromaFormat() == ChromaFormat.YUV420 && yuv.bitDepth() == 8
+        if (picture instanceof YuvPicture yuv && yuv.chromaFormat() == ChromaFormat.YUV420
                 && yuv.color().range() == color.range()
                 && yuv.color().matrix().effective() == color.matrix().effective()) {
             return yuv;

@@ -180,4 +180,49 @@ class AmrDemuxerTest {
         var stats = AudioMutations.assertRobust(inputs, 200, 0xA3AL, Duration.ofSeconds(5), bytes -> packets(bytes));
         System.out.println("AmrDemuxer mutation outcomes: " + stats);
     }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"TAG", "APETAGEX", "ID3", "LYRICSBEGIN"})
+    @DisplayName("ends the frames of a source of unknown length at the trailing tag they run into")
+    void trailingTagWithoutSize(String tag) {
+        var file = new ByteArrayOutputStream();
+        file.writeBytes("#!AMR\n".getBytes(StandardCharsets.US_ASCII));
+        for (var i = 0; i < 3; i++) {
+            file.write(7 << 3 | 0x04);
+            file.writeBytes(new byte[31]);
+        }
+        var trailer = switch (tag) {
+            case "ID3" -> new byte[]{'I', 'D', '3', 4, 0, 0, 0, 0, 0, 10, 'T', 'I', 'T', '2', 0, 0, 0, 0, 0, 0};
+            case "TAG" -> java.util.Arrays.copyOf("TAG".getBytes(StandardCharsets.US_ASCII), 128);
+            default -> (tag + "00000000000000000000").getBytes(StandardCharsets.US_ASCII);
+        };
+        file.writeBytes(trailer);
+        var data = file.toByteArray();
+        try (var demuxer = new AmrDemuxer(com.github.auties00.smalt.testkit.io.IoVariant.UNKNOWN_LENGTH.open(data))) {
+            assertEquals(3, AudioPipeline.packets(demuxer, 0).size());
+        }
+        if (tag.equals("TAG")) {
+            try (var demuxer = new AmrDemuxer(MediaSource.of(data))) {
+                assertEquals(3, AudioPipeline.packets(demuxer, 0).size(), "the tag is located from the end");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("reads frames that only start like a tag signature on a source of unknown length")
+    void tagLookalikes() {
+        var file = new ByteArrayOutputStream();
+        file.writeBytes("#!AMR\n".getBytes(StandardCharsets.US_ASCII));
+        file.write(7 << 3 | 0x04);
+        file.writeBytes(new byte[31]);
+        file.writeBytes("APEZZZ".getBytes(StandardCharsets.US_ASCII));
+        file.writeBytes("LYRICSX".getBytes(StandardCharsets.US_ASCII));
+        file.writeBytes("IDZZZZZ".getBytes(StandardCharsets.US_ASCII));
+        file.writeBytes("AP".getBytes(StandardCharsets.US_ASCII));
+        try (var demuxer = new AmrDemuxer(com.github.auties00.smalt.testkit.io.IoVariant.UNKNOWN_LENGTH.open(
+                file.toByteArray()))) {
+            var packets = AudioPipeline.packets(demuxer, 0);
+            assertEquals(4, packets.size(), "the frame cut short at the end is dropped");
+        }
+    }
 }

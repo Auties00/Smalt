@@ -2,9 +2,12 @@
 Continuous Presence Multipoint (Annex C), rectangular slices with arbitrary slice order (Annex K), Reference Picture
 Selection (Annex N), Reference Picture Resampling (Annex P, with the incremental algorithm of P.4),
 Reduced-Resolution Update (Annex Q), Independent Segment Decoding (Annex R), Enhanced Reference Picture Selection
-(Annex U) and data partitioned slices (Annex V), together with B-pictures (Annex O), Improved PB-frames (Annex M),
-SNR scalability (Annex O, in data partitioned slices only), Advanced INTRA Coding (Annex I), Alternative INTER VLC
-(Annex S) and Modified Quantization (Annex T) combined with them.
+(Annex U) and data partitioned slices (Annex V), together with B-pictures (Annex O), Improved PB-frames (Annex M, also
+with Syntax-based Arithmetic Coding, Annex E), SNR and spatial scalability (Annex O, with the interpolation filters of
+O.6), Advanced INTRA Coding (Annex I), Alternative INTER VLC (Annex S) and Modified Quantization (Annex T) combined
+with them, INTER4V macroblocks with the per-block vector predictors of F.2 (with the Deblocking Filter mode, Annex J),
+the custom picture clock with 10-bit temporal references, custom picture formats, and macroblock stuffing, also before
+a start code (5.3.2).
 
 The encoder makes simple coding decisions over a small search; it exists to produce streams whose decoding every
 mode's rules determine, and computes the decoder reconstruction with the double precision reference inverse DCT of
@@ -461,6 +464,14 @@ class MacroblockTexture:
         self.pattern = 0
 
 
+def drop_texture(t):
+    """Codes no coefficient for an INTER macroblock, so that it takes the macroblock type without texture."""
+    assert not t.intra
+    t.levels = {k: [0] * 64 for k in range(6)}
+    t.pattern = 0
+    t.alternative = set()
+
+
 class Texture:
     """Block coding of one picture: the main text's, or that of the Advanced INTRA Coding (Annex I), Alternative INTER
     VLC (Annex S) and Modified Quantization (Annex T) modes the configuration turns on. INTRA prediction uses the
@@ -869,7 +880,7 @@ def write_header(bw, s, pic, ptype, q, cfg, extra=None, rru=False, rpr=False, uf
     fmt = cfg.get('format', 2)
     if ufep == 1:
         bw.put(fmt, 3)
-        bw.put(0, 1)
+        bw.put(1 if cfg.get('clock') else 0, 1)
         modes = cfg['modes']
         for name in ('UMV', 'SAC', 'AP', 'AIC', 'DF', 'SS', 'RPS', 'ISD', 'AIV', 'MQ'):
             bw.put(1 if name in modes else 0, 1)
@@ -892,6 +903,11 @@ def write_header(bw, s, pic, ptype, q, cfg, extra=None, rru=False, rpr=False, uf
         bw.put(pic.width // 4 - 1, 9)
         bw.put(1, 1)
         bw.put(pic.height // 4, 9)
+    if cfg.get('clock'):
+        if ufep == 1:
+            bw.put(0, 1)
+            bw.put(cfg['clock'], 7)
+        bw.put((pic.tr >> 8) & 3, 2)
     modes = cfg['modes']
     if ufep == 1 and 'UMV' in modes:
         bw.code('1')
@@ -947,6 +963,24 @@ def encode_mvd(bw, pred, value, plus_umv):
     return mvd_code(d + 32)
 
 
+def v1_umv_value(pred, mvd):
+    """The vector component a decoder takes from MVD in the Unrestricted Motion Vector mode without PLUSPTYPE: the
+    one of the two candidates of D.2 inside the range the predictor allows."""
+    value = pred + mvd
+    if pred < -31 and value < -63:
+        return value + 64
+    if pred > 32 and value > 63:
+        return value - 64
+    return value
+
+
+def encode_mvd_v1_umv(pred, value):
+    for mvd in range(-32, 32):
+        if v1_umv_value(pred, mvd) == value:
+            return mvd_code(mvd + 32)
+    raise AssertionError('vector %d out of the range of predictor %d' % (value, pred))
+
+
 def pseudo(v):
     if v == 0:
         return 0
@@ -1000,12 +1034,13 @@ def encode_picture(enc, stream, index, ptype, q, refs, opts):
     rec.tr = opts['tr']
     rec.pn = opts.get('pn', 0)
     rec.rounding = opts.get('rounding', 0)
+    rec.warp = opts.get('warp')
     rru = opts.get('rru', False)
     size = 32 if rru else 16
     cols = (rec.cw + size - 1) // size
     rows = (rec.ch + size - 1) // size
     modes = cfg['modes']
-    plus_umv = 'UMV' in modes
+    plus_umv = 'UMV' in modes and not cfg.get('v1')
     ap = 'AP' in modes and ptype == 1
     df = 'DF' in modes
     isd = 'ISD' in modes
@@ -1041,7 +1076,10 @@ def encode_picture(enc, stream, index, ptype, q, refs, opts):
 
     def refs_for(mb):
         sidx = seg_of[mb]
-        return [segment_refs[sidx]] if sidx in segment_refs else pred_refs
+        if sidx not in segment_refs:
+            return pred_refs
+        chosen = segment_refs[sidx]
+        return list(chosen) if isinstance(chosen, (list, tuple)) else [chosen]
 
     decisions = {}
     search = opts.get('search', [(0, 0)])
@@ -1050,6 +1088,9 @@ def encode_picture(enc, stream, index, ptype, q, refs, opts):
             mbx, mby = mb % cols, mb // cols
             if ptype == 0 or mb in opts.get('intra_mbs', ()):
                 decisions[mb] = ('intra', 0, 0, 0)
+                continue
+            if mb in opts.get('pr0', {}):
+                decisions[mb] = ('pr0', opts['pr0'][mb], 0, 0)
                 continue
             if mb in opts.get('force', {}):
                 r, vx, vy = opts['force'][mb]
@@ -1060,7 +1101,8 @@ def encode_picture(enc, stream, index, ptype, q, refs, opts):
                 decisions[mb] = ('inter4', 0, vectors[0][0], vectors[0][1], vectors)
                 continue
             best = None
-            for r, ref in enumerate(refs_for(mb)[:opts.get('max_refs', 1)]):
+            limit = opts.get('segment_max_refs', {}).get(seg_of[mb], opts.get('max_refs', 1))
+            for r, ref in enumerate(refs_for(mb)[:limit]):
                 for (vx, vy) in search:
                     if rru and ((vx % 2 == 0 and vx != 0) or (vy % 2 == 0 and vy != 0)):
                         continue
@@ -1075,7 +1117,12 @@ def encode_picture(enc, stream, index, ptype, q, refs, opts):
                         best = (sad, r, vx, vy)
             decisions[mb] = ('inter', best[1], best[2], best[3])
     mvs = {mb: (None if d[0] == 'intra' else (d[2], d[3])) for mb, d in decisions.items()}
+    opts['_pending_pr0'] = False
     opts['_texture'] = Texture(modes, seg_of)
+    # the four vectors of every macroblock written, for the per-block predictors of F.2 when the picture has
+    # INTER4V macroblocks outside data partitioning
+    opts['_bv'] = {}
+    opts['_blocks'] = bool(opts.get('four')) and 'DPS' not in modes
     bw = Bits()
     write_picture_header(bw, enc, stream, rec, ptype, q, opts, rru)
     mvs_written = {}
@@ -1103,16 +1150,27 @@ def encode_picture(enc, stream, index, ptype, q, refs, opts):
         parts = Partitions(rru) if 'DPS' in modes else None
         opts['_parts'] = parts
         opts['_q'] = q
+        opts['_pending_pr0'] = False
+        opts['_arith'] = Arith(bw) if 'SAC' in modes else None
         for mb in mbs:
             segs_written[mb] = sidx
             if parts is not None and mb in opts.get('stuffing', ()):
                 parts.hd.code(DPS_STUFFING_I if ptype == 0 else DPS_STUFFING_P)
             encode_mb(bw, enc, src, rec, refs_for(mb), mb, cols, rows, size, decisions, mvs_written, segs_written,
                       ptype, q, plus_umv, rru, ap, clip_for, mvs, seg_of, opts, coded_flags, quant_of)
+        if opts['_arith'] is not None:
+            for _ in range(opts.get('sac_tail_stuffing', {}).get(sidx, 0)):
+                if ptype != 0:
+                    opts['_arith'].encode(0, 'COD')
+                opts['_arith'].encode(8 if ptype == 0 else 20, sac_mcbpc_model(enc.cfg, ptype))
+            opts['_arith'].flush()
+        elif parts is None and sidx in opts.get('tail_stuffing', ()):
+            write_stuffing(bw, ptype, opts.get('segment_mrpa', {}).get(sidx, opts.get('mrpa', False)))
         if parts is not None:
             parts.flush(bw)
         opts.pop('_parts')
         opts.pop('_q', None)
+        opts.pop('_arith', None)
     opts.pop('_texture')
     if df or rru:
         loop_filter(rec, cols, rows, size, coded_flags, quant_of, seg_of if isd else None, df, 'MQ' in modes)
@@ -1167,7 +1225,11 @@ def write_segment_header(bw, cfg, opts, first, swidth, q, cols, rows, rru, sidx)
         bw.put(0, 2)
         bw.put(q, 5)
     if 'RPS' in cfg['modes']:
-        bw.code('0')
+        if sidx in opts.get('segment_tri', ()):
+            bw.code('1')
+            bw.put(opts['tr'] & (1023 if cfg.get('clock') else 255), 10 if cfg.get('clock') else 8)
+        else:
+            bw.code('0')
         trp = opts.get('segment_trp', {}).get(sidx)
         if trp is None:
             bw.code('0')
@@ -1176,7 +1238,11 @@ def write_segment_header(bw, cfg, opts, first, swidth, q, cols, rows, rru, sidx)
             bw.put(trp, 10)
         bw.code('01')
     if 'ERPS' in cfg['modes']:
-        bw.code('0')
+        if sidx in opts.get('segment_pn', ()):
+            bw.code('1')
+            bw.put(opts.get('pn', 0), 10)
+        else:
+            bw.code('0')
         layer = opts.get('segment_erps', {}).get(sidx)
         if layer is None:
             bw.code('1')
@@ -1185,8 +1251,29 @@ def write_segment_header(bw, cfg, opts, first, swidth, q, cols, rows, rru, sidx)
             layer(bw)
 
 
+def write_header_v1(bw, pic, ptype, q, cfg):
+    """A picture header without PLUSPTYPE (5.1): PTYPE with the Unrestricted Motion Vector, Syntax-based Arithmetic
+    Coding and Advanced Prediction bits, no PB-frame, no CPM and no PEI."""
+    bw.code('0000000000000000100000')
+    bw.put(pic.tr & 255, 8)
+    bw.code('10')
+    bw.put(0, 3)
+    bw.put(cfg.get('format', 2), 3)
+    bw.put(ptype, 1)
+    for name in ('UMV', 'SAC', 'AP'):
+        bw.put(1 if name in cfg['modes'] else 0, 1)
+    bw.put(0, 1)
+    bw.put(q, 5)
+    bw.put(0, 1)
+    bw.put(0, 1)
+
+
 def write_picture_header(bw, enc, stream, rec, ptype, q, opts, rru):
     cfg = enc.cfg
+    if cfg.get('v1'):
+        assert not rru and rec.rounding == 0
+        write_header_v1(bw, rec, ptype, q, cfg)
+        return
 
     def extra(b):
         modes = cfg['modes']
@@ -1225,13 +1312,163 @@ def write_picture_header(bw, enc, stream, rec, ptype, q, opts, rru):
 
 
 
+def write_pr0(bw, opts, value, slices):
+    """PR0 of a macroblock with several references (U.3.2.1.2) and the MEPB0 bit that follows the value 1 in the
+    Slice Structured mode or after another macroblock whose PR0 of 1 took no MEPB0 (U.3.2.1.3)."""
+    bw.code(index_code(value))
+    if value == 1 and (slices or opts.get('_pending_pr0')):
+        bw.code('1')
+        opts['_pending_pr0'] = False
+    else:
+        opts['_pending_pr0'] = value == 1
+
+
+# ---------------------------------------------------------------- Syntax-based Arithmetic Coding (Annex E)
+
+SAC = {}
+INTER_TABLE = []
+
+
+def load_sac(path):
+    """Reads the cumulative frequency tables of Annex E (the cumf_* tables of E.6) from SacModels.java."""
+    text = open(path).read()
+    for match in re.finditer(r'static final int\[\] (\w+) = \{([^}]*)\};', text):
+        SAC[match.group(1)] = [int(x) for x in match.group(2).split(',') if x.strip()]
+    # the events of Table 16 in the order of its indexes: by LAST, then RUN, then LEVEL
+    INTER_TABLE[:] = sorted(TCOEF)
+    assert len(INTER_TABLE) == SAC_ESCAPE
+
+
+SAC_Q1, SAC_Q2, SAC_Q3, SAC_TOP = 16384, 32768, 49152, 65535
+SAC_ESCAPE = 102
+STUFFING_RUN = 14
+
+
+class Arith:
+    """The arithmetic encoder of E.4 writing into a bit writer, with the stuffing one bit E.4 inserts after fourteen
+    consecutive zeros, counting the zeros the data follows."""
+
+    def __init__(self, bw):
+        self.bw = bw
+        self.low = 0
+        self.high = SAC_TOP
+        self.opposite = 0
+        zeros = 0
+        for b in reversed(bw.bits):
+            if b or zeros == STUFFING_RUN:
+                break
+            zeros += 1
+        self.zeros = zeros
+
+    def bit(self, b):
+        if self.zeros == STUFFING_RUN:
+            self.bw.put(1, 1)
+            self.zeros = 0
+        self.bw.put(b, 1)
+        self.zeros = self.zeros + 1 if b == 0 else 0
+
+    def follow(self, b):
+        self.bit(b)
+        while self.opposite:
+            self.bit(1 - b)
+            self.opposite -= 1
+
+    def encode(self, symbol, model):
+        model = SAC[model]
+        assert 0 <= symbol < len(model) - 1 and model[symbol] > model[symbol + 1], symbol
+        length = self.high - self.low + 1
+        self.high = self.low - 1 + (length * model[symbol]) // model[0]
+        self.low = self.low + (length * model[symbol + 1]) // model[0]
+        while True:
+            if self.high < SAC_Q2:
+                self.follow(0)
+            elif self.low >= SAC_Q2:
+                self.follow(1)
+                self.low -= SAC_Q2
+                self.high -= SAC_Q2
+            elif self.low >= SAC_Q1 and self.high < SAC_Q3:
+                self.opposite += 1
+                self.low -= SAC_Q1
+                self.high -= SAC_Q1
+            else:
+                break
+            self.low = 2 * self.low
+            self.high = 2 * self.high + 1
+
+    def flush(self):
+        self.opposite += 1
+        self.follow(0 if self.low < SAC_Q1 else 1)
+
+
+def sac_events(ar, events, intra_models, advanced):
+    """The TCOEF events of a block with the models of E.5: the first three events and the rest each with their own
+    model, the INTRA models for INTRA blocks, ESCAPE with LAST, RUN and LEVEL for events outside Table 16."""
+    table = INTRA_EVENTS if advanced else INTER_TABLE
+    suffix = '_INTRA' if intra_models else ''
+    for count_, (last, run, lv) in enumerate(events):
+        model = ('TCOEF1', 'TCOEF2', 'TCOEF3')[count_] if count_ < 3 else 'TCOEFR'
+        key = (last, run, abs(lv))
+        if key in table:
+            ar.encode(table.index(key), model + suffix)
+            ar.encode(1 if lv < 0 else 0, 'SIGN')
+        else:
+            assert -127 <= lv <= 127, lv
+            ar.encode(SAC_ESCAPE, model + suffix)
+            ar.encode(last, 'LAST' + suffix)
+            ar.encode(run, 'RUN' + suffix)
+            ar.encode(lv + 127 if lv < 0 else lv + 126, 'LEVEL' + suffix)
+
+
+def sac_mvd(ar, pred, value, v1_umv):
+    if v1_umv:
+        mvd = next(m for m in range(-32, 32) if v1_umv_value(pred, m) == value)
+    else:
+        mvd = value - pred
+        mvd = mvd + 64 if mvd < -32 else mvd - 64 if mvd > 31 else mvd
+    ar.encode(mvd + 32, 'MVD')
+
+
+def write_stuffing(bw, ptype, multiple):
+    """Macroblock stuffing of an I- or P-picture (Tables 7 and 8): COD 0, PR0 0 with multiple references (U.3.2.1),
+    and the stuffing MCBPC."""
+    if ptype != 0:
+        bw.put(0, 1)
+        if multiple:
+            bw.code(index_code(0))
+    bw.code('000000001')
+
+
 def encode_mb(bw, enc, src, rec, refs, mb, cols, rows, size, decisions, mvs_written, segs_written, ptype, q,
               plus_umv, rru, ap, clip_for, mvs, seg_of, opts, coded_flags, quant_of):
     mbx, mby = mb % cols, mb // cols
     d = decisions[mb]
     intra = d[0] == 'intra'
     block = size // 2
-    erps_multi = opts.get('mrpa', False)
+    erps_multi = opts.get('segment_mrpa', {}).get(seg_of[mb], opts.get('mrpa', False))
+    if d[0] == 'pr0':
+        # an INTER macroblock with a zero vector from the reference PR0 names and no coefficient
+        assert erps_multi and not ap and not rru and opts.get('_parts') is None and 0 < d[1] < len(refs)
+        if mb in opts.get('stuffing', ()):
+            write_stuffing(bw, ptype, erps_multi)
+            opts['_pending_pr0'] = False
+        bw.put(0, 1)
+        write_pr0(bw, opts, d[1], 'SS' in enc.cfg['modes'])
+        pred = {}
+        for k in range(4):
+            pred[k] = predict(refs[d[1]], 0, mbx * size + (k % 2) * block, mby * size + (k // 2) * block, block,
+                              block, 0, 0, rec.rounding, clip_for(mb, 0))
+        for k in (4, 5):
+            pred[k] = predict(refs[d[1]], k - 3, mbx * block, mby * block, block, block, 0, 0, rec.rounding,
+                              clip_for(mb, 1))
+        t = MacroblockTexture(mb, opts['_q'], False)
+        t.levels = {k: [0] * 64 for k in range(6)}
+        mvs_written[mb] = (0, 0)
+        opts['_bv'][mb] = [(0, 0)] * 4
+        record_vectors(rec, mb, cols, size, 'inter', 0, 0)
+        coded_flags[mb] = True
+        quant_of[mb] = opts['_q']
+        opts['_texture'].reconstruct(rec, pred, t, mbx, mby, size, rru, True)
+        return
     tex = opts['_texture']
     prior = opts['_q']
     q = opts.get('requant', {}).get(mb, prior + opts.get('dquant', {}).get(mb, 0))
@@ -1240,8 +1477,14 @@ def encode_mb(bw, enc, src, rec, refs, mb, cols, rows, size, decisions, mvs_writ
     # prediction
     pred = {}
     four = d[0] == 'inter4'
+    four_refs = opts.get('four_refs', {}).get(mb, [d[1]] * 4)
     if four:
-        pred = predict_mb(refs[d[1]], mbx, mby, size, d[4], rec.rounding, clip_for(mb, 0), clip_for(mb, 1), True)
+        pred = predict_mb(refs[four_refs[0]], mbx, mby, size, d[4], rec.rounding, clip_for(mb, 0), clip_for(mb, 1),
+                          True)
+        for k in range(1, 4):
+            if four_refs[k] != four_refs[0]:
+                pred[k] = predict_mb(refs[four_refs[k]], mbx, mby, size, d[4], rec.rounding, clip_for(mb, 0),
+                                     clip_for(mb, 1), True)[k]
     elif not intra:
         r = d[1]
         vx, vy = d[2], d[3]
@@ -1264,13 +1507,24 @@ def encode_mb(bw, enc, src, rec, refs, mb, cols, rows, size, decisions, mvs_writ
             and not opts.get('no_skip'))
     parts = opts.get('_parts')
     coef = parts.coef if parts is not None else bw
+    if opts.get('_arith') is not None:
+        encode_mb_sac(opts['_arith'], enc, t, mb, ptype, d, skip, four, dquant, prior, q, opts, mvs_written,
+                      segs_written, cols, rec, size, coded_flags, quant_of)
+        tex.reconstruct(rec, pred, t, mbx, mby, size, rru, skip)
+        return
     # syntax
+    if parts is None and mb in opts.get('stuffing', ()):
+        write_stuffing(bw, ptype, erps_multi)
+        opts['_pending_pr0'] = False
     if ptype != 0 and parts is None:
         bw.put(1 if skip else 0, 1)
+        if skip:
+            opts['_pending_pr0'] = False
     if skip:
         if parts is not None:
             parts.hd.code('1')
         mvs_written[mb] = (0, 0)
+        opts['_bv'][mb] = [(0, 0)] * 4
         record_vectors(rec, mb, cols, size, 'skip', 0, 0)
         coded_flags[mb] = False
         quant_of[mb] = q
@@ -1301,31 +1555,58 @@ def encode_mb(bw, enc, src, rec, refs, mb, cols, rows, size, decisions, mvs_writ
         coded_flags[mb] = True
         quant_of[mb] = q
     else:
-        assert not four
+        assert not four or (not ap and not rru)
         if ptype != 0 and erps_multi:
-            bw.code(index_code(0))
+            write_pr0(bw, opts, 0, False)
         cbpc = pattern & 3
-        mb_type = (4 if intra else 1) if dquant else (3 if intra else 0)
+        if four:
+            mb_type = 5 if dquant else 2
+        else:
+            mb_type = (4 if intra else 1) if dquant else (3 if intra else 0)
         if ptype == 0:
             bw.code(MCBPC_I[(mb_type, cbpc)])
+        elif mb_type == 5:
+            bw.code(MCBPC_P5[cbpc])
         else:
             bw.code(MCBPC_P[mb_type * 4 + cbpc])
         tex.intra_mode(bw, t)
         bw.code(tex.cbpy(t, intra))
         if dquant:
             bw.code(dquant_code(prior, q, tex.mq))
-        if not intra:
+        if four:
+            own = []
+            opts['_bv'][mb] = own
+            for k in range(4):
+                if erps_multi:
+                    bw.code(index_code(four_refs[k]))
+                    if four_refs[k] == 1 and not plus_umv:
+                        bw.code('1')
+                pk = (block_predictor(opts['_bv'], segs_written, cols, mb, k, 0),
+                      block_predictor(opts['_bv'], segs_written, cols, mb, k, 1))
+                write_vector(bw, pk, d[4][k], plus_umv, False)
+                own.append(d[4][k])
+            mvs_written[mb] = d[4][0]
+            record_vectors(rec, mb, cols, size, 'inter', d[4][0][0], d[4][0][1])
+        elif not intra:
             if erps_multi:
-                r = d[1]
+                # a corrupt reference index where the test asks for one; the prediction stays that of d[1]
+                r = opts.get('bad_refs', {}).get(mb, d[1])
                 bw.code(index_code(r))
                 if r == 1 and not plus_umv:
                     bw.code('1')
             vx, vy = d[2], d[3]
-            px = enc.predictor(mvs_written, segs_written, cols, mbx, mby, 0)
-            py = enc.predictor(mvs_written, segs_written, cols, mbx, mby, 1)
+            if opts['_blocks']:
+                px = block_predictor(opts['_bv'], segs_written, cols, mb, 0, 0)
+                py = block_predictor(opts['_bv'], segs_written, cols, mb, 0, 1)
+            else:
+                px = enc.predictor(mvs_written, segs_written, cols, mbx, mby, 0)
+                py = enc.predictor(mvs_written, segs_written, cols, mbx, mby, 1)
             if rru:
                 cx = encode_mvd(bw, pseudo(px), pseudo(vx), plus_umv)
                 cy = encode_mvd(bw, pseudo(py), pseudo(vy), plus_umv)
+            elif enc.cfg.get('v1') and 'UMV' in enc.cfg['modes']:
+                cx = encode_mvd_v1_umv(px, vx)
+                cy = encode_mvd_v1_umv(py, vy)
             else:
                 cx = encode_mvd(bw, px, vx, plus_umv)
                 cy = encode_mvd(bw, py, vy, plus_umv)
@@ -1334,6 +1615,7 @@ def encode_mb(bw, enc, src, rec, refs, mb, cols, rows, size, decisions, mvs_writ
             if plus_umv and cx == '000' and cy == '000':
                 bw.code('1')
             mvs_written[mb] = (vx, vy)
+            opts['_bv'][mb] = [(vx, vy)] * 4
             record_vectors(rec, mb, cols, size, 'inter', vx, vy)
         else:
             mvs_written[mb] = None
@@ -1342,6 +1624,77 @@ def encode_mb(bw, enc, src, rec, refs, mb, cols, rows, size, decisions, mvs_writ
         coded_flags[mb] = True
         quant_of[mb] = q
     tex.reconstruct(rec, pred, t, mbx, mby, size, rru, skip)
+
+
+def sac_mcbpc_model(cfg, ptype):
+    if ptype == 0:
+        return 'MCBPC_INTRA'
+    # the extended table of INTER4V+Q in PLUSPTYPE pictures with the Advanced Prediction or Deblocking Filter mode
+    extended = not cfg.get('v1') and ('AP' in cfg['modes'] or 'DF' in cfg['modes'])
+    return 'MCBPC_P_EXTENDED' if extended else 'MCBPC_P'
+
+
+def encode_mb_sac(ar, enc, t, mb, ptype, d, skip, four, dquant, prior, q, opts, mvs_written, segs_written, cols, rec,
+                  size, coded_flags, quant_of):
+    """The macroblock layer of an I- or P-picture with the arithmetic code of Annex E: COD, MCBPC, INTRA_MODE, CBPY,
+    DQUANT, MVD, INTRADC and TCOEF, each with its model."""
+    cfg = enc.cfg
+    tex = opts['_texture']
+    intra = d[0] == 'intra'
+    mbx, mby = mb % cols, mb // cols
+    assert not four
+    for _ in range(opts.get('sac_stuffing', {}).get(mb, 0)):
+        if ptype != 0:
+            ar.encode(0, 'COD')
+        ar.encode(8 if ptype == 0 else 20, sac_mcbpc_model(cfg, ptype))
+    if ptype != 0:
+        ar.encode(1 if skip else 0, 'COD')
+    if skip:
+        mvs_written[mb] = (0, 0)
+        record_vectors(rec, mb, cols, size, 'skip', 0, 0)
+        coded_flags[mb] = False
+        quant_of[mb] = q
+        return
+    cbpc = t.pattern & 3
+    if ptype == 0:
+        ar.encode((4 if dquant else 0) + cbpc, 'MCBPC_INTRA')
+    else:
+        mb_type = (4 if intra else 1) if dquant else (3 if intra else 0)
+        ar.encode(mb_type * 4 + cbpc, sac_mcbpc_model(cfg, ptype))
+    if intra and tex.aic:
+        ar.encode(t.mode, 'INTRA_AC_DC')
+    intra_definition = intra or (tex.aiv_mode and cbpc == 3)
+    cbpy = t.pattern >> 2
+    ar.encode(cbpy if intra_definition else 15 - cbpy, 'CBPY_INTRA' if intra_definition else 'CBPY')
+    if dquant:
+        ar.encode({-1: 0, -2: 1, 1: 2, 2: 3}[q - prior], 'DQUANT')
+    if intra:
+        mvs_written[mb] = None
+        record_vectors(rec, mb, cols, size, 'intra', 0, 0)
+    else:
+        vx, vy = d[2], d[3]
+        px = enc.predictor(mvs_written, segs_written, cols, mbx, mby, 0)
+        py = enc.predictor(mvs_written, segs_written, cols, mbx, mby, 1)
+        v1_umv = bool(cfg.get('v1')) and 'UMV' in cfg['modes']
+        assert v1_umv or 'UMV' not in cfg['modes']
+        sac_mvd(ar, px, vx, v1_umv)
+        sac_mvd(ar, py, vy, v1_umv)
+        mvs_written[mb] = (vx, vy)
+        record_vectors(rec, mb, cols, size, 'inter', vx, vy)
+    for k in range(6):
+        coded = t.pattern & (32 >> k)
+        if intra and tex.aic:
+            if coded:
+                sac_events(ar, events_of(t.levels[k], tex.scan(t.mode), 0), True, True)
+        elif intra:
+            ar.encode(t.levels[k][0] - 1, 'INTRADC')
+            if coded:
+                sac_events(ar, events_of(t.levels[k], ZIGZAG, 1), True, False)
+        elif coded:
+            # the Alternative INTER VLC mode has no arithmetic counterpart: Table 16's models code every block
+            sac_events(ar, events_of(t.levels[k], ZIGZAG, 0), False, False)
+    coded_flags[mb] = True
+    quant_of[mb] = q
 
 
 def obmc(ref, mb, k, bx, by, block, vx, vy, mvs, seg_of, cols, rows, rounding, clip_for, opts):
@@ -1691,6 +2044,9 @@ def first_slice_header(bw, cfg, cols, rows, rru):
     bw.code('1')
     bw.put(0, mba_bits(cols * rows, rru))
     bw.code('1')
+    if 'ERPS' in cfg['modes']:
+        # no picture number and no ERPS layer of the slice's own (U.3.1)
+        bw.code('01')
 
 
 def recipe_dps(enc):
@@ -1741,7 +2097,7 @@ def recipe_rps(enc):
     for tr, trp, gob_trp in plan:
         segs = gob_segments(cols, rows, [3, 6]) if gob_trp else None
         ref = store[trp] if trp is not None else last
-        opts = {'tr': tr, 'trp': trp, 'search': SEARCH}
+        opts = {'tr': tr, 'trp': trp, 'search': SEARCH, 'segment_tri': (2,)}
         if gob_trp:
             opts['segments'] = segs
             opts['segment_trp'] = gob_trp
@@ -1789,6 +2145,9 @@ def recipe_erps(enc):
                 'max_refs': len(refs) if st['multiple'] else 1,
                 'erps': erps_writer(1, multiple=st['multiple'], remaps=st['remaps'], sliding=st['sliding'],
                                     mmco=st['mmco'])}
+        if enc.cfg.get('pr0') and st['multiple'] and len(refs) > 1:
+            # runs of PR0 1, which take MEPB0 in slices and on every second macroblock of a run otherwise
+            opts['pr0'] = {4: 1, 5: 1, 6: 1, 20: 1, 21: 1, 40: len(refs) - 1}
         bw, pic = encode_picture(enc, stream, i + 1, 1, 8, refs, opts)
         append(out, bw)
         recon.append(pic)
@@ -1855,7 +2214,7 @@ CONFIGS.update({
 # ---------------------------------------------------------------- B-pictures (Annex O) and Improved PB-frames (M)
 
 MBTYPE_B = {0: '11', 1: '0001', 2: '100', 3: '101', 4: '00110', 5: '010', 6: '011', 7: '00111', 8: '00100',
-            9: '00101', 10: '00001', 11: '000001', 12: '0000001'}
+            9: '00101', 10: '00001', 11: '000001', 12: '0000001', 13: '000000001'}
 CBPC_O4 = {0: '0', 1: '10', 2: '111', 3: '110'}
 MODB_M = {0: '0', 1: '10', 2: '110', 3: '1110', 4: '11110', 5: '11111'}
 SIXTEENTH = [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2]
@@ -1870,6 +2229,40 @@ def chroma_of_four(total):
 def cell_vector(pic, cx, cy):
     """The mode and vector a picture recorded for a 16 by 16 cell."""
     return pic.vectors.get((cx, cy), ('skip', 0, 0))
+
+
+def block_predictor(vectors, segs, cols, mb, k, comp):
+    """The median predictor of a component of the vector of luminance block k of a macroblock (F.2, Figure 15):
+    from the blocks to the left, above and above right, inside the macroblock or in macroblocks of its segment already
+    coded; vectors holds the four vectors of each macroblock written, none for an INTRA one (a zero candidate)."""
+    mbx, mby = mb % cols, mb // cols
+    seg = segs[mb]
+
+    def value(j, b):
+        v = vectors.get(j)
+        return 0 if v is None else v[b][comp]
+
+    left = mbx > 0 and segs.get(mb - 1) == seg
+    above = mby > 0 and segs.get(mb - cols) == seg
+    above_right = mby > 0 and mbx + 1 < cols and segs.get(mb - cols + 1) == seg
+    right_edge = mbx + 1 >= cols
+    if k in (0, 1):
+        mv1 = (value(mb - 1, 1) if left else 0) if k == 0 else value(mb, 0)
+        if not above:
+            mv2 = mv1
+            mv3 = 0 if right_edge else mv1
+        else:
+            mv2 = value(mb - cols, 2 if k == 0 else 3)
+            mv3 = 0 if right_edge else value(mb - cols + 1, 2) if above_right else mv1
+    elif k == 2:
+        mv1 = value(mb - 1, 3) if left else 0
+        mv2 = value(mb, 0)
+        mv3 = value(mb, 1)
+    else:
+        mv1 = value(mb, 2)
+        mv2 = value(mb, 0)
+        mv3 = value(mb, 1)
+    return sorted([mv1, mv2, mv3])[1]
 
 
 def record_vectors(rec, mb, cols, size, kind, vx, vy):
@@ -1991,6 +2384,14 @@ def encode_b_picture(enc, index, opts, forward_refs, backward_refs, trb, trd):
     def extra(b):
         b.put(1, 4)
         b.put(1, 4)
+        if 'RPS' in modes:
+            b.put(4, 3)
+            if opts.get('trp') is None:
+                b.code('0')
+            else:
+                b.code('1')
+                b.put(opts['trp'], 10)
+            b.code('01')
         if erps:
             b.put(4, 3)
             b.put(opts['pn'], 10)
@@ -2026,9 +2427,44 @@ def encode_b_picture(enc, index, opts, forward_refs, backward_refs, trb, trd):
     quant_of = {}
     tex = Texture(modes)
     qcur = q
+    seg_list = opts.get('segments') or [{'first': 0, 'count': cols * rows}]
+    seg_of = {}
+    for sidx, sg in enumerate(seg_list):
+        for k in range(sg['first'], sg['first'] + sg['count']):
+            seg_of[k] = sidx
+    picture_fwd, picture_bwd, picture_multiple, picture_two = fwd, backward_refs, multiple, two
     for mb in range(cols * rows):
-        segs[mb] = 0
+        sidx = seg_of[mb]
+        if mb > 0 and seg_of[mb - 1] != sidx:
+            if sidx - 1 in opts.get('tail_stuffing', ()):
+                bw.put(0, 1)
+                if erps and multiple:
+                    bw.code(index_code(0))
+                bw.code(MBTYPE_B[13])
+            write_segment_header(bw, cfg, opts, mb, 0, q, cols, rows, rru, sidx)
+            qcur = q
+            opts['_pending_pr0'] = False
+        segs[mb] = sidx
+        fwd = opts.get('segment_forward', {}).get(sidx, picture_fwd)
+        backward_refs = opts.get('segment_backward', {}).get(sidx, picture_bwd)
+        multiple = opts.get('segment_mrpa', {}).get(sidx, picture_multiple)
+        two = opts.get('segment_two', {}).get(sidx, picture_two)
         mbx, mby = mb % cols, mb // cols
+        if mb in opts.get('pr0', {}):
+            # a forward macroblock with a zero vector from the reference PR0 names and no coefficient (U.3.2.1.2)
+            r = opts['pr0'][mb]
+            assert multiple and parts is None and not rru and 0 < r < len(fwd)
+            bw.put(0, 1)
+            write_pr0(bw, opts, r, 'SS' in modes)
+            pred = predict_mb(fwd[r], mbx, mby, size, (0, 0), rounding, clip_l, clip_c)
+            t = MacroblockTexture(mb, qcur, False)
+            t.levels = {k: [0] * 64 for k in range(6)}
+            tex.reconstruct(rec, pred, t, mbx, mby, size, rru, True)
+            fwd_vectors[mb] = (0, 0)
+            record_vectors(rec, mb, cols, size, 'inter', 0, 0)
+            coded[mb] = True
+            quant_of[mb] = qcur
+            continue
         # direct: the subsequent reference's vectors, block by block
         direct_f, direct_b = [], []
         cells = size // 16
@@ -2071,8 +2507,18 @@ def encode_b_picture(enc, index, opts, forward_refs, backward_refs, trb, trd):
         candidates.append((sad(src, pbi, mbx, mby, size) + 50, 'bidir', pbi, best_f[2], best_b[2], best_f[3],
                            best_b[3]))
         forced = opts.get('force', {}).get(mb)
+        bidir = opts.get('force_bidir', {}).get(mb)
         if mb in opts.get('intra_mbs', ()):
             choice = (0, 'intra', None, None, None, 0, 0)
+        elif bidir is not None:
+            # a bidirectional macroblock whose forward vector differs from its predictor by (0, dy) and whose
+            # backward vector is zero, from the forward and backward references named
+            dy, fr, br = bidir
+            fv = (vector_predictor(fwd_vectors, segs, cols, mbx, mby, 0),
+                  vector_predictor(fwd_vectors, segs, cols, mbx, mby, 1) + dy)
+            pbi = average(predict_mb(fwd[fr], mbx, mby, size, fv, rounding, clip_l, clip_c),
+                          predict_mb(backward_refs[br], mbx, mby, size, (0, 0), rounding, clip_l, clip_c))
+            choice = (0, 'bidir', pbi, fv, (0, 0), fr, br)
         elif forced:
             choice = next(c for c in candidates if c[1] == forced)
         else:
@@ -2084,12 +2530,15 @@ def encode_b_picture(enc, index, opts, forward_refs, backward_refs, trb, trd):
         dquant = qcur != prior
         quant_of[mb] = qcur
         t = tex.code(src, pred, mbx, mby, size, qcur, intra, rru, mb, opts.get('intra_mode', {}).get(mb))
+        if mb in opts.get('no_texture', ()):
+            drop_texture(t)
         pattern = t.pattern
         if kind == 'direct' and pattern == 0 and not dquant:
             if parts is not None:
                 parts.hd.code('1')
             else:
                 bw.put(1, 1)
+                opts['_pending_pr0'] = False
             tex.reconstruct(rec, pred, t, mbx, mby, size, rru, True)
             record_vectors(rec, mb, cols, size, 'skip', 0, 0)
             coded[mb] = False
@@ -2121,9 +2570,14 @@ def encode_b_picture(enc, index, opts, forward_refs, backward_refs, trb, trd):
             tex.reconstruct(rec, pred, t, mbx, mby, size, rru)
             record_vectors(rec, mb, cols, size, 'intra' if intra else 'inter', 0, 0)
             continue
+        if mb in opts.get('stuffing', ()):
+            bw.put(0, 1)
+            if erps and multiple:
+                write_pr0(bw, opts, 0, False)
+            bw.code(MBTYPE_B[13])
         bw.put(0, 1)
         if erps and multiple:
-            bw.code(index_code(0))
+            write_pr0(bw, opts, 0, False)
         bw.code(MBTYPE_B[mbtype])
         tex.intra_mode(bw, t)
         if texture:
@@ -2224,6 +2678,11 @@ def recipe_erps_b(enc):
     order = buf.order((), pn + 1)
     opts = {'tr': 1, 'pn': pn + 1, 'mrpa': True, 'two_backward': True, 'search': SEARCH,
             'force': {0: 'backward', 1: 'forward', 2: 'bidir', 5: 'direct', 30: 'backward', 31: 'bidir'}}
+    if 'UMV' not in enc.cfg['modes']:
+        # the first backward reference after a forward vector difference of +6 samples vertically, whose code
+        # (Table 14) ends in five zeros, so that BR takes the start code emulation prevention bit of U.3.2.2, and
+        # after one of 0
+        opts['force_bidir'] = {40: (12, 0, 0), 41: (0, 0, 0)}
     bw, b1 = encode_b_picture(enc, 1, opts, order[2:], order[:2], 1 - order[2].tr, order[0].tr - order[2].tr)
     append(out, bw)
     display[1] = b1
@@ -2232,6 +2691,8 @@ def recipe_erps_b(enc):
     order = buf.order(remaps, pn + 1)
     opts = {'tr': 3, 'pn': pn + 1, 'mrpa': True, 'two_backward': False, 'remaps': remaps, 'search': SEARCH,
             'force': {3: 'forward', 4: 'bidir', 50: 'direct'}}
+    if enc.cfg.get('pr0'):
+        opts['pr0'] = {6: 1, 7: 1, 8: 1, 9: 1, 60: 1}
     bw, b3 = encode_b_picture(enc, 3, opts, order[1:], order[:1], 3 - order[1].tr, order[0].tr - order[1].tr)
     append(out, bw)
     display[3] = b3
@@ -2372,6 +2833,7 @@ def encode_ipb_picture(enc, index_p, index_b, opts, refs, previous_tr):
         first_slice_header(bw, cfg, cols, rows, rru)
     if 'DPS' in modes:
         parts = Partitions(rru)
+    ar = Arith(bw) if 'SAC' in modes else None
     mvs = {}
     segs = {}
     part_fwd = {}
@@ -2380,8 +2842,19 @@ def encode_ipb_picture(enc, index_p, index_b, opts, refs, previous_tr):
     tex = Texture(modes)
     tex_b = Texture(modes, alternative=False)
     qcur = q
+    segments = opts.get('segments') or [{'first': 0, 'count': cols * rows}]
+    order, _ = segment_order(segments, cols, rows, True)
+    seg_of = {mb: sidx for sidx, mbs in enumerate(order) for mb in mbs}
     for mb in range(cols * rows):
-        segs[mb] = 0
+        sidx = seg_of[mb]
+        if sidx > 0 and mb == order[sidx][0]:
+            # a slice header (Annex K): sequential slices, each with partitions of its own in Annex V
+            if parts is not None:
+                parts.flush(bw)
+                parts = Partitions(rru)
+            write_segment_header(bw, cfg, opts, mb, 0, q, cols, rows, rru, sidx)
+            qcur = q
+        segs[mb] = sidx
         mbx, mby = mb % cols, mb // cols
         prior = qcur
         qcur = opts.get('requant', {}).get(mb, prior + opts.get('dquant', {}).get(mb, 0))
@@ -2399,11 +2872,16 @@ def encode_ipb_picture(enc, index_p, index_b, opts, refs, previous_tr):
                     best = (s, p, v, r)
         _, ppred, pv, pr = best
         forced = opts.get('force', {}).get(mb, {})
-        if 'p' in forced:
-            pr, pv = forced['p']
+        skip_mb = mb in opts.get('skip_mbs', ())
+        if 'p' in forced or skip_mb:
+            pr, pv = forced.get('p', (0, (0, 0)))
             ppred = predict_mb(refs[pr], mbx, mby, size, pv, rec.rounding, clip_l, clip_c)
         intra = mb in opts.get('intra_mbs', ())
         pt = tex.code(src_p, ppred, mbx, mby, size, qcur, intra, rru, mb, opts.get('intra_mode', {}).get(mb))
+        if skip_mb:
+            # a macroblock coded as not coded (COD 1): no P-part texture, a bidirectional B-part without texture
+            assert not dquant and not intra
+            drop_texture(pt)
         ppattern = pt.pattern
         # reconstruct the P-part (PREC) now: the B-part predicts from it
         tex.reconstruct(rec, ppred, pt, mbx, mby, size, rru)
@@ -2444,11 +2922,15 @@ def encode_ipb_picture(enc, index_p, index_b, opts, refs, previous_tr):
                 s = sad(src_b, p, mbx, mby, size) + 64 * r
                 if bestf is None or s < bestf[0]:
                     bestf = (s, p, v, r)
+        if 'bv' in forced:
+            bestf = (0, predict_mb(refs[0], mbx, mby, size, forced['bv'], 0, clip_l, clip_c), forced['bv'], 0)
         cands = [(sad(src_b, bi, mbx, mby, size) - 100, 'bidir', bi), (bestf[0], 'forward', bestf[1]),
                  (sad(src_b, back, mbx, mby, size), 'backward', back)]
-        kind = forced.get('b') or min(cands, key=lambda c: c[0])[1]
+        kind = 'bidir' if skip_mb else forced.get('b') or min(cands, key=lambda c: c[0])[1]
         bpred = next(c[2] for c in cands if c[1] == kind)
         bt = tex_b.code(src_b, bpred, mbx, mby, size, bq, False, rru, mb)
+        if skip_mb or forced.get('b_texture') is False:
+            drop_texture(bt)
         bpattern = bt.pattern
         # syntax
         skip = (not intra and pv == (0, 0) and pr == 0 and ppattern == 0 and kind == 'bidir' and bpattern == 0
@@ -2456,6 +2938,8 @@ def encode_ipb_picture(enc, index_p, index_b, opts, refs, previous_tr):
         if skip:
             if parts is not None:
                 parts.hd.code('1')
+            elif ar is not None:
+                ar.encode(1, 'COD')
             else:
                 bw.put(1, 1)
             mvs[mb] = (0, 0)
@@ -2475,11 +2959,50 @@ def encode_ipb_picture(enc, index_p, index_b, opts, refs, previous_tr):
                 parts.coef.code(dquant_code(prior, qcur, tex.mq))
             parts.thread_vector(mvp)
             if kind == 'forward':
-                left = part_fwd.get(mb - 1) if mbx > 0 else None
+                left = part_fwd.get(mb - 1) if mbx > 0 and segs[mb - 1] == sidx else None
                 parts.vector(left if left else (0, 0), bestf[2])
                 part_fwd[mb] = bestf[2]
             tex.write_blocks(parts.coef, pt)
             tex_b.write_blocks(parts.coef, bt)
+            record_vectors(rec, mb, cols, size, 'intra' if intra else 'inter', pv[0], pv[1])
+            coded[mb] = True
+            quant[mb] = qcur
+        elif ar is not None:
+            # the arithmetic code of Annex E: the models of E.7 for the syntax of Table M.1's macroblocks
+            assert not erps and not rru and not plus_umv
+            ar.encode(0, 'COD')
+            cbpc = ppattern & 3
+            ar.encode(((4 if intra else 1) if dquant else (3 if intra else 0)) * 4 + cbpc, sac_mcbpc_model(cfg, 1))
+            modb = {'bidir': 0, 'forward': 2, 'backward': 4}[kind] + (1 if bpattern else 0)
+            ar.encode(modb, 'MODB_M')
+            if bpattern:
+                for k in range(6):
+                    ar.encode(1 if bpattern & (32 >> k) else 0, 'YCBPB' if k < 4 else 'UVCBPB')
+            cbpy = ppattern >> 2
+            ar.encode(cbpy if intra else 15 - cbpy, 'CBPY_INTRA' if intra else 'CBPY')
+            if dquant:
+                ar.encode({-1: 0, -2: 1, 1: 2, 2: 3}[qcur - prior], 'DQUANT')
+            pred_p = (vector_predictor(mvs, segs, cols, mbx, mby, 0), vector_predictor(mvs, segs, cols, mbx, mby, 1))
+            sac_mvd(ar, pred_p[0], mvp[0], False)
+            sac_mvd(ar, pred_p[1], mvp[1], False)
+            mvs[mb] = mvp if (not intra or kind == 'bidir') else None
+            if kind == 'forward':
+                left = part_fwd.get(mb - 1) if mbx > 0 and segs[mb - 1] == sidx else None
+                left = left if left else (0, 0)
+                sac_mvd(ar, left[0], bestf[2][0], False)
+                sac_mvd(ar, left[1], bestf[2][1], False)
+                part_fwd[mb] = bestf[2]
+            for k in range(6):
+                coded_k = ppattern & (32 >> k)
+                if intra:
+                    ar.encode(pt.levels[k][0] - 1, 'INTRADC')
+                    if coded_k:
+                        sac_events(ar, events_of(pt.levels[k], ZIGZAG, 1), True, False)
+                elif coded_k:
+                    sac_events(ar, events_of(pt.levels[k], ZIGZAG, 0), False, False)
+            for k in range(6):
+                if bpattern & (32 >> k):
+                    sac_events(ar, events_of(bt.levels[k], ZIGZAG, 0), False, False)
             record_vectors(rec, mb, cols, size, 'intra' if intra else 'inter', pv[0], pv[1])
             coded[mb] = True
             quant[mb] = qcur
@@ -2505,7 +3028,7 @@ def encode_ipb_picture(enc, index_p, index_b, opts, refs, previous_tr):
             write_vector(bw, pred_p, mvp, plus_umv, rru)
             mvs[mb] = mvp if (not intra or kind == 'bidir') else None
             if kind == 'forward':
-                left = part_fwd.get(mb - 1) if mbx > 0 else None
+                left = part_fwd.get(mb - 1) if mbx > 0 and segs[mb - 1] == sidx else None
                 bpv = bestf[2]
                 if erps and multiple:
                     bw.code(index_code(bestf[3]))
@@ -2521,6 +3044,8 @@ def encode_ipb_picture(enc, index_p, index_b, opts, refs, previous_tr):
         tex_b.reconstruct(part, bpred, bt, mbx, mby, size, rru, skip)
     if parts is not None:
         parts.flush(bw)
+    if ar is not None:
+        ar.flush()
     if df or rru:
         loop_filter(rec, cols, rows, size, coded, quant, None, df, tex.mq)
         loop_filter(part, cols, rows, size, coded, {mb: min(31, (5 + dbq) * quant[mb] // 4) for mb in quant},
@@ -2569,6 +3094,7 @@ def recipe_ipb(enc):
 
 CONFIGS.update({
     'ipb': {'width': 176, 'height': 144, 'modes': {'UMV'}, 'recipe': recipe_ipb},
+    'ipbsac': {'width': 176, 'height': 144, 'modes': {'SAC'}, 'recipe': recipe_ipb},
     'ipbdf': {'width': 176, 'height': 144, 'modes': {'UMV', 'DF'}, 'recipe': recipe_ipb},
     'ipberps': {'width': 176, 'height': 144, 'modes': {'UMV', 'ERPS'}, 'recipe': recipe_ipb},
     'ipbrru': {'width': 176, 'height': 144, 'modes': {'UMV'}, 'rru': True, 'recipe': recipe_ipb},
@@ -2589,6 +3115,10 @@ DPS_MCBPC_EI = {(0, 0): '010', (0, 1): '0110', (0, 2): '01110', (0, 3): '00100',
                 (2, 0): '0001000', (2, 1): '01111110', (2, 2): '00111100', (2, 3): '00011000',
                 (3, 0): '011111110', (3, 1): '001111100', (3, 2): '000111000', (3, 3): '000010000'}
 DPS_STUFFING_EI = '0111111110'
+# Table O.2 by MBTYPE index (10 is stuffing) and Table O.3 by MCBPC index, type << 2 | CBPC (16 is stuffing)
+MBTYPE_EP = ['1', '001', '010', '011', '00001', '00010', '00011', '000001', '0000001', '00000001', '000000001']
+MCBPC_EI = ['1', '001', '010', '011', '0001', '0000001', '0000010', '0000011', '00000001', '00001001', '00001010',
+            '00001011', '00001100', '00001101', '00001110', '00001111', '000000001']
 
 
 def upward_prediction(base, mbx, mby):
@@ -2604,68 +3134,191 @@ def upward_prediction(base, mbx, mby):
     return pred
 
 
-def encode_snr_picture(enc, index, opts, base, previous):
-    """An EI-picture (no previous enhancement picture) or EP-picture of SNR scalability in enhancement layer 2,
-    coded in data partitioned slices: upward, forward, bidirectional and INTRA macroblocks."""
+def snr_stuffing(bw, opts, ptype, multiple):
+    """Macroblock stuffing of an EI- or EP-picture outside data partitioning: COD 0, PR0 0 in an EP-picture with
+    multiple references (U.3.2.1), and the stuffing MCBPC of Table O.3 or MBTYPE of Table O.4."""
+    bw.code('0')
+    if ptype == 5 and multiple:
+        write_pr0(bw, opts, 0, False)
+    bw.code('000000001')
+
+
+def encode_snr_picture(enc, index, opts, base, previous, refs=None):
+    """An EI-picture (no previous enhancement picture) or EP-picture of SNR scalability in enhancement layer 2:
+    upward, forward, bidirectional and INTRA macroblocks, in data partitioned slices or in groups of blocks. refs are
+    the forward references of an EP-picture in relative index order (the previous enhancement picture alone by
+    default); with the Enhanced Reference Picture Selection mode macroblocks may name any of them."""
     cfg = enc.cfg
-    width, height = cfg['width'], cfg['height']
-    src = source_picture(enc.source, enc.sw, enc.sh, index, width, height)
+    width, height = opts.get('width', cfg['width']), opts.get('height', cfg['height'])
+    src = opts.get('source_pic') or source_picture(enc.source, enc.sw, enc.sh, index, width, height)
     rec = Picture(width, height)
     rec.tr = opts['tr']
+    rec.pn = opts.get('pn', 0)
     rec.rounding = opts.get('rounding', 0)
     cols = (rec.cw + 15) // 16
     rows = (rec.ch + 15) // 16
     q = opts.get('q', 6)
+    if refs is None:
+        refs = [] if previous is None else [previous]
+    refs = list(refs)
+    previous = refs[0] if refs else None
     ptype = 4 if previous is None else 5
-    clip_l = (0, 0, rec.cw - 1, rec.ch - 1)
-    clip_c = (0, 0, rec.cw // 2 - 1, rec.ch // 2 - 1)
+    rpr = opts.get('rpr') if previous is not None else None
+    refine = opts.get('refine', [None] * 8)
+    if rpr:
+        # P.2.2, P.2.3: an EP-picture resamples its forward reference with the warping parameters and the fill mode
+        # of the lower layer picture, at its own displacement accuracy; for spatial scalability the parameter of
+        # each upsampled dimension is doubled and takes the one-bit refinement the header sends; a lower layer
+        # picture that did not resample implies parameters of zero and clipping
+        lower = getattr(base, 'warp', None) or {'w': [0] * 8, 'fill': 3}
+        params = [lower['w'][i] if refine[i] is None else 2 * lower['w'][i] + refine[i] for i in range(8)]
+        fillv = {0: lower.get('color', (16, 128, 128)), 1: (16, 128, 128), 2: (128, 128, 128),
+                 3: (0, 0, 0)}[lower['fill']]
+        previous = warp(previous, width, height, params, rpr, lower['fill'], fillv, rec.rounding)
+        refs[0] = previous
     bw = Bits()
 
     def extra(b):
         b.put(2, 4)
         b.put(1, 4)
+        if 'RPS' in cfg['modes']:
+            b.put(4, 3)
+            if opts.get('trp') is None:
+                b.code('0')
+            else:
+                b.code('1')
+                b.put(opts['trp'], 10)
+            b.code('01')
+        if 'ERPS' in cfg['modes']:
+            b.put(4, 3)
+            b.put(rec.pn, 10)
+            opts['erps'](b)
+        if rpr:
+            b.put(2 if rpr == 2 else 3, 2)
+            for bit in refine:
+                if bit is not None:
+                    b.put(bit, 1)
 
-    write_header(bw, None, rec, ptype, q, cfg, extra=extra, ufep=1)
-    first_slice_header(bw, cfg, cols, rows, False)
-    parts = Partitions(False)
+    write_header(bw, None, rec, ptype, q, {**cfg, 'format': opts.get('format', cfg.get('format', 2))}, extra=extra,
+                 ufep=1, rpr=bool(rpr))
+    dps = 'DPS' in cfg['modes']
+    plus_umv = 'UMV' in cfg['modes']
+    isd = 'ISD' in cfg['modes']
+    multiple = ptype == 5 and opts.get('mrpa', False)
+    segments = opts.get('segments') or [{'first': 0, 'count': cols * rows}]
+    assert not dps or len(segments) == 1
+    order, rects = segment_order(segments, cols, rows, False)
+    seg_of = {}
+    for sidx, mbs in enumerate(order):
+        for mb in mbs:
+            seg_of[mb] = sidx
+
+    def clips(mb):
+        """The luminance and chrominance clipping rectangles of a macroblock: its segment's in the Independent
+        Segment Decoding mode, which the forward references share (R.3.2), and the picture's otherwise."""
+        if not isd:
+            return (0, 0, rec.cw - 1, rec.ch - 1), (0, 0, rec.cw // 2 - 1, rec.ch // 2 - 1)
+        x0, y0, x1, y1 = rects[seg_of[mb]]
+        return ((x0 * 16, y0 * 16, min(rec.cw - 1, (x1 + 1) * 16 - 1), min(rec.ch - 1, (y1 + 1) * 16 - 1)),
+                (x0 * 8, y0 * 8, min(rec.cw // 2 - 1, (x1 + 1) * 8 - 1), min(rec.ch // 2 - 1, (y1 + 1) * 8 - 1)))
+
+    def refs_for(mb):
+        return opts.get('segment_refs', {}).get(seg_of[mb], refs)
+
+    if 'SS' in cfg['modes']:
+        first_slice_header(bw, cfg, cols, rows, False)
+    parts = Partitions(False) if dps else None
+    fwd_vectors = {}
+    segs = seg_of
     # the Alternative INTER VLC mode does not apply within EI-pictures (5.1.4.5)
     tex = Texture(cfg['modes'] - {'AIV'} if ptype == 4 else cfg['modes'])
     qcur = q
+    opts['_pending_pr0'] = False
     for mb in range(cols * rows):
         mbx, mby = mb % cols, mb // cols
+        sidx = seg_of[mb]
+        if sidx > 0 and mb == order[sidx][0]:
+            if sidx - 1 in opts.get('tail_stuffing', ()):
+                snr_stuffing(bw, opts, ptype, multiple)
+            write_segment_header(bw, cfg, opts, mb, 0, q, cols, rows, False, sidx)
+            qcur = q
+            opts['_pending_pr0'] = False
+        clip_l, clip_c = clips(mb)
+        seg_refs = refs_for(mb)
         up = upward_prediction(base, mbx, mby)
-        cands = [(sad(src, up, mbx, mby, 16), 'upward', up, None)]
+        cands = [(sad(src, up, mbx, mby, 16), 'upward', up, None, 0)]
         if previous is not None:
             best = None
-            for v in opts.get('search', SEARCH):
-                p = predict_mb(previous, mbx, mby, 16, v, rec.rounding, clip_l, clip_c)
-                s = sad(src, p, mbx, mby, 16)
-                if best is None or s < best[0]:
-                    best = (s, p, v)
-            cands.append((best[0], 'forward', best[1], best[2]))
+            forced_ref = opts.get('ref_of', {}).get(mb)
+            choices = [forced_ref] if forced_ref is not None else range(min(len(seg_refs),
+                                                                             opts.get('max_refs', 1)))
+            for r in choices:
+                for v in opts.get('search', SEARCH):
+                    p = predict_mb(seg_refs[r], mbx, mby, 16, v, rec.rounding, clip_l, clip_c)
+                    s = sad(src, p, mbx, mby, 16) + r * 64
+                    if best is None or s < best[0]:
+                        best = (s, p, v, r)
+            cands.append((best[0], 'forward', best[1], best[2], best[3]))
             bi = average(best[1], up)
-            cands.append((sad(src, bi, mbx, mby, 16) - 50, 'bidir', bi, best[2]))
+            cands.append((sad(src, bi, mbx, mby, 16) - 50, 'bidir', bi, best[2], best[3]))
         forced = opts.get('force', {}).get(mb)
+        ref = 0
+        if mb in opts.get('pr0', {}):
+            # an EP macroblock coded by PR0 alone: forward from the reference PR0 names, zero vector, no texture
+            assert multiple and not dps
+            r = opts['pr0'][mb]
+            assert 0 < r < len(seg_refs)
+            if mb in opts.get('stuffing', ()):
+                snr_stuffing(bw, opts, ptype, multiple)
+            bw.code('0')
+            write_pr0(bw, opts, r, False)
+            pred = predict_mb(seg_refs[r], mbx, mby, 16, (0, 0), rec.rounding, clip_l, clip_c)
+            t = MacroblockTexture(mb, qcur, False)
+            t.levels = {k: [0] * 64 for k in range(6)}
+            fwd_vectors[mb] = (0, 0)
+            tex.reconstruct(rec, pred, t, mbx, mby, 16, False, True)
+            continue
         if mb in opts.get('intra_mbs', ()):
             kind, pred, v = 'intra', None, None
+        elif forced == 'bidir0':
+            kind, v = 'bidir', (0, 0)
+            pred = average(predict_mb(previous, mbx, mby, 16, v, rec.rounding, clip_l, clip_c), up)
+        elif forced == 'skip':
+            kind, v = 'forward', (0, 0)
+            pred = predict_mb(previous, mbx, mby, 16, v, rec.rounding, clip_l, clip_c)
         elif forced:
-            _, kind, pred, v = next(c for c in cands if c[1] == forced)
+            _, kind, pred, v, ref = next(c for c in cands if c[1] == forced)
         else:
-            _, kind, pred, v = min(cands, key=lambda c: c[0])
+            _, kind, pred, v, ref = min(cands, key=lambda c: c[0])
         intra = kind == 'intra'
         prior = qcur
         qcur = opts.get('requant', {}).get(mb, prior + opts.get('dquant', {}).get(mb, 0))
         dquant = qcur != prior
         t = tex.code(src, pred, mbx, mby, 16, qcur, intra, False, mb, opts.get('intra_mode', {}).get(mb))
+        if mb in opts.get('no_texture', ()):
+            drop_texture(t)
         pattern = t.pattern
         if mb in opts.get('stuffing', ()):
-            parts.hd.code(DPS_STUFFING_EI if ptype == 4 else DPS_MBTYPE_EP[10])
+            if dps:
+                parts.hd.code(DPS_STUFFING_EI if ptype == 4 else DPS_MBTYPE_EP[10])
+            else:
+                snr_stuffing(bw, opts, ptype, multiple)
         cbpc = pattern & 3
         skip = False
         if ptype == 4:
             if not intra and pattern == 0 and not forced and not dquant:
-                parts.hd.code('1')
+                if dps:
+                    parts.hd.code('1')
+                else:
+                    bw.code('1')
                 skip = True
+            elif not dps:
+                bw.code('0')
+                bw.code(MCBPC_EI[((2 if intra else 0) + (1 if dquant else 0)) * 4 + cbpc])
+                tex.intra_mode(bw, t)
+                bw.code(tex.cbpy(t, True))
+                if dquant:
+                    bw.code(dquant_code(prior, qcur, tex.mq))
             else:
                 parts.hd.code(DPS_MCBPC_EI[((2 if intra else 0) + (1 if dquant else 0), cbpc)])
                 tex.intra_mode(parts.coef, t)
@@ -2673,10 +3326,45 @@ def encode_snr_picture(enc, index, opts, base, previous):
                 if dquant:
                     parts.coef.code(dquant_code(prior, qcur, tex.mq))
         else:
-            if kind == 'forward' and v == (0, 0) and pattern == 0 and not forced and not dquant:
-                parts.hd.code('1')
+            if (kind == 'forward' and v == (0, 0) and ref == 0 and pattern == 0 and forced in (None, 'skip')
+                    and not dquant):
+                if dps:
+                    parts.hd.code('1')
+                else:
+                    bw.code('1')
+                    opts['_pending_pr0'] = False
                 skip = True
+            elif not dps:
+                if kind == 'intra':
+                    mbtype = 9 if dquant else 8
+                elif kind == 'upward':
+                    mbtype = 4 if dquant else 3 if pattern else 2
+                elif kind == 'bidir':
+                    mbtype = 7 if dquant else 6 if pattern or v != (0, 0) else 5
+                else:
+                    mbtype = 1 if dquant else 0
+                assert ref == 0 or mbtype in (0, 1, 6, 7)
+                bw.code('0')
+                if multiple:
+                    write_pr0(bw, opts, 0, False)
+                bw.code(MBTYPE_EP[mbtype])
+                tex.intra_mode(bw, t)
+                if mbtype not in (2, 5):
+                    bw.code(CBPC_O4[cbpc])
+                    bw.code(tex.cbpy(t, kind != 'forward'))
+                if dquant:
+                    bw.code(dquant_code(prior, qcur, tex.mq))
+                if mbtype in (0, 1, 6, 7):
+                    if multiple:
+                        bw.code(index_code(ref))
+                        if ref == 1 and not plus_umv:
+                            bw.code('1')
+                    pred_f = (vector_predictor(fwd_vectors, segs, cols, mbx, mby, 0),
+                              vector_predictor(fwd_vectors, segs, cols, mbx, mby, 1))
+                    write_vector(bw, pred_f, v, plus_umv, False)
+                    fwd_vectors[mb] = v
             else:
+                assert ref == 0
                 if kind == 'intra':
                     mbtype = 9 if dquant else 8
                 elif kind == 'upward':
@@ -2695,9 +3383,11 @@ def encode_snr_picture(enc, index, opts, base, previous):
                 if mbtype in (0, 1, 6, 7):
                     parts.thread_vector(v)
         if not skip:
-            tex.write_blocks(parts.coef, t)
+            tex.write_blocks(parts.coef if dps else bw, t)
         tex.reconstruct(rec, pred, t, mbx, mby, 16, False, skip)
-    parts.flush(bw)
+    if dps:
+        parts.flush(bw)
+    opts.pop('_pending_pr0', None)
     return bw, rec
 
 
@@ -2721,10 +3411,19 @@ def recipe_snr(enc):
         else:
             eopts['force'] = {0: 'forward', 1: 'upward', 2: 'bidir', 30: 'forward', 31: 'bidir'}
         eopts.update(extra('E', t))
-        bw, enhancement = encode_snr_picture(enc, t, eopts, base, enhancement)
+        previous = enhancement if eopts.get('trp') is None else shown[eopts['trp']]
+        bw, enhancement = encode_snr_picture(enc, t, eopts, base, previous)
         append(out, bw)
         shown.append(enhancement)
     return out, shown
+
+
+def snr_rps_extra(kind, tr):
+    """Annex N in both layers of SNR scalability: the last EP-picture predicts from the EP-picture TRP names, two
+    pictures back."""
+    if kind == 'E' and tr == 3:
+        return {'trp': 1}
+    return {}
 
 
 CONFIGS.update({
@@ -2819,6 +3518,713 @@ CONFIGS.update({
                   'extra': ipb_ist_extra, 'recipe': checked(recipe_ipb)},
     'dpssnrist': {'width': 176, 'height': 144, 'modes': {'SS', 'DPS', 'UMV'} | IST, 'slices': True,
                   'extra': snr_ist_extra, 'recipe': checked(recipe_snr)},
+})
+
+
+
+# ---------------------------------------------------------------- rarer syntax: stuffing, segment-level reference
+# selection, the custom picture clock, tall custom formats and the plain syntax of SNR scalability
+
+def stuff_extra(kind, tr):
+    """Macroblock stuffing inside and at the end of groups of blocks, and quantizer changes of the Modified
+    Quantization mode."""
+    if kind == 'I':
+        return {'segments': gob_segments(11, 9, [2, 5, 7]), 'stuffing': (0, 13, 40, 98), 'tail_stuffing': (0, 2)}
+    if kind == 'P':
+        # the small DQUANT steps of Table T.1 from QUANT 26 to 31 in both directions
+        return {'segments': gob_segments(11, 9, [3, 6]), 'stuffing': (5, 33, 70), 'tail_stuffing': (0, 1),
+                'dquant': {10: 2, 50: -2}, 'intra_mbs': (60,),
+                'requant': {12: 29, 13: 31, 14: 26, 15: 29, 16: 26, 17: 30, 18: 31, 19: 28, 20: 30, 21: 27, 23: 8}}
+    return {'stuffing': (4, 30, 77), 'dquant': {20: 1, 21: -1}}
+
+
+def snr_plain_extra(kind, tr):
+    """Groups of blocks with stuffing in a base picture, and quantizer changes in the enhancement pictures."""
+    if kind == 'base':
+        return {'segments': gob_segments(11, 9, [4]), 'tail_stuffing': (0,), 'stuffing': (7,)} if tr == 1 else {}
+    return {'dquant': {10: 1, 11: -1, 40: 2, 41: -2}, 'intra_mbs': (20, 21, 60)}
+
+
+def recipe_erps_gob(enc):
+    """Annex U with group of blocks headers that carry the picture number and ERPS layers of their own: a re-mapped
+    reference in one group of blocks and multiple references per macroblock in another, and an INTRA picture with a
+    layer in a group of blocks header."""
+    out = Bits()
+    recon = []
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    buf = ErpsBuffer()
+    segs = gob_segments(11, 9, [3, 6])
+    mmco0 = [('buffer', 10, 9, 4, 1)]
+    bw, pic = encode_picture(enc, stream, 0, 0, 8, [], {'tr': 0, 'pn': 0, 'segments': segs, 'segment_pn': (1,),
+                                                        'segment_erps': {2: erps_writer(0)},
+                                                        'erps': erps_writer(0, sliding=False, mmco=mmco0)})
+    append(out, bw)
+    recon.append(pic)
+    buf.store(pic, 0, False, mmco0)
+    pn = 0
+    for i in range(1, 5):
+        pn += 1
+        refs = buf.order((), pn)
+        opts = {'tr': i, 'pn': pn, 'search': SEARCH, 'segments': segs, 'rounding': i % 2, 'erps': erps_writer(1),
+                'segment_pn': (2,)}
+        if i >= 2:
+            opts['segment_erps'] = {1: erps_writer(1, remaps=[('neg', 2)]), 2: erps_writer(1, multiple=True)}
+            opts['segment_refs'] = {1: buf.order([('neg', 2)], pn), 2: refs}
+            opts['segment_mrpa'] = {2: True}
+            opts['segment_max_refs'] = {2: len(refs)}
+        bw, pic = encode_picture(enc, stream, i, 1, 8, refs, opts)
+        append(out, bw)
+        recon.append(pic)
+        buf.store(pic, pn, True, ())
+    # a redundant copy of the last picture, with its temporal reference and picture number, coded from another
+    # reference, which the decoder discards (U.3.1.2)
+    bw, _ = encode_picture(enc, stream, 4, 1, 8, [recon[-2]], {'tr': 4, 'pn': pn, 'search': SEARCH,
+                                                                'segments': segs, 'erps': erps_writer(1)})
+    append(out, bw)
+    pn += 1
+    bw, pic = encode_picture(enc, stream, 5, 1, 8, buf.order((), pn), {'tr': 5, 'pn': pn, 'search': SEARCH,
+                                                                        'erps': erps_writer(1)})
+    append(out, bw)
+    recon.append(pic)
+    return out, recon
+
+
+def erps_b_writer(multiple, remaps=(), two=False):
+    """The ERPS layer of a B-picture (U.3.1.5): multiple reference flag, re-mappings and the two backward pictures
+    flag."""
+    def writer(b):
+        b.put(1 if multiple else 0, 1)
+        for op, val in remaps:
+            b.code({'neg': '1', 'pos': '010', 'long': '011'}[op])
+            b.code(index_code(val if op == 'long' else val - 1))
+        b.code('001')
+        if multiple:
+            b.put(1 if two else 0, 1)
+    return writer
+
+
+def recipe_erps_b_gob(enc):
+    """Annex U with B-pictures in groups of blocks whose headers carry ERPS layers: two backward pictures in the
+    picture layer, one with multiple forward references in a group of blocks, a re-mapped single reference in
+    another, and stuffing before a group of blocks header."""
+    out = Bits()
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    buf = ErpsBuffer()
+    display = {}
+    mmco0 = [('buffer', 10, 9, 4, 1)]
+    bw, i0 = encode_picture(enc, stream, 0, 0, 8, [], {'tr': 0, 'pn': 0,
+                                                       'erps': erps_writer(0, sliding=False, mmco=mmco0)})
+    append(out, bw)
+    buf.store(i0, 0, False, mmco0)
+    display[0] = i0
+    pn = 0
+    for tr in (2, 4):
+        pn += 1
+        refs = buf.order((), pn)
+        bw, p = encode_picture(enc, stream, tr, 1, 8, refs, {'tr': tr, 'pn': pn, 'search': SEARCH,
+                                                            'erps': erps_writer(1), 'rounding': tr // 2 % 2})
+        append(out, bw)
+        buf.store(p, pn, True, ())
+        display[tr] = p
+    segs = gob_segments(11, 9, [3, 6])
+    order = buf.order((), pn + 1)
+    remapped = buf.order([('neg', 2)], pn + 1)
+    opts = {'tr': 1, 'pn': pn + 1, 'mrpa': True, 'two_backward': True, 'search': SEARCH, 'segments': segs,
+            'segment_pn': (1,), 'tail_stuffing': (0, 1),
+            'segment_erps': {1: erps_b_writer(True), 2: erps_b_writer(False, [('neg', 2)])},
+            'segment_forward': {1: order[1:], 2: remapped[1:]},
+            'segment_backward': {1: order[:1], 2: remapped[:1]},
+            'segment_mrpa': {1: True, 2: False}, 'segment_two': {1: False, 2: False},
+            'force': {0: 'backward', 1: 'forward', 2: 'bidir', 40: 'backward', 41: 'bidir', 70: 'forward'}}
+    bw, b1 = encode_b_picture(enc, 1, opts, order[2:], order[:2], 1 - order[2].tr, order[0].tr - order[2].tr)
+    append(out, bw)
+    display[1] = b1
+    order = buf.order((), pn + 1)
+    opts = {'tr': 3, 'pn': pn + 1, 'mrpa': False, 'search': SEARCH, 'segments': segs,
+            'segment_erps': {2: erps_b_writer(True, two=True)},
+            'segment_forward': {2: order[2:]}, 'segment_backward': {2: order[:2]},
+            'segment_mrpa': {2: True}, 'segment_two': {2: True},
+            'force': {3: 'forward', 75: 'backward', 76: 'bidir'}}
+    bw, b3 = encode_b_picture(enc, 3, opts, order[1:], order[:1], 3 - order[1].tr, order[0].tr - order[1].tr)
+    append(out, bw)
+    display[3] = b3
+    return out, [display[k] for k in sorted(display)]
+
+
+def recipe_cpm_slices(enc):
+    """Annex C with the Slice Structured mode: two sub-bitstreams whose slices interleave behind slice
+    sub-bitstream indicators (SSBI), an end of sub-bitstream code for a sub-bitstream that sent no picture, and an
+    end of sequence code."""
+    out = Bits()
+    segs = [{'first': 0, 'count': 33}, {'first': 33, 'count': 33}, {'first': 66, 'count': 33}]
+    streams = [Stream(enc.cfg, enc.source, enc.sw, enc.sh), Stream(enc.cfg, enc.source, enc.sw, enc.sh)]
+    refs = [None, None]
+    recon = [[], []]
+    for t in range(3):
+        chunks = []
+        for sb in range(2):
+            ptype = 0 if t == 0 else 1
+            opts = {'tr': t, 'psbi': sb, 'segments': segs, 'chunks': True, 'search': SEARCH, 'rounding': (t + sb) % 2}
+            parts, pic = encode_picture(enc, streams[sb], t + 8 * sb, ptype, 8 + 2 * sb,
+                                        [] if ptype == 0 else [refs[sb]], opts)
+            chunks.append(parts)
+            refs[sb] = pic
+            recon[sb].append(pic)
+        a, b = chunks
+        for k in range(max(len(a), len(b))):
+            if k < len(a):
+                append(out, a[k])
+            if k < len(b):
+                append(out, b[k])
+        if t == 1:
+            out.code('0000000000000000111110')
+            out.code('0')
+            out.put(3, 2)
+            out.align()
+    out.code('0000000000000000111111')
+    out.align()
+    return out, recon
+
+
+def recipe_rps_b(enc):
+    """Annex N with B-pictures and the custom picture clock: 10-bit temporal references that pass 255, B-pictures
+    predicting from the picture TRP names, and group of blocks headers of P- and B-pictures repeating the temporal
+    reference (TRI) and naming their references."""
+    out = Bits()
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    segs = gob_segments(11, 9, [3, 6])
+    base = 252
+    store = {}
+    display = {}
+    bw, i0 = encode_picture(enc, stream, 0, 0, 8, [], {'tr': base, 'segments': segs, 'segment_tri': (1,)})
+    append(out, bw)
+    store[base] = display[base] = i0
+    previous = i0
+    plan = [(base + 3, None, {2: base}, [(base + 1, None), (base + 2, base)]),
+            (base + 6, base, {1: base + 3}, [(base + 4, base), (base + 5, None)])]
+    for anchor_tr, trp, segment_trp, bs in plan:
+        ref = store[trp] if trp is not None else previous
+        opts = {'tr': anchor_tr, 'trp': trp, 'search': SEARCH, 'rounding': anchor_tr % 2, 'segments': segs,
+                'segment_tri': (1, 2), 'segment_trp': segment_trp,
+                'segment_refs': {k: (store[segment_trp[k]] if k in segment_trp else previous) for k in (1, 2)}}
+        bw, p = encode_picture(enc, stream, anchor_tr - base, 1, 8, [ref], opts)
+        append(out, bw)
+        store[anchor_tr] = display[anchor_tr] = p
+        for tr, btrp in bs:
+            forward = store[btrp] if btrp is not None else previous
+            bopts = {'tr': tr, 'trp': btrp, 'search': SEARCH, 'rounding': tr % 2, 'segments': segs,
+                     'segment_tri': (1,), 'segment_trp': {2: base},
+                     'segment_forward': {1: [previous], 2: [store[base]]}}
+            bw, b = encode_b_picture(enc, tr - base, bopts, [forward], [p], tr - forward.tr, p.tr - forward.tr)
+            append(out, bw)
+            display[tr] = b
+        previous = p
+    return out, [display[k] for k in sorted(display)]
+
+
+def recipe_tall(enc):
+    """Custom picture formats of more than 400 and 800 lines, whose groups of blocks hold two and four macroblock
+    rows (5.2.5), with implicit size changes and Reduced-Resolution Update pictures, and one wider than 1024
+    samples."""
+    pics = [
+        {'width': 64, 'height': 448, 'format': 6, 'segments': gob_segments(4, 28, [4, 10, 20]), 'gob_rows': 2},
+        {'width': 64, 'height': 448, 'format': 6, 'segments': gob_segments(4, 28, [2, 16]), 'gob_rows': 2},
+        {'width': 64, 'height': 816, 'format': 6, 'segments': gob_segments(4, 51, [8, 20, 40]), 'gob_rows': 4},
+        {'width': 64, 'height': 816, 'format': 6, 'rru': True, 'search': RRU_SEARCH,
+         'segments': gob_segments(2, 26, [4, 12, 20]), 'gob_rows': 2},
+        {'width': 64, 'height': 448, 'format': 6, 'rru': True, 'search': RRU_SEARCH,
+         'segments': gob_segments(2, 14, [3, 9]), 'gob_rows': 1},
+        {'width': 1088, 'height': 32, 'format': 6},
+    ]
+    return recipe_sequence(enc, pics)
+
+
+def dps_stuff_extra(kind, tr):
+    """Macroblock stuffing in the header partitions of data partitioned I-, P- and B-pictures, and quantizer
+    changes."""
+    if kind == 'B':
+        return {'stuffing': (0, 9, 45, 98), 'dquant': {20: 1, 30: -1}}
+    return {'stuffing': (3, 50), 'dquant': {12: 2}}
+
+
+CONFIGS.update({
+    'dpsbstuff': {'width': 176, 'height': 144, 'modes': {'SS', 'DPS', 'UMV'}, 'slices': True,
+                  'extra': dps_stuff_extra, 'recipe': recipe_b},
+    'stuff': {'width': 176, 'height': 144, 'modes': {'UMV', 'MQ'}, 'extra': stuff_extra, 'recipe': recipe_b},
+    'snr': {'width': 176, 'height': 144, 'modes': {'UMV'}, 'extra': snr_plain_extra, 'recipe': recipe_snr},
+    'erpsgob': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV'}, 'recipe': recipe_erps_gob},
+    'rpsb': {'width': 176, 'height': 144, 'modes': {'RPS', 'UMV'}, 'clock': 30, 'recipe': recipe_rps_b},
+    'tall': {'width': 64, 'height': 448, 'modes': {'UMV'}, 'recipe': recipe_tall},
+    'cpmslices': {'width': 176, 'height': 144, 'modes': {'UMV', 'SS'}, 'slices': True, 'recipe': recipe_cpm_slices},
+    'erpsnoumv': {'width': 176, 'height': 144, 'modes': {'ERPS'}, 'recipe': recipe_erps},
+    'erpsbnoumv': {'width': 176, 'height': 144, 'modes': {'ERPS'}, 'recipe': recipe_erps_b},
+    'erpsbgob': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV'}, 'recipe': recipe_erps_b_gob},
+    'snrrps': {'width': 176, 'height': 144, 'modes': {'UMV', 'RPS'}, 'extra': snr_rps_extra, 'recipe': recipe_snr},
+})
+
+
+def recipe_v1_umv(enc):
+    """The Unrestricted Motion Vector mode without PLUSPTYPE (D.2): vectors of up to 30 samples whose predictors
+    lie outside [-15.5, 16], so that MVD selects the candidate in the other direction, in both components."""
+    # (vx, vy) of the first macroblock row in half samples; each predictor is the vector to the left
+    row = [(-30, 30), (-60, 60), (-5, 45), (20, 10), (50, -20), (5, -50), (-25, -10), (-55, 15), (-40, 40),
+           (-10, 60), (20, 30)]
+    force = {mb: (0, vx, vy) for mb, (vx, vy) in enumerate(row)}
+    force.update({mb: (0, 0, 0) for mb in range(11, 99)})
+    pics = [{}, {'force': force}, {}]
+    return recipe_sequence(enc, pics)
+
+
+def recipe_large(enc):
+    """Slices of 4CIF and 16CIF intra pictures, whose slice headers carry an 11- and a 13-bit macroblock address
+    and, past 11 bits or past 9 bits in the Continuous Presence Multipoint mode, the SEPB2 bit (K.2)."""
+    psbi = enc.cfg.get('psbi')
+    pics = [
+        {'width': 704, 'height': 576, 'format': 4, 'psbi': psbi, 'q': 24,
+         'segments': [{'first': 0, 'count': 500}, {'first': 500, 'count': 600}, {'first': 1100, 'count': 484}]},
+        {'width': 1408, 'height': 1152, 'format': 5, 'psbi': psbi, 'intra': True, 'q': 31,
+         'segments': [{'first': 0, 'count': 3000}, {'first': 3000, 'count': 3336}]},
+    ]
+    return recipe_sequence(enc, pics)
+
+
+CONFIGS.update({
+    'v1umv': {'width': 176, 'height': 144, 'modes': {'UMV'}, 'v1': True, 'recipe': recipe_v1_umv},
+    'large': {'width': 176, 'height': 144, 'modes': {'UMV', 'SS'}, 'slices': True, 'recipe': recipe_large},
+    'largecpm': {'width': 176, 'height': 144, 'modes': {'UMV', 'SS'}, 'slices': True, 'psbi': 1,
+                 'recipe': recipe_large},
+})
+
+
+def dps_modes_extra(kind, tr):
+    """Every macroblock type of data partitioned B- and EP-pictures: those without texture, and those with a
+    quantizer change for each prediction kind and for INTRA macroblocks."""
+    if kind == 'B':
+        return {'force': {0: 'forward', 1: 'backward', 2: 'bidir', 3: 'backward', 4: 'bidir', 5: 'forward',
+                          12: 'direct', 40: 'backward', 41: 'bidir'},
+                'no_texture': (3, 4), 'dquant': {1: 2, 2: -2, 5: 1, 12: 1, 40: -1, 41: 1, 60: -2},
+                'intra_mbs': (60,)}
+    if kind == 'E' and tr > 0:
+        return {'force': {0: 'forward', 1: 'upward', 2: 'bidir', 5: 'upward', 6: 'bidir0', 7: 'forward', 8: 'upward',
+                          10: 'bidir', 11: 'skip', 12: 'skip', 30: 'forward', 31: 'bidir'},
+                'no_texture': (5, 6, 11, 12), 'dquant': {7: 1, 8: -1, 10: 2, 20: -2}}
+    return {}
+
+
+CONFIGS.update({
+    'dpsbmodes': {'width': 176, 'height': 144, 'modes': {'SS', 'DPS', 'UMV'}, 'slices': True,
+                  'extra': dps_modes_extra, 'recipe': recipe_b},
+    'dpssnrmodes': {'width': 176, 'height': 144, 'modes': {'SS', 'DPS', 'UMV'}, 'slices': True,
+                    'extra': dps_modes_extra, 'recipe': recipe_snr},
+})
+
+
+CONFIGS.update({
+    'erpspr0': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV'}, 'pr0': True, 'recipe': recipe_erps},
+    'erpsslices': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV', 'SS'}, 'slices': True, 'pr0': True,
+                   'recipe': recipe_erps},
+    'erpsbpr0': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV'}, 'pr0': True, 'recipe': recipe_erps_b},
+})
+
+
+def snr_rpr_extra(kind, tr):
+    """Reference Picture Resampling in both layers of SNR scalability: EP-pictures that resample their forward
+    reference with the warping of a lower layer picture that resampled, at each displacement accuracy, and with the
+    identity when the lower layer picture did not."""
+    if kind == 'base' and tr == 2:
+        return {'warp': {'w': [3, -2, 4, 1, -3, 2, 1, -1], 'accuracy': 16, 'fill': 0, 'color': (200, 60, 180)}}
+    if kind == 'base' and tr == 3:
+        return {'warp': {'w': [-5, 4, -6, 3, 5, -4, 2, 2], 'accuracy': 2, 'fill': 1}}
+    if kind == 'E' and tr in (1, 2):
+        return {'rpr': 16}
+    if kind == 'E' and tr == 3:
+        return {'rpr': 2}
+    return {}
+
+
+CONFIGS.update({
+    'snrrpr': {'width': 176, 'height': 144, 'modes': {'UMV'}, 'extra': snr_rpr_extra, 'recipe': recipe_snr},
+})
+
+
+def recipe_dps_four(enc):
+    """Data partitioned P-pictures with the Deblocking Filter mode, whose INTER4V and INTER4V+Q macroblocks put four
+    vectors on the slice's prediction thread."""
+    four = {10: [(2, 0), (4, -2), (0, 2), (-2, 0)], 11: [(1, 1), (3, 0), (-1, 2), (0, -3)],
+            30: [(-4, 2), (2, 2), (0, 0), (6, -2)], 31: [(0, 1), (0, -1), (1, 0), (-1, 0)]}
+    pics = [{}, {'four': four, 'dquant': {11: 1, 31: -2, 32: 1}}, {'four': four, 'dquant': {30: 2}}]
+    return recipe_sequence(enc, pics)
+
+
+CONFIGS.update({
+    'dpsfour': {'width': 176, 'height': 144, 'modes': {'SS', 'DPS', 'UMV', 'DF'}, 'slices': True,
+                'recipe': recipe_dps_four},
+    'erpsbslices': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV', 'SS'}, 'slices': True, 'pr0': True,
+                    'recipe': recipe_erps_b},
+})
+
+
+def recipe_sac(enc):
+    """Syntax-based Arithmetic Coding (Annex E): INTRA and INTER macroblocks with quantizer changes, macroblock
+    stuffing inside and at the end of groups of blocks, ESCAPE events, and the arithmetic code restarting after each
+    group of blocks header."""
+    pics = [
+        {'q': 3, 'dquant': {5: 2, 6: -2}, 'sac_stuffing': {0: 1, 30: 2}},
+        {'intra_mbs': (10, 40), 'dquant': {12: 1, 20: -1, 40: 2}, 'sac_stuffing': {7: 1, 41: 1},
+         'segments': gob_segments(11, 9, [3, 6]), 'sac_tail_stuffing': {0: 1, 1: 2}},
+        {'q': 5},
+    ]
+    if enc.cfg.get('v1'):
+        # the stream tmndec checks: it loops on arithmetic macroblock stuffing, and it predicts the OBMC of the
+        # first row of a group of blocks with a header otherwise than this encoder and the annex engine do
+        for opts in pics:
+            for key in ('sac_stuffing', 'segments', 'sac_tail_stuffing'):
+                opts.pop(key, None)
+    return recipe_sequence(enc, pics)
+
+
+CONFIGS.update({
+    'sacv1': {'width': 176, 'height': 144, 'modes': {'SAC', 'AP'}, 'v1': True, 'recipe': recipe_sac},
+    'sacplus': {'width': 176, 'height': 144, 'modes': {'SAC', 'AP', 'AIC', 'AIV'}, 'recipe': recipe_sac},
+})
+
+
+def recipe_bad_refs(enc):
+    """A corrupt stream, for decoders to conceal: Annex U macroblocks whose reference index passes the references
+    of the picture, or names a reference of another size than the picture after an implicit size change. The
+    reconstruction this returns is the encoder's, not what a decoder makes of the corrupt macroblocks."""
+    out = Bits()
+    recon = []
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    buf = ErpsBuffer()
+    mmco0 = [('buffer', 10, 9, 4, 1)]
+    bw, pic = encode_picture(enc, stream, 0, 0, 8, [], {'tr': 0, 'pn': 0,
+                                                        'erps': erps_writer(0, sliding=False, mmco=mmco0)})
+    append(out, bw)
+    recon.append(pic)
+    buf.store(pic, 0, False, mmco0)
+    steps = [{'bad_refs': {5: 2}}, {'width': 128, 'height': 96, 'format': 1, 'bad_refs': {7: 1}}, {}]
+    for pn, extra in enumerate(steps, 1):
+        refs = buf.order((), pn)
+        opts = {'tr': pn, 'pn': pn, 'search': SEARCH, 'mrpa': True, 'max_refs': 1,
+                'erps': erps_writer(1, multiple=True), **extra}
+        bw, pic = encode_picture(enc, stream, pn, 1, 8, refs, opts)
+        append(out, bw)
+        recon.append(pic)
+        buf.store(pic, pn, True, ())
+    return out, recon
+
+
+CONFIGS.update({
+    'badrefs': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV'}, 'recipe': recipe_bad_refs},
+})
+
+
+def recipe_snr_gob(enc):
+    """SNR scalability outside data partitioning with groups of blocks in the enhancement pictures, the Independent
+    Segment Decoding mode and the Enhanced Reference Picture Selection mode in both layers: an EI-picture with
+    macroblock stuffing inside and at the end of a group of blocks and an ERPS layer and picture number in group of
+    blocks headers, then EP-pictures with stuffing at the end of groups of blocks, macroblocks coded by PR0 alone
+    (with the MEPB0 of a run of them), forward and bidirectional macroblocks that name their reference, a re-mapped
+    reference list, and a group of blocks with an ERPS layer that re-maps its references; the enhancement pictures
+    are the output."""
+    out = Bits()
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    shown = []
+    base = None
+    base_buffer = ErpsBuffer()
+    buffer = ErpsBuffer()
+    segments = gob_segments(11, 9, [3, 6])
+    mmco0 = [('buffer', 10, 9, 4, 1)]
+    steps = [
+        # EI-picture
+        {'erps': erps_writer(0, sliding=False, mmco=mmco0), 'sliding': False, 'mmco': mmco0, 'remaps': (),
+         'stuffing': (9, 40), 'tail_stuffing': (0, 1), 'intra_mbs': (20,), 'force': {3: 'upward'},
+         'segment_erps': {1: erps_writer(0)}, 'segment_pn': (2,)},
+        # one reference
+        {'multiple': False, 'remaps': (), 'stuffing': (9,), 'tail_stuffing': (1,), 'intra_mbs': (20,),
+         'force': {0: 'forward', 1: 'upward', 2: 'bidir', 30: 'forward', 31: 'bidir'}},
+        # two references: PR0, named references, stuffing and tail stuffing with PR0 0
+        {'multiple': True, 'remaps': (), 'stuffing': (12, 45), 'tail_stuffing': (0,), 'intra_mbs': (21,),
+         'pr0': {4: 1, 5: 1, 6: 1, 50: 1}, 'ref_of': {7: 1, 8: 1, 34: 0, 35: 1},
+         'force': {7: 'forward', 8: 'bidir', 34: 'forward', 35: 'bidir', 40: 'upward'}},
+        # three references, re-mapped, and a group of blocks that re-maps its own
+        {'multiple': True, 'remaps': [('neg', 2)], 'stuffing': (14,), 'tail_stuffing': (1,),
+         'pr0': {3: 2, 70: 1}, 'ref_of': {10: 2, 11: 1, 40: 1, 41: 2},
+         'force': {10: 'forward', 11: 'bidir', 40: 'forward', 41: 'bidir'},
+         'segment_remaps': {1: [('neg', 1)]}, 'segment_pn': (1,)},
+    ]
+    erps = 'ERPS' in enc.cfg['modes']
+    if not erps:
+        # the stream tmndec checks: groups of blocks and macroblock stuffing alone, since tmndec loops on stuffing
+        # at the end of a group of blocks of an enhancement picture
+        for st in steps:
+            for key in ('pr0', 'ref_of', 'segment_erps', 'segment_remaps', 'segment_pn', 'tail_stuffing'):
+                st.pop(key, None)
+            st['multiple'] = False
+            st['remaps'] = ()
+            st['force'] = {mb: kind for mb, kind in st['force'].items() if mb not in (7, 8, 34, 35, 10, 11, 40, 41)}
+    for t, st in enumerate(steps):
+        pn = t
+        bopts = {'tr': t, 'pn': pn, 'search': SEARCH, 'rounding': t % 2,
+                 'erps': erps_writer(0 if t == 0 else 1)}
+        base_refs = [] if t == 0 else base_buffer.order((), pn)
+        bw, base = encode_picture(enc, stream, t, 0 if t == 0 else 1, 14, base_refs, bopts)
+        append(out, bw)
+        base_buffer.store(base, pn, True, ())
+        eopts = {'tr': t, 'pn': pn, 'search': SEARCH, 'rounding': t % 2, 'q': 5, 'segments': segments}
+        for key in ('stuffing', 'tail_stuffing', 'intra_mbs', 'force', 'pr0', 'ref_of', 'segment_pn'):
+            if key in st:
+                eopts[key] = st[key]
+        refs = None
+        if not erps:
+            refs = None if t == 0 else [shown[-1]]
+        elif t == 0:
+            eopts['erps'] = st['erps']
+            eopts['segment_erps'] = st['segment_erps']
+        else:
+            refs = buffer.order(st['remaps'], pn)
+            eopts['erps'] = erps_writer(1, multiple=st['multiple'], remaps=st['remaps'])
+            eopts['mrpa'] = st['multiple']
+            eopts['max_refs'] = len(refs) if st['multiple'] else 1
+            if 'segment_remaps' in st:
+                eopts['segment_erps'] = {}
+                eopts['segment_refs'] = {}
+                for sidx, remaps in st['segment_remaps'].items():
+                    eopts['segment_erps'][sidx] = erps_writer(1, multiple=True, remaps=remaps)
+                    eopts['segment_refs'][sidx] = buffer.order(remaps, pn)
+        bw, enhancement = encode_snr_picture(enc, t, eopts, base, None if t == 0 else refs[0], refs)
+        append(out, bw)
+        buffer.store(enhancement, pn, st.get('sliding', True), st.get('mmco', ()))
+        shown.append(enhancement)
+    return out, shown
+
+
+CONFIGS.update({
+    'snrgob': {'width': 176, 'height': 144, 'modes': {'UMV', 'ISD', 'ERPS'}, 'recipe': recipe_snr_gob},
+    'snrgobplain': {'width': 176, 'height': 144, 'modes': {'UMV'}, 'recipe': recipe_snr_gob},
+})
+
+
+def ipb_slices_extra(kind, tr):
+    """Improved PB-frames in two data partitioned slices, the second starting inside a macroblock row: forward
+    B-parts with and without coefficients (MODB 3 and 2), forward B-parts on both sides of the slice boundary, whose
+    vector predictor stops at it, and macroblocks that are not coded."""
+    if kind != 'IPB':
+        return {}
+    return {'segments': [{'first': 0, 'count': 16}, {'first': 16, 'count': 83}],
+            'force': {0: {'b': 'forward'}, 1: {'b': 'backward'}, 2: {'b': 'bidir'},
+                      14: {'b': 'forward', 'bv': (9, -5)}, 15: {'b': 'forward', 'bv': (-7, 3)},
+                      16: {'b': 'forward', 'bv': (5, 7)}, 17: {'b': 'forward', 'bv': (6, 2)},
+                      40: {'b': 'forward', 'bv': (-11, -9)}, 41: {'b': 'forward', 'b_texture': False}},
+            'skip_mbs': (60, 61, 75)}
+
+
+CONFIGS.update({
+    'dpsipbslices': {'width': 176, 'height': 144, 'modes': {'SS', 'DPS', 'DF'}, 'slices': True,
+                     'extra': ipb_slices_extra, 'recipe': recipe_ipb},
+})
+
+
+def recipe_erps_four(enc):
+    """INTER4V and INTER4V+Q macroblocks outside data partitioning, with the Deblocking Filter mode: their four
+    vectors predicted block by block (F.2), with a reference index of Annex U for each block, in rectangular slices,
+    including blocks whose above right neighbor lies in the other slice."""
+    out = Bits()
+    recon = []
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    buf = ErpsBuffer()
+    mmco0 = [('buffer', 10, 9, 4, 1)]
+    segments = [{'first': 0, 'width': 5, 'count': 45}, {'first': 5, 'width': 6, 'count': 54}]
+    bw, pic = encode_picture(enc, stream, 0, 0, 8, [], {'tr': 0, 'pn': 0, 'segments': segments,
+                                                        'erps': erps_writer(0, sliding=False, mmco=mmco0)})
+    append(out, bw)
+    recon.append(pic)
+    buf.store(pic, 0, False, mmco0)
+    four = {1: [(2, 0), (4, -2), (0, 2), (-2, 0)], 12: [(1, 1), (3, 0), (-1, 2), (0, -3)],
+            15: [(-4, 2), (2, 2), (0, 0), (6, -2)], 16: [(0, 1), (0, -1), (1, 0), (-1, 0)],
+            21: [(3, -1), (-2, 4), (5, 0), (1, 1)], 26: [(-3, -3), (2, 1), (4, 4), (0, 2)],
+            48: [(7, 1), (-5, 3), (2, -6), (3, 3)], 60: [(0, 0), (2, 2), (-2, -2), (1, 3)]}
+    for pn in (1, 2, 3):
+        refs = buf.order((), pn)
+        opts = {'tr': pn, 'pn': pn, 'search': SEARCH, 'mrpa': True, 'max_refs': len(refs), 'segments': segments,
+                'erps': erps_writer(1, multiple=True), 'four': four, 'dquant': {15: 1, 16: -1, 48: 2},
+                'rounding': pn % 2}
+        if len(refs) > 1:
+            opts['four_refs'] = {12: [0, 1, 1, 0], 15: [1, 1, 1, 1], 26: [1, 0, 0, 1], 48: [0, 0, 1, 1]}
+        bw, pic = encode_picture(enc, stream, pn, 1, 8, refs, opts)
+        append(out, bw)
+        recon.append(pic)
+        buf.store(pic, pn, True, ())
+    return out, recon
+
+
+CONFIGS.update({
+    'erpsfour': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV', 'DF', 'SS'}, 'slices': True, 'rect': True,
+                 'recipe': recipe_erps_four},
+})
+
+
+def recipe_segments_rpr(enc):
+    """Reference Picture Resampling with the reference selections of group of blocks headers, which do not replace
+    the resampled reference (P.1): Annex N with a TRP, or Annex U with an ERPS layer, in the groups of blocks of a
+    resampling P-picture; then a P-picture that follows the selection of its group of blocks headers, and an INTRA
+    picture whose groups of blocks select references it does not use."""
+    out = Bits()
+    recon = []
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    erps = 'ERPS' in enc.cfg['modes']
+    segs = gob_segments(11, 9, [3, 6])
+    warp_params = {'w': [2, -1, 3, 1, -2, 2, 1, -1], 'accuracy': 16, 'fill': 1}
+    buf = ErpsBuffer()
+    mmco0 = [('buffer', 10, 9, 4, 1)]
+    opts = {'tr': 0, 'segments': segs}
+    if erps:
+        opts.update({'pn': 0, 'erps': erps_writer(0, sliding=False, mmco=mmco0), 'segment_erps': {1: erps_writer(0)}})
+    else:
+        opts['segment_trp'] = {1: 0}
+    bw, i0 = encode_picture(enc, stream, 0, 0, 8, [], opts)
+    append(out, bw)
+    recon.append(i0)
+    buf.store(i0, 0, False, mmco0)
+    opts = {'tr': 1, 'segments': segs, 'search': SEARCH, 'warp': warp_params, 'rounding': 1}
+    if erps:
+        opts.update({'pn': 1, 'erps': erps_writer(1), 'segment_erps': {1: erps_writer(1), 2: erps_writer(1)}})
+    else:
+        opts['segment_trp'] = {1: 0, 2: 0}
+    bw, p1 = encode_picture(enc, stream, 1, 1, 8, [i0], opts)
+    append(out, bw)
+    recon.append(p1)
+    buf.store(p1, 1, True, ())
+    opts = {'tr': 2, 'segments': segs, 'search': SEARCH}
+    if erps:
+        # the second group of blocks predicts from the INTRA picture, which its layer moves to the front
+        opts.update({'pn': 2, 'erps': erps_writer(1), 'segment_erps': {1: erps_writer(1, remaps=[('neg', 2)])},
+                     'segment_refs': {1: buf.order([('neg', 2)], 2)}})
+    else:
+        opts.update({'segment_trp': {1: 0}, 'segment_refs': {1: i0}})
+    bw, p2 = encode_picture(enc, stream, 2, 1, 8, buf.order((), 2) if erps else [p1], opts)
+    append(out, bw)
+    recon.append(p2)
+    buf.store(p2, 2, True, ())
+    # an INTRA picture whose group of blocks header selects a reference, which it does not use
+    opts = {'tr': 3, 'segments': segs}
+    if erps:
+        opts.update({'pn': 3, 'erps': erps_writer(0), 'segment_erps': {2: erps_writer(0)}})
+    else:
+        opts['segment_trp'] = {1: 1, 2: 2}
+    bw, i3 = encode_picture(enc, stream, 3, 0, 8, [], opts)
+    append(out, bw)
+    recon.append(i3)
+    return out, recon
+
+
+CONFIGS.update({
+    'rpsrpr': {'width': 176, 'height': 144, 'modes': {'RPS', 'UMV'}, 'recipe': recipe_segments_rpr},
+    'erpsrpr': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV'}, 'recipe': recipe_segments_rpr},
+})
+
+
+def upsample(pic, horizontal, vertical):
+    """The picture interpolated by two horizontally, vertically or both for spatial scalability (O.6): interior
+    samples from the two or four nearest original samples with the weights of Figures O.8 and O.10, samples whose
+    neighbor in a direction lies past the picture boundary from the nearest samples alone (Figures O.9 and O.11)."""
+    out = Picture(pic.width * (2 if horizontal else 1), pic.height * (2 if vertical else 1))
+    out.warp = getattr(pic, 'warp', None)
+
+    def taps(o, n, up):
+        if not up:
+            return o, None
+        j = o >> 1
+        other = j + 1 if o & 1 else j - 1
+        return j, other if 0 <= other < n else None
+
+    for comp in range(3):
+        src, sstride = pic.plane(comp)
+        dst, dstride = out.plane(comp)
+        sw = pic.width >> (1 if comp else 0)
+        sh = pic.height >> (1 if comp else 0)
+        for y in range(out.height >> (1 if comp else 0)):
+            jy, oy = taps(y, sh, vertical)
+            for x in range(out.width >> (1 if comp else 0)):
+                jx, ox = taps(x, sw, horizontal)
+                a = src[jy * sstride + jx]
+                if ox is not None and oy is not None:
+                    v = (9 * a + 3 * src[jy * sstride + ox] + 3 * src[oy * sstride + jx] + src[oy * sstride + ox]
+                         + 8) >> 4
+                elif ox is not None:
+                    v = (3 * a + src[jy * sstride + ox] + 2) >> 2
+                elif oy is not None:
+                    v = (3 * a + src[oy * sstride + jx] + 2) >> 2
+                else:
+                    v = a
+                dst[y * dstride + x] = v
+    return out
+
+
+def upscaled_source(enc, index, horizontal, vertical):
+    """A frame of the source at the size of an enhancement layer of spatial scalability, each sample repeated."""
+    small = source_picture(enc.source, enc.sw, enc.sh, index, enc.cfg['width'], enc.cfg['height'])
+    big = Picture(small.width * (2 if horizontal else 1), small.height * (2 if vertical else 1))
+    for comp in range(3):
+        src, sstride = small.plane(comp)
+        dst, dstride = big.plane(comp)
+        for y in range(big.height >> (1 if comp else 0)):
+            for x in range(big.width >> (1 if comp else 0)):
+                dst[y * dstride + x] = src[(y >> (1 if vertical else 0)) * sstride + (x >> (1 if horizontal else 0))]
+    return big
+
+
+def recipe_spatial(enc):
+    """Spatial scalability with the Independent Segment Decoding mode and Reference Picture Resampling: a base layer
+    of I- and P-pictures, two of them resampling, and an enhancement layer of twice the size in each upsampled
+    direction whose EP-pictures resample their forward reference with the refined parameters of the lower layer
+    picture (P.2.2), one over a lower layer picture that did not resample; the enhancement pictures are the
+    output."""
+    out = Bits()
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    horizontal, vertical = enc.cfg['spatial']
+    shown = []
+    base = None
+    enhancement = None
+    plan = [
+        ({}, {}),
+        ({'warp': {'w': [3, -2, 4, 1, -3, 2, 1, -1], 'accuracy': 16, 'fill': 0, 'color': (200, 60, 180)}},
+         {'rpr': 16, 'refine': [1, 0, 1, 1, 0, 1, 0, 0]}),
+        ({}, {'rpr': 2, 'refine': [0, 1, 1, 0, 1, 1, 0, 1]}),
+        ({'warp': {'w': [-2, 1, 0, 3, 2, -1, -1, 2], 'accuracy': 2, 'fill': 1}},
+         {'rpr': 2, 'refine': [1, 1, 0, 0, 1, 0, 1, 1]}),
+    ]
+    if 'ISD' not in enc.cfg['modes']:
+        # the stream tmndec checks: no Reference Picture Resampling
+        plan = [({}, {}) for _ in plan]
+    width = enc.cfg['width'] * (2 if horizontal else 1)
+    height = enc.cfg['height'] * (2 if vertical else 1)
+    for t, (bextra, eextra) in enumerate(plan):
+        opts = {'tr': t, 'search': SEARCH, 'rounding': t % 2, **bextra}
+        bw, base = encode_picture(enc, stream, t, 0 if t == 0 else 1, 14, [] if t == 0 else [base], opts)
+        append(out, bw)
+        if 'refine' in eextra:
+            # one refinement bit for each parameter of an upsampled dimension: x for the even ones, y for the odd
+            eextra = dict(eextra)
+            eextra['refine'] = [bit if (horizontal if i % 2 == 0 else vertical) else None
+                                for i, bit in enumerate(eextra['refine'])]
+        eopts = {'tr': t, 'search': SEARCH, 'rounding': t % 2, 'q': 6, 'width': width, 'height': height,
+                 'format': enc.cfg['enhancement_format'], 'source_pic': upscaled_source(enc, t, horizontal, vertical),
+                 'intra_mbs': (20,), **eextra}
+        if t > 0:
+            eopts['force'] = {0: 'forward', 1: 'upward', 2: 'bidir', 30: 'forward', 31: 'bidir'}
+        bw, enhancement = encode_snr_picture(enc, t, eopts, upsample(base, horizontal, vertical), enhancement)
+        append(out, bw)
+        shown.append(enhancement)
+    return out, shown
+
+
+CONFIGS.update({
+    'spatial': {'width': 176, 'height': 144, 'modes': {'UMV', 'ISD'}, 'spatial': (True, True),
+                'enhancement_format': 3, 'recipe': recipe_spatial},
+    'spatialplain': {'width': 176, 'height': 144, 'modes': {'UMV'}, 'spatial': (True, True),
+                     'enhancement_format': 3, 'recipe': recipe_spatial},
 })
 
 

@@ -21,7 +21,9 @@ coverage and the methods with the most missed branches.
 
 ## In CI
 
-- The nightly workflow's coverage job runs the suite of every module with the profile on the smoke data tier,
+- The nightly workflow's coverage job runs the suite of every module with the profile on the smoke data tier, with
+  the clips and the oracle data files the pull request jobs have (so that it measures the tests they run) and the
+  full MPEG-D DRC and USAC conformance sets (`iso-23003-*`, 1.4 GB), the only tests of most of those tools,
   publishes the summary on the run page and uploads the reports and the summary as the `coverage-report` artifact.
   It fails when an area's branch coverage falls more than two points below `baseline.tsv`.
 - `package.yml` takes `coverage=true` to run the chosen modules with the profile and upload their reports.

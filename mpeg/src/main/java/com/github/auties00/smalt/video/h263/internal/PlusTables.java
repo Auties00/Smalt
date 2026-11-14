@@ -4,7 +4,6 @@ import com.github.auties00.smalt.video.mpeg4.internal.BitReader;
 import com.github.auties00.smalt.video.mpeg4.internal.Tables;
 import com.github.auties00.smalt.video.mpeg4.internal.Vlc;
 
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
@@ -131,12 +130,6 @@ final class PlusTables {
     }, new int[]{NOT_CODED, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16});
 
     /**
-     * The MODB codes of PB-frames in the Data Partitioned Slice mode (Table V.6), with the symbols of
-     * {@link #MODB_PB}.
-     */
-    static final Vlc DPS_MODB_PB = new Vlc(5, new String[]{"010", "0110", "01110"}, new int[]{0, 1, 2});
-
-    /**
      * The MODB codes of Improved PB-frames in the Data Partitioned Slice mode (Table V.7), with the symbols of
      * {@link #MODB_IMPROVED}.
      */
@@ -209,8 +202,7 @@ final class PlusTables {
      * @return the events
      */
     private static int[] events(Vlc table) {
-        return codes(table).values().stream().filter(symbol -> (symbol & (1 << 8)) == 0)
-                .sorted(Comparator.naturalOrder()).mapToInt(Integer::intValue).toArray();
+        return codes(table).values().stream().sorted(Comparator.naturalOrder()).mapToInt(Integer::intValue).toArray();
     }
 
     /**
@@ -253,10 +245,6 @@ final class PlusTables {
                     result.put(code, symbol);
                 }
             }
-        }
-        if (result.size() != 102) {
-            throw new IllegalStateException("coefficient table with " + result.size() + " events: "
-                    + Arrays.toString(result.values().toArray()));
         }
         return result;
     }

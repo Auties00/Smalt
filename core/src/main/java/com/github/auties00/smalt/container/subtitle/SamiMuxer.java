@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.container.subtitle;
 
+import com.github.auties00.smalt.container.internal.Languages;
 import com.github.auties00.smalt.internal.subtitle.SamiText;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.track.Codec;
@@ -70,7 +71,7 @@ public final class SamiMuxer extends BufferedCueMuxer {
     /**
      * Returns the two-letter code of a language.
      *
-     * @param code the ISO 639-2 or ISO 639-1 code of a track
+     * @param code the ISO 639-1 code, or the ISO 639-2 terminological or bibliographic code, of a track
      * @return the ISO 639-1 code, or empty when the language has none or is unknown
      */
     private static String twoLetter(String code) {
@@ -83,7 +84,8 @@ public final class SamiMuxer extends BufferedCueMuxer {
         }
         for (var candidate : Locale.getISOLanguages()) {
             try {
-                if (Locale.of(candidate).getISO3Language().equals(lower)) {
+                if (Locale.of(candidate).getISO3Language().equals(lower)
+                        || Languages.bibliographicCode(candidate).equals(lower)) {
                     return candidate;
                 }
             } catch (MissingResourceException ignored) {
