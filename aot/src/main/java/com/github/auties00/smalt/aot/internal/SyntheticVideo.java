@@ -18,8 +18,9 @@ import java.util.List;
  *
  * <p>The training run's profiles cover only the branches its inputs take, so the content spans the
  * properties that steer the codecs' decisions: smooth natural texture with sub-sample motion
- * ({@link #natural}), and the content classes of {@link #content}: high-frequency texture, fast
- * global motion reaching the frame borders, and scene cuts with fades.
+ * ({@link #natural}), interlaced frames whose fields comb where they move ({@link #interlaced}), and
+ * the content classes of {@link #content}: high-frequency texture, fast global motion reaching the
+ * frame borders, and scene cuts with fades.
  */
 final class SyntheticVideo {
     /**
@@ -31,6 +32,17 @@ final class SyntheticVideo {
      * The side of the square lattice of random values behind the value noise.
      */
     private static final int LATTICE = 64;
+
+    /**
+     * The period, in luma samples, of the stripes of {@link #interlaced}.
+     */
+    private static final int STRIPE_PERIOD = 16;
+
+    /**
+     * The distance, in luma samples, the stripes of {@link #interlaced} move from one field to the
+     * next: a quarter of their period, so neighboring rows of the two fields differ by a quarter turn.
+     */
+    private static final int STRIPE_SHIFT = STRIPE_PERIOD / 4;
 
     /**
      * Prevents instantiation.
@@ -62,8 +74,8 @@ final class SyntheticVideo {
             for (var row = 0; row < height; row++) {
                 for (var column = 0; column < width; column++) {
                     var noise = valueNoise(lattice, (column + t * 1.37) / 9.0, (row - t * 0.61) / 9.0);
-                    var wave = 40 * Math.sin((column - t * 2.3) / 23.0) * Math.cos((row + t * 1.1) / 31.0);
-                    var dx = column - width / 2.0 - 60 * Math.sin(t / 9.0);
+                    var wave = 40 * StrictMath.sin((column - t * 2.3) / 23.0) * StrictMath.cos((row + t * 1.1) / 31.0);
+                    var dx = column - width / 2.0 - 60 * StrictMath.sin(t / 9.0);
                     var dy = row - height / 2.0;
                     var spot = dx * dx + dy * dy < 1600 ? 50 : 0;
                     y[row * picture.yStride() + column] =
@@ -90,6 +102,59 @@ final class SyntheticVideo {
             pictures.add(picture);
         }
         return pictures;
+    }
+
+    /**
+     * Synthesizes interlaced video: the frames of {@link #natural}, whose two fields show the same
+     * instant, with a rectangle over the middle of the picture of vertical stripes that move a quarter
+     * of their period from one field to the next.
+     *
+     * <p>Inside the rectangle each row differs from its neighbors, which belong to the other field, and
+     * matches the rows two above and below, the combing that makes an adaptive encoder code a
+     * macroblock pair as fields; elsewhere the fields agree and pairs code better as frames, so a frame
+     * mixes both kinds of pair. The black frames of {@code natural} stay black.
+     *
+     * @param width the width in samples
+     * @param height the height in samples
+     * @param frames the number of frames
+     * @param topFirst whether the top field, the even rows, is sampled first
+     * @return the pictures, in limited-range BT.709
+     */
+    static List<YuvPicture> interlaced(int width, int height, int frames, boolean topFirst) {
+        var pictures = natural(width, height, frames);
+        for (var t = 0; t < frames; t++) {
+            if (t % 6 == 5) {
+                continue;
+            }
+            var picture = pictures.get(t);
+            for (var row = height / 4; row < height * 3 / 4; row++) {
+                var phase = STRIPE_SHIFT * (2 * t + ((row & 1) == 0 == topFirst ? 0 : 1));
+                var offset = row * picture.yStride();
+                for (var column = width / 3; column < width * 2 / 3; column++) {
+                    picture.y()[offset + column] = (byte) stripe(column - phase, STRIPE_PERIOD, 60);
+                }
+            }
+            for (var row = picture.chromaHeight() / 4; row < picture.chromaHeight() * 3 / 4; row++) {
+                var phase = STRIPE_SHIFT / 2 * (2 * t + ((row & 1) == 0 == topFirst ? 0 : 1));
+                var offset = row * picture.uvStride();
+                for (var column = picture.chromaWidth() / 3; column < picture.chromaWidth() * 2 / 3; column++) {
+                    picture.u()[offset + column] = (byte) stripe(column - phase, STRIPE_PERIOD / 2, 40);
+                }
+            }
+        }
+        return pictures;
+    }
+
+    /**
+     * Returns a sample of a sinusoid around mid gray.
+     *
+     * @param position the position along the sinusoid
+     * @param period its period
+     * @param amplitude its amplitude
+     * @return the sample, 0 to 255
+     */
+    private static int stripe(int position, int period, int amplitude) {
+        return (int) Math.round(128 + amplitude * StrictMath.sin(2 * Math.PI * position / period));
     }
 
     /**
@@ -202,8 +267,8 @@ final class SyntheticVideo {
      * @return the sample
      */
     private static int moved(YuvPicture base, int column, int row, int t, int width, int height) {
-        var dx = (int) (40 * Math.sin(t / 3.0));
-        var dy = (int) (24 * Math.cos(t / 4.0));
+        var dx = (int) (40 * StrictMath.sin(t / 3.0));
+        var dy = (int) (24 * StrictMath.cos(t / 4.0));
         var x = Math.floorMod(column + dx * t / 2, width);
         var y = Math.floorMod(row + dy * t / 3, height);
         return base.y()[y * base.yStride() + x] & 0xFF;

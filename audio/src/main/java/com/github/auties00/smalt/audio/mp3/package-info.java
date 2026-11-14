@@ -1,5 +1,7 @@
 /**
- * The MP3 (and MP1 and MP2) decoder and the MP3 encoder ({@link Mp3Decoder}, {@link Mp3Encoder}).
+ * The MPEG audio decoder of Layers I, II and III with the ISO/IEC 13818-3 multichannel extension
+ * ({@link Mp3Decoder}), the MP3 encoder ({@link Mp3Encoder}) and the Layer I and II (MP1 and MP2) encoder
+ * ({@link Mp2Encoder}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

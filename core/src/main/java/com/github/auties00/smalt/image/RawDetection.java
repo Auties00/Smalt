@@ -13,11 +13,14 @@ import java.util.Arrays;
  *
  * <p>A TIFF-structured file is a {@link ImageFormat#DNG} when its first directory holds the
  * {@code DNGVersion} tag, a {@link ImageFormat#RAW} when it is a Canon CR2 file ({@code CR} at
- * offset 8) or when one of its directories (the main chain and the {@code SubIFDs} they point to)
- * describes a color filter array or linear raw image or uses a vendor raw compression, and a
- * {@link ImageFormat#TIFF} otherwise. The walk is bounded in the directories and entries it reads,
- * so it terminates on every input; a directory it cannot read ends the walk, and the file is then
- * classified from what was read so far.
+ * offset 8) or a Phase One IIQ file ({@code IIIICwaR} at offset 8), when its first directory carries a
+ * tag only camera raw files carry, or when one of its directories (the main chain and the
+ * {@code SubIFDs} they point to) describes a color filter array, linear raw or sequential color
+ * filter (Sony ARQ) image, uses a vendor raw compression or is one of Samsung's (compression 32773
+ * with a color filter array pattern and no photometric interpretation), and a {@link ImageFormat#TIFF}
+ * otherwise.
+ * The walk is bounded in the directories and entries it reads, so it terminates on every input; a
+ * directory it cannot read ends the walk, and the file is then classified from what was read so far.
  */
 final class RawDetection {
     /**
@@ -36,6 +39,11 @@ final class RawDetection {
     private static final int COMPRESSION = 259;
 
     /**
+     * The tag holding the color filter array pattern.
+     */
+    private static final int CFA_PATTERN = 33422;
+
+    /**
      * The tag holding the offsets of the child directories.
      */
     private static final int SUB_IFDS = 330;
@@ -51,11 +59,30 @@ final class RawDetection {
     private static final int PHOTOMETRIC_LINEAR_RAW = 34892;
 
     /**
-     * The compression codes only camera raw images use: Nikon NEF (34713), Sony ARW (32767),
-     * Panasonic (34316), Kodak (65000, 262) and Pentax (65535) raw compressions, and the codes
-     * 32769 and 32770 of older Nikon and Sony files.
+     * The photometric interpretation of the four samples per pixel of a Sony ARQ file (sequential color filter).
      */
-    private static final int[] RAW_COMPRESSIONS = {262, 32767, 32769, 32770, 34316, 34713, 65000, 65535};
+    private static final int PHOTOMETRIC_SEQUENTIAL = 32892;
+
+    /**
+     * The compression codes only camera raw images use: Nikon NEF (34713), Sony ARW (32767),
+     * Panasonic (34316), Kodak (65000, 262) and Pentax (65535) raw compressions, the codes 32769
+     * and 32770 of older Nikon and Sony files and 32772 of Samsung's. {@link #SAMSUNG_COMPRESSION} is
+     * not among them.
+     */
+    private static final int[] RAW_COMPRESSIONS = {262, 32767, 32769, 32770, 32772, 34316, 34713, 65000, 65535};
+
+    /**
+     * The compression code of Samsung's later raw files, and of PackBits in any other TIFF file. Samsung's
+     * directories state a color filter array pattern and no photometric interpretation, which an image
+     * a TIFF reader can show does not.
+     */
+    private static final int SAMSUNG_COMPRESSION = 32773;
+
+    /**
+     * The tags only camera raw files carry: Kodak's directory of the DCS files (33424), Leaf's metadata packets
+     * of the MOS files (34310) and Kodak's directory of the KDC files (65024).
+     */
+    private static final int[] RAW_TAGS = {33424, 34310, 65024};
 
     /**
      * The most directories examined.
@@ -179,7 +206,7 @@ final class RawDetection {
         if (ByteArrays.u16(header, 2, little) != 42) {
             return ImageFormat.TIFF;
         }
-        if (header[8] == 'C' && header[9] == 'R') {
+        if ((header[8] == 'C' && header[9] == 'R') || startsWith(header, 8, "IIIICwaR")) {
             return ImageFormat.RAW;
         }
         var pending = new long[MAX_DIRECTORIES];
@@ -201,6 +228,9 @@ final class RawDetection {
                 continue;
             }
             var entries = Math.min(ByteArrays.u16(countBytes, 0, little), MAX_ENTRIES);
+            var samsung = false;
+            var pattern = false;
+            var photometric = false;
             for (var index = 0; index < entries; index++) {
                 if (readFully(input, offset + 2 + 12L * index, entry, 12) < 12) {
                     break;
@@ -215,8 +245,16 @@ final class RawDetection {
                             return ImageFormat.DNG;
                         }
                     }
-                    case PHOTOMETRIC -> raw |= value == PHOTOMETRIC_CFA || value == PHOTOMETRIC_LINEAR_RAW;
-                    case COMPRESSION -> raw |= Arrays.binarySearch(RAW_COMPRESSIONS, (int) value) >= 0;
+                    case PHOTOMETRIC -> {
+                        photometric = true;
+                        raw |= value == PHOTOMETRIC_CFA || value == PHOTOMETRIC_LINEAR_RAW
+                                || value == PHOTOMETRIC_SEQUENTIAL;
+                    }
+                    case COMPRESSION -> {
+                        samsung = value == SAMSUNG_COMPRESSION;
+                        raw |= Arrays.binarySearch(RAW_COMPRESSIONS, (int) value) >= 0;
+                    }
+                    case CFA_PATTERN -> pattern = true;
                     case SUB_IFDS -> {
                         if (type == 4 || type == 13) {
                             var children = (int) Math.min(values, MAX_DIRECTORIES);
@@ -231,10 +269,10 @@ final class RawDetection {
                             }
                         }
                     }
-                    default -> {
-                    }
+                    default -> raw |= first && Arrays.binarySearch(RAW_TAGS, tag) >= 0;
                 }
             }
+            raw |= samsung && pattern && !photometric;
             if (entries > 0) {
                 var next = new byte[4];
                 if (readFully(input, offset + 2 + 12L * entries, next, 4) == 4) {

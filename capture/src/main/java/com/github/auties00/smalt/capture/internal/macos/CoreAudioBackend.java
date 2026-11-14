@@ -24,15 +24,12 @@ import java.util.function.Consumer;
  *
  * <p>Devices are the audio objects of the hardware abstraction layer, listed by
  * {@link CoreAudioDevices} and identified by their UID; each session streams through its own HAL
- * output audio unit on CoreAudio's I/O thread ({@link CoreAudioStream}). Device changes are found
+ * output audio unit on CoreAudio's I/O thread ({@link CoreAudioStream}), an exclusive one under the
+ * device's hog mode ({@link CoreAudioHog}), and a loopback session reads a process tap
+ * ({@link CoreAudioTap}, macOS 14.2 and later). Device changes are found
  * by listing the devices again whenever CoreAudio reports a change of the device list or of a
  * default device (property listeners on the system object), and every
  * {@value #WATCH_INTERVAL_SECONDS} seconds in case a notification is missed.
- *
- * <p>Not supported: the exclusive mode and loopback capture.
- *
- * @implNote This implementation has not been run on a Mac: it was written from the macOS SDK
- * headers and compiled on another platform.
  */
 @SuppressWarnings("restricted")
 public final class CoreAudioBackend implements AudioBackend {
@@ -108,14 +105,42 @@ public final class CoreAudioBackend implements AudioBackend {
     }
 
     /**
-     * Fails: CoreAudio has no loopback capture before process taps, which are not used.
+     * {@inheritDoc}
      *
-     * @throws MediaException.Unsupported always
+     * @throws MediaException.Unsupported if the system is older than macOS 14.2, which introduced
+     * process taps, the user refused the System Audio Recording permission, or {@code options} asks
+     * for the exclusive mode
      */
     @Override
     public AudioCaptureSession openLoopback(AudioDevice.Output device, AudioStreamOptions options) {
-        // TODO: loopback through a CoreAudio process tap (macOS 14.2)
-        throw new MediaException.Unsupported("loopback capture", "loopback capture is not supported on macOS");
+        requireProcessTaps(CoreAudio.processTapsAvailable());
+        requireTapPermission(CoreAudio.tapPermission());
+        return CoreAudioTap.open(device, options);
+    }
+
+    /**
+     * Fails on a system without process taps.
+     *
+     * @param available whether the system has them
+     * @throws MediaException.Unsupported if it has not
+     */
+    static void requireProcessTaps(boolean available) {
+        if (!available) {
+            throw new MediaException.Unsupported("loopback capture", "loopback capture needs macOS 14.2 or later");
+        }
+    }
+
+    /**
+     * Fails when the user refused the permission.
+     *
+     * @param permission the state from {@link CoreAudio#tapPermission()}
+     * @throws MediaException.Unsupported if the permission was refused
+     */
+    static void requireTapPermission(int permission) {
+        if (permission == CoreAudio.TAP_PERMISSION_DENIED) {
+            throw new MediaException.Unsupported("loopback capture",
+                    "the user refused this application the System Audio Recording permission (System Settings, Privacy & Security)");
+        }
     }
 
     @Override

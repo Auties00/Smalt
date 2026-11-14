@@ -121,7 +121,9 @@ final class MatrixConversion {
         var shiftY = format.shiftY();
         var lumaEnd = Math.min(yuv.height(), last << shiftY);
         for (var row = first << shiftY; row < lumaEnd; row++) {
-            if (format.shiftX() == 0) {
+            if (format.shiftX() == 0 && shiftY == 1) {
+                lumaRowVertical(yuv, out, c, row);
+            } else if (format.shiftX() == 0) {
                 lumaRowFull(yuv, out, c, row);
             } else {
                 lumaRowHalved(yuv, out, c, row);
@@ -162,6 +164,38 @@ final class MatrixConversion {
             var cb = (u[chroma + x] & 0xFF) - 128;
             var cr = (v[chroma + x] & 0xFF) - 128;
             out.y()[dst + x] = (byte) ScalarColorKernel.clamp((c.yy * luma + c.yu * cb + c.yv * cr + bias) >> BITS);
+        }
+    }
+
+    /**
+     * Converts one luma row of a picture whose chroma is halved vertically only (4:4:0),
+     * reconstructing the chroma of each sample with the triangle filter.
+     *
+     * @param yuv the source picture
+     * @param out the destination picture
+     * @param c the coefficients
+     * @param row the luma row
+     */
+    private static void lumaRowVertical(YuvPicture yuv, YuvPicture out, Coefficients c, int row) {
+        var y = yuv.y();
+        var u = yuv.u();
+        var v = yuv.v();
+        var nearRow = row >> 1;
+        var farRow = (row & 1) == 0 ? Math.max(nearRow - 1, 0) : Math.min(nearRow + 1, yuv.chromaHeight() - 1);
+        var near = nearRow * yuv.uvStride();
+        var far = farRow * yuv.uvStride();
+        // the reconstructed chroma is scaled by 4
+        var neutral = 128 << 2;
+        var shift = BITS + 2;
+        var bias = (c.targetOffset << shift) + (1 << (shift - 1));
+        var in = row * yuv.yStride();
+        var dst = row * out.yStride();
+        for (var x = 0; x < yuv.width(); x++) {
+            var cb = column(u, near, far, x, true) - neutral;
+            var cr = column(v, near, far, x, true) - neutral;
+            var luma = (y[in + x] & 0xFF) - c.sourceOffset;
+            out.y()[dst + x] = (byte) ScalarColorKernel.clamp(((c.yy * luma) << 2) + c.yu * cb + c.yv * cr + bias
+                    >> shift);
         }
     }
 

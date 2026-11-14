@@ -1,0 +1,52 @@
+# demux dump of loas/hvxc.loas; regenerate with -Dsmalt.test.updateDumps=true
+format LOAS
+duration 640000
+seekable true
+track 0 AUDIO HVXC timebase=1/8000 duration=5120 config=3:22037244
+  audio rate=8000 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 32
+0 t0 pts=0 dts=0 dur=160 flags=KEY size=1 crc=a4deae1d
+1 t0 pts=160 dts=160 dur=160 flags=KEY size=5 crc=80fd6d5a
+2 t0 pts=320 dts=320 dur=160 flags=KEY size=5 crc=239c535d
+3 t0 pts=480 dts=480 dur=160 flags=KEY size=5 crc=10ff9ca1
+4 t0 pts=640 dts=640 dur=160 flags=KEY size=4 crc=c1ee05af
+5 t0 pts=800 dts=800 dur=160 flags=KEY size=5 crc=4bdb6959
+6 t0 pts=960 dts=960 dur=160 flags=KEY size=5 crc=c847caf6
+7 t0 pts=1120 dts=1120 dur=160 flags=KEY size=5 crc=7632f790
+8 t0 pts=1280 dts=1280 dur=160 flags=KEY size=5 crc=95504557
+9 t0 pts=1440 dts=1440 dur=160 flags=KEY size=4 crc=f01c4785
+10 t0 pts=1600 dts=1600 dur=160 flags=KEY size=5 crc=b88b3d56
+11 t0 pts=1760 dts=1760 dur=160 flags=KEY size=1 crc=a4deae1d
+12 t0 pts=1920 dts=1920 dur=160 flags=KEY size=5 crc=0cf19004
+13 t0 pts=2080 dts=2080 dur=160 flags=KEY size=5 crc=4d3faa9d
+14 t0 pts=2240 dts=2240 dur=160 flags=KEY size=5 crc=9a385b0d
+15 t0 pts=2400 dts=2400 dur=160 flags=KEY size=5 crc=a8e75d1e
+16 t0 pts=2560 dts=2560 dur=160 flags=KEY size=5 crc=4ea90a89
+17 t0 pts=2720 dts=2720 dur=160 flags=KEY size=5 crc=200c0135
+18 t0 pts=2880 dts=2880 dur=160 flags=KEY size=4 crc=401c4906
+19 t0 pts=3040 dts=3040 dur=160 flags=KEY size=5 crc=2bd1ae4d
+20 t0 pts=3200 dts=3200 dur=160 flags=KEY size=4 crc=bc10e99c
+21 t0 pts=3360 dts=3360 dur=160 flags=KEY size=4 crc=abec3887
+22 t0 pts=3520 dts=3520 dur=160 flags=KEY size=4 crc=244e3765
+23 t0 pts=3680 dts=3680 dur=160 flags=KEY size=5 crc=bbc03642
+24 t0 pts=3840 dts=3840 dur=160 flags=KEY size=5 crc=3219f991
+25 t0 pts=4000 dts=4000 dur=160 flags=KEY size=4 crc=6b6c919b
+26 t0 pts=4160 dts=4160 dur=160 flags=KEY size=5 crc=18b84c60
+27 t0 pts=4320 dts=4320 dur=160 flags=KEY size=5 crc=367c555b
+28 t0 pts=4480 dts=4480 dur=160 flags=KEY size=1 crc=a4deae1d
+29 t0 pts=4640 dts=4640 dur=160 flags=KEY size=1 crc=a4deae1d
+30 t0 pts=4800 dts=4800 dur=160 flags=KEY size=5 crc=399387a3
+31 t0 pts=4960 dts=4960 dur=160 flags=KEY size=5 crc=cdf08a62
+seek 0: t0@0
+seek 213333: t0@10
+seek 426666: t0@21
+seek 640000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format LOAS
+  duration -1
+  seekable false
+  track 0 AUDIO HVXC timebase=1/8000 duration=? config=3:22037244
+    audio rate=8000 bits=0 skip=0 layout=[FRONT_CENTER]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

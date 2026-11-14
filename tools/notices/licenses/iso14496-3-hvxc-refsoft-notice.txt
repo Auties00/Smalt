@@ -1,0 +1,848 @@
+---- src_par/hvxcDec.c
+/*
+
+This software module was originally developed by
+
+    Kazuyuki Iijima (Sony Corporation)
+
+    and edited by
+
+    Naoya Tanaka (Matsushita Communication Industrial Co., Ltd.),
+    Akira Inoue (Sony Corporation) and
+    Yuji Maeda (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcCommon.c
+/*
+
+This software module was originally developed by
+
+    Masayuki Nishiguchi, Kazuyuki Iijima, and Jun Matsumoto (Sony Corporation)
+
+    and edited by
+
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcFltDec.c
+/*
+
+This software module was originally developed by
+
+    Kazuyuki Iijima, Masayuki Nishiguchi, and Shiro Omori (Sony Corporation)
+
+    and edited by
+
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcItpDec.c
+/*
+
+This software module was originally developed by
+
+    Kazuyuki Iijima and Masayuki Nishiguchi (Sony Corporation)
+
+    and edited by
+
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcProtect.c
+/*
+
+This software module was originally developed by
+
+    Yuuji Maeda (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcQAmDec.c
+/*
+
+This software module was originally developed by
+
+    Masayuki Nishiguchi and Kazuyuki Iijima (Sony Corporation)
+
+    and edited by
+
+    Yuji Maeda and Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcQLspDec.c
+/*
+
+This software module was originally developed by
+
+    Kazuyuki Iijima (Sony Corporation)
+
+    and edited by
+
+    Naoya Tanaka (Matsushita Communication Industrial Co., Ltd.)
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcSynUVDec.c
+/*
+
+This software module was originally developed by
+
+    Masayuki Nishiguchi and Kazuyuki Iijima (Sony Corporation)
+    
+    and edited by
+ 
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcSynVDec.c
+/*
+
+This software module was originally developed by
+
+    Masayuki Nishiguchi and Kazuyuki Iijima (Sony Corporation)
+
+    and edited by
+
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcUVExtGenDec.c
+/*
+
+This software module was originally developed by
+
+    Masayuki Nishiguchi and Kazuyuki Iijima (Sony Corporation)
+
+    and edited by
+
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcVExtGenDec.c
+/*
+
+This software module was originally developed by
+
+    Masayuki Nishiguchi and Kazuyuki Iijima (Sony Corporation)
+
+    and edited by
+
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcVxcDec.c
+/*
+
+This software module was originally developed by
+
+    Kazuyuki Iijima (Sony Corporation)
+
+    and edited by
+
+    Yuji Maeda (Sony Corporation)
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcCbAm.h
+/*
+
+This software module was originally developed by
+
+    Masayuki Nishiguchi (Sony Corporation)
+
+    and edited by 
+
+    Christian Mittendorf (Robert Bosch GmbH Germany)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcCbAm4k.h
+/*
+
+This software module was originally developed by
+
+    Masayuki Nishiguchi (Sony Corporation)
+
+    and edited by 
+
+    Yuji Maeda (Sony Corporation)
+
+    and
+
+    Christian Mittendorf (Robert Bosch GmbH Germany)
+
+    and
+
+    Akira Inoue (Sony Corporation)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcCbCelp.h
+/*
+
+This software module was originally developed by
+
+    Kazuyuki Iijima (Sony Corporation)
+
+    and edited by 
+
+    Yuji Maeda (Sony Corporation)
+
+    and
+
+    Christian Mittendorf (Robert Bosch GmbH Germany)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcCbCelp4k.h
+/*
+
+This software module was originally developed by
+
+    Kazuyuki Iijima (Sony Corporation)
+
+    and edited by 
+
+    Yuji Maeda (Sony Corporation)
+
+    and
+
+    Christian Mittendorf (Robert Bosch GmbH Germany)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/hvxcCbLsp.h
+/*
+
+This software module was originally developed by
+
+    Kazuyuki Iijima (Sony Corporation)
+
+    and edited by 
+
+    Yuji Maeda (Sony Corporation)
+
+    and
+
+    Christian Mittendorf (Robert Bosch GmbH Germany)
+
+    in the course of development of the MPEG-4 Audio standard (ISO/IEC 14496-3).
+    This software module is an implementation of a part of one or more
+    MPEG-4 Audio (ISO/IEC 14496-3) tools as specified by the MPEG-4 Audio
+    standard (ISO/IEC 14496-3).
+    ISO/IEC gives users of the MPEG-4 Audio standards (ISO/IEC 14496-3)
+    free license to this software module or modifications thereof for use
+    in hardware or software products claiming conformance to the MPEG-4
+    Audio standards (ISO/IEC 14496-3).
+    Those intending to use this software module in hardware or software
+    products are advised that this use may infringe existing patents.
+    The original developer of this software module and his/her company,
+    the subsequent editors and their companies, and ISO/IEC have no
+    liability for use of this software module or modifications thereof in
+    an implementation.
+    Copyright is not released for non MPEG-4 Audio (ISO/IEC 14496-3)
+    conforming products. The original developer retains full right to use
+    the code for his/her own purpose, assign or donate the code to a third
+    party and to inhibit third party from using the code for non MPEG-4
+    Audio (ISO/IEC 14496-3) conforming products.
+    This copyright notice must be included in all copies or derivative works.
+
+    Copyright (c)1996.
+
+*/
+
+---- src_par/inc_lsp_575.tbl
+/*
+This software module was originally developed by
+
+Naoya Tanaka (Matsushita Communication Industrial Co., Ltd.)
+
+and edited by
+
+Yuji Maeda (Sony Corporation)
+
+and 
+
+Christian Mittendorf (Robert Bosch GmbH Germany)
+
+in the course of development of the
+MPEG-2 NBC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.
+This software module is an implementation of a part of one or more
+MPEG-2 NBC/MPEG-4 Audio tools as specified by the MPEG-2 NBC/MPEG-4 Audio
+standard. ISO/IEC  gives users of the MPEG-2 NBC/MPEG-4 Audio standards
+free license to this software module or modifications thereof for use in
+hardware or software products claiming conformance to the MPEG-2 NBC/
+MPEG-4 Audio  standards. Those intending to use this software module in
+hardware or software products are advised that this use may infringe
+existing patents. The original developer of this software module and
+his/her company, the subsequent editors and their companies, and ISO/IEC
+have no liability for use of this software module or modifications
+thereof in an implementation. Copyright is not released for non
+MPEG-2 NBC/MPEG-4 Audio conforming products. The original developer
+retains full right to use the code for his/her  own purpose, assign or
+donate the code to a third party and to inhibit third party from using
+the code for non MPEG-2 NBC/MPEG-4 Audio conforming products.
+This copyright notice must be included in all copies or derivative works.
+Copyright (c)1996, 1997.
+*/
+
+---- src_lpc/pan_lspdec.c
+/*
+This software module was originally developed by
+
+Naoya Tanaka (Matsushita Communication Industrial Co., Ltd.)
+
+and edited by
+
+Yuji Maeda (Sony Corporation)
+
+in the course of development of the
+MPEG-2 AAC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.
+This software module is an implementation of a part of one or more
+MPEG-2 AAC/MPEG-4 Audio tools as specified by the MPEG-2 AAC/MPEG-4 Audio
+standard. ISO/IEC  gives users of the MPEG-2 AAC/MPEG-4 Audio standards
+free license to this software module or modifications thereof for use in
+hardware or software products claiming conformance to the MPEG-2 AAC/
+MPEG-4 Audio  standards. Those intending to use this software module in
+hardware or software products are advised that this use may infringe
+existing patents. The original developer of this software module and
+his/her company, the subsequent editors and their companies, and ISO/IEC
+have no liability for use of this software module or modifications
+thereof in an implementation. Copyright is not released for non
+MPEG-2 AAC/MPEG-4 Audio conforming products. The original developer
+retains full right to use the code for his/her  own purpose, assign or
+donate the code to a third party and to inhibit third party from using
+the code for non MPEG-2 AAC/MPEG-4 Audio conforming products.
+This copyright notice must be included in all copies or derivative works.
+Copyright (c)1996.
+*/
+
+---- src_lpc/pan_stab.c
+/*
+This software module was originally developed by
+Naoya Tanaka (Matsushita Communication Industrial Co., Ltd.)
+and edited by
+FN2 LN2 (CN2), FN3 LN3 (CN3),
+in the course of development of the
+MPEG-2 AAC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.
+This software module is an implementation of a part of one or more
+MPEG-2 AAC/MPEG-4 Audio tools as specified by the MPEG-2 AAC/MPEG-4 Audio
+standard. ISO/IEC  gives users of the MPEG-2 AAC/MPEG-4 Audio standards
+free license to this software module or modifications thereof for use in
+hardware or software products claiming conformance to the MPEG-2 AAC/
+MPEG-4 Audio  standards. Those intending to use this software module in
+hardware or software products are advised that this use may infringe
+existing patents. The original developer of this software module and
+his/her company, the subsequent editors and their companies, and ISO/IEC
+have no liability for use of this software module or modifications
+thereof in an implementation. Copyright is not released for non
+MPEG-2 AAC/MPEG-4 Audio conforming products. The original developer
+retains full right to use the code for his/her  own purpose, assign or
+donate the code to a third party and to inhibit third party from using
+the code for non MPEG-2 AAC/MPEG-4 Audio conforming products.
+This copyright notice must be included in all copies or derivative works.
+Copyright (c)1996.
+*/
+
+---- src_lpc/pan_sort.c
+/*
+This software module was originally developed by
+Naoya Tanaka (Matsushita Communication Industrial Co., Ltd.)
+and edited by
+FN2 LN2 (CN2), FN3 LN3 (CN3),
+in the course of development of the
+MPEG-2 AAC/MPEG-4 Audio standard ISO/IEC 13818-7, 14496-1,2 and 3.
+This software module is an implementation of a part of one or more
+MPEG-2 AAC/MPEG-4 Audio tools as specified by the MPEG-2 AAC/MPEG-4 Audio
+standard. ISO/IEC  gives users of the MPEG-2 AAC/MPEG-4 Audio standards
+free license to this software module or modifications thereof for use in
+hardware or software products claiming conformance to the MPEG-2 AAC/
+MPEG-4 Audio  standards. Those intending to use this software module in
+hardware or software products are advised that this use may infringe
+existing patents. The original developer of this software module and
+his/her company, the subsequent editors and their companies, and ISO/IEC
+have no liability for use of this software module or modifications
+thereof in an implementation. Copyright is not released for non
+MPEG-2 AAC/MPEG-4 Audio conforming products. The original developer
+retains full right to use the code for his/her  own purpose, assign or
+donate the code to a third party and to inhibit third party from using
+the code for non MPEG-2 AAC/MPEG-4 Audio conforming products.
+This copyright notice must be included in all copies or derivative works.
+Copyright (c)1996.
+*/
+
+---- src_frame/common_m4a.c
+/**********************************************************************
+MPEG-4 Audio VM
+Common module
+
+
+
+This software module was originally developed by
+
+Heiko Purnhagen (University of Hannover / ACTS-MoMuSys)
+
+and edited by
+
+in the course of development of the MPEG-2 AAC/MPEG-4 Audio standard
+ISO/IEC 13818-7, 14496-1,2 and 3. This software module is an
+implementation of a part of one or more MPEG-2 AAC/MPEG-4 Audio tools
+as specified by the MPEG-2 AAC/MPEG-4 Audio standard. ISO/IEC gives
+users of the MPEG-2 AAC/MPEG-4 Audio standards free license to this
+software module or modifications thereof for use in hardware or
+software products claiming conformance to the MPEG-2 AAC/ MPEG-4 Audio
+standards. Those intending to use this software module in hardware or
+software products are advised that this use may infringe existing
+patents. The original developer of this software module and his/her
+company, the subsequent editors and their companies, and ISO/IEC have
+no liability for use of this software module or modifications thereof
+in an implementation. Copyright is not released for non MPEG-2
+AAC/MPEG-4 Audio conforming products. The original developer retains
+full right to use the code for his/her own purpose, assign or donate
+the code to a third party and to inhibit third party from using the
+code for non MPEG-2 AAC/MPEG-4 Audio conforming products. This
+copyright notice must be included in all copies or derivative works.
+
+Copyright (c) 1996.
+
+
+
+Source file: common.c
+
+ 
+
+Authors:
+HP    Heiko Purnhagen, Uni Hannover <purnhage@tnt.uni-hannover.de>
+
+Changes:
+06-jun-96   HP    new module based on ErrorMsg() from cmdline module
+25-jun-96   HP    added CommonFreeAlloc()
+26-aug-96   HP    CVS
+25-jun-97   HP    added random()
+16-oct-98   HP    fflush(stderr) in warning/exit
+15-feb-00   HP    added random1init()
+**********************************************************************/
+
+---- src_par/dec_par.c
+/**********************************************************************
+MPEG-4 Audio VM
+Decoder core (parametric)
+
+
+
+This software module was originally developed by
+
+Heiko Purnhagen (University of Hannover / Deutsche Telekom Berkom)
+Bernd Edler (University of Hannover / Deutsche Telekom Berkom)
+Masayuki Nishiguchi, Kazuyuki Iijima, Jun Matsumoto (Sony Corporation)
+
+and edited by
+
+Akira Inoue (Sony Corporation) and
+Yuji Maeda (Sony Corporation)
+Markus Werner       (SEED / Software Development Karlsruhe) 
+
+in the course of development of the MPEG-2 AAC/MPEG-4 Audio standard
+ISO/IEC 13818-7, 14496-1,2 and 3. This software module is an
+implementation of a part of one or more MPEG-2 AAC/MPEG-4 Audio tools
+as specified by the MPEG-2 AAC/MPEG-4 Audio standard. ISO/IEC gives
+users of the MPEG-2 AAC/MPEG-4 Audio standards free license to this
+software module or modifications thereof for use in hardware or
+software products claiming conformance to the MPEG-2 AAC/ MPEG-4 Audio
+standards. Those intending to use this software module in hardware or
+software products are advised that this use may infringe existing
+patents. The original developer of this software module and his/her
+company, the subsequent editors and their companies, and ISO/IEC have
+no liability for use of this software module or modifications thereof
+in an implementation. Copyright is not released for non MPEG-2
+AAC/MPEG-4 Audio conforming products. The original developer retains
+full right to use the code for his/her own purpose, assign or donate
+the code to a third party and to inhibit third party from using the
+code for non MPEG-2 AAC/MPEG-4 Audio conforming products. This
+copyright notice must be included in all copies or derivative works.
+
+Copyright (c) 2000.
+
+$Id: dec_par.c,v 1.1.1.1 2009-05-29 14:10:13 mul Exp $
+Parametric decoder module
+**********************************************************************/
+
