@@ -215,6 +215,27 @@ final class XllStreamWriter {
     }
 
     /**
+     * The XLL synchronization fields of the asset descriptor.
+     *
+     * @param present the value of {@code bExSSXLLSyncPresent}
+     * @param peakBuffer the 4-bit {@code nuPeakBRCntrlBuffSzkB} code
+     * @param delayBits the width of {@code nuInitLLDecDlyFrames}, 1 to 32
+     * @param delay the value of {@code nuInitLLDecDlyFrames}
+     * @param offset the value of {@code nuExSSXLLSyncOffset}
+     */
+    record Sync(boolean present, int peakBuffer, int delayBits, int delay, int offset) {
+        /**
+         * A sync point at the start of the component, without a smoothing buffer or delay.
+         */
+        static final Sync START = new Sync(true, 0, 1, 0, 0);
+
+        /**
+         * No sync point.
+         */
+        static final Sync NONE = new Sync(false, 0, 1, 0, 0);
+    }
+
+    /**
      * Writes an extension substream frame holding one XLL component.
      *
      * @param component the XLL component
@@ -240,20 +261,41 @@ final class XllStreamWriter {
      */
     static byte[] substream(byte[] component, int totalChannels, int speakerMask, int rateCode, int peakBuffer,
                             List<Extension> extensions) {
-        var payload = component.length;
+        return substream(component, totalChannels, speakerMask, rateCode,
+                new Sync(true, peakBuffer, 1, 0, 0), extensions);
+    }
+
+    /**
+     * Writes an extension substream frame holding core extension components and, unless {@code component} is
+     * {@code null}, one XLL component with the given synchronization fields.
+     *
+     * @param component the XLL component, or {@code null} for none
+     * @param totalChannels the channel count of the asset
+     * @param speakerMask the speaker activity mask of the asset (Table 7-10), 8 bits
+     * @param rateCode the sample rate code of the asset (Table 7-6)
+     * @param sync the XLL synchronization fields
+     * @param extensions the core extension components, in the order of their mask bits
+     * @return the frame bytes
+     */
+    static byte[] substream(byte[] component, int totalChannels, int speakerMask, int rateCode, Sync sync,
+                            List<Extension> extensions) {
+        var componentSize = component == null ? -1 : component.length;
+        var payload = Math.max(componentSize, 0);
         for (var extension : extensions) {
             payload += extension.data().length;
         }
-        var size = substreamHeader(component.length, payload, totalChannels, speakerMask, rateCode, peakBuffer,
+        var size = substreamHeader(componentSize, payload, totalChannels, speakerMask, rateCode, sync,
                 extensions, 0, 0).length + 2;
-        var header = substreamHeader(component.length, payload, totalChannels, speakerMask, rateCode, peakBuffer,
+        var header = substreamHeader(componentSize, payload, totalChannels, speakerMask, rateCode, sync,
                 extensions, size, size + payload);
         var out = new ByteArrayOutputStream();
         out.writeBytes(withCrc(header, 5));
         for (var extension : extensions) {
             out.writeBytes(extension.data());
         }
-        out.writeBytes(component);
+        if (component != null) {
+            out.writeBytes(component);
+        }
         return out.toByteArray();
     }
 
@@ -496,9 +538,9 @@ final class XllStreamWriter {
     }
 
     private static byte[] substreamHeader(int componentSize, int payload, int totalChannels, int speakerMask,
-                                          int rateCode, int peakBuffer, List<Extension> extensions, int headerSize,
+                                          int rateCode, Sync sync, List<Extension> extensions, int headerSize,
                                           int frameSize) {
-        var descriptor = descriptor(componentSize, totalChannels, speakerMask, rateCode, peakBuffer, extensions);
+        var descriptor = descriptor(componentSize, totalChannels, speakerMask, rateCode, sync, extensions);
         var w = new DtsBitWriter();
         w.write(0x64582025L, 32);
         w.write(0, 8);
@@ -530,7 +572,7 @@ final class XllStreamWriter {
      * Writes the asset descriptor as bits, because it does not start on a byte boundary of the header.
      */
     private static int[] descriptor(int componentSize, int totalChannels, int speakerMask, int rateCode,
-                                    int peakBuffer, List<Extension> extensions) {
+                                    Sync sync, List<Extension> extensions) {
         var w = new BitList();
         w.write(0, 9);
         w.write(0, 3);
@@ -554,7 +596,7 @@ final class XllStreamWriter {
         w.write(0, 1);
         w.write(0, 1);
         w.write(0, 2);
-        var mask = 0x201;
+        var mask = componentSize < 0 ? 0x001 : 0x201;
         for (var extension : extensions) {
             mask |= extension.mask();
         }
@@ -562,12 +604,16 @@ final class XllStreamWriter {
         for (var extension : extensions) {
             w.write(extension.data().length - 1, extension.sizeBits());
         }
-        w.write(componentSize - 1, 16);
-        w.write(1, 1);
-        w.write(peakBuffer, 4);
-        w.write(0, 5);
-        w.write(0, 1);
-        w.write(0, 16);
+        if (componentSize >= 0) {
+            w.write(componentSize - 1, 16);
+            w.write(sync.present() ? 1 : 0, 1);
+            if (sync.present()) {
+                w.write(sync.peakBuffer(), 4);
+                w.write(sync.delayBits() - 1, 5);
+                w.write(sync.delay() & 0xFFFFFFFFL, sync.delayBits());
+                w.write(sync.offset(), 16);
+            }
+        }
         while (w.bits.size() % 8 != 0) {
             w.write(0, 1);
         }

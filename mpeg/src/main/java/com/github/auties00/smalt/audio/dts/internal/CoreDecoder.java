@@ -32,13 +32,20 @@ public final class CoreDecoder {
     static final int XXCH_SYNC = 0x47004A03;
 
     /**
-     * The DTS speaker mask bits of the channels of each AMODE up to 9, in coding order.
+     * The DTS speaker mask bits of the channels of each AMODE (Table 5-4), in coding order up to 9; the primary
+     * channels of 10 to 15 take them in the order of the table until an XXCH core loudspeaker mask places them.
      */
     private static final int[][] AMODE_MASKS = {
             {Speakers.C}, {Speakers.L, Speakers.R}, {Speakers.L, Speakers.R}, {Speakers.L, Speakers.R},
             {Speakers.L, Speakers.R}, {Speakers.C, Speakers.L, Speakers.R}, {Speakers.L, Speakers.R, Speakers.CS},
             {Speakers.C, Speakers.L, Speakers.R, Speakers.CS}, {Speakers.L, Speakers.R, Speakers.LS, Speakers.RS},
-            {Speakers.C, Speakers.L, Speakers.R, Speakers.LS, Speakers.RS}};
+            {Speakers.C, Speakers.L, Speakers.R, Speakers.LS, Speakers.RS},
+            {Speakers.LC, Speakers.RC, Speakers.L, Speakers.R, Speakers.LS, Speakers.RS},
+            {Speakers.C, Speakers.L, Speakers.R, Speakers.LSR, Speakers.RSR, Speakers.OH},
+            {Speakers.C, Speakers.CS, Speakers.L, Speakers.R, Speakers.LSR, Speakers.RSR},
+            {Speakers.LC, Speakers.C, Speakers.RC, Speakers.L, Speakers.R, Speakers.LS, Speakers.RS},
+            {Speakers.LC, Speakers.RC, Speakers.L, Speakers.R, Speakers.LS, Speakers.LSR, Speakers.RS, Speakers.RSR},
+            {Speakers.LC, Speakers.C, Speakers.RC, Speakers.L, Speakers.R, Speakers.LS, Speakers.CS, Speakers.RS}};
 
     /**
      * The output scale: 24-bit full scale to 1.0.
@@ -63,6 +70,17 @@ public final class CoreDecoder {
      * deployed decoders (the 1024-tap prototype of D.9 has half the passband gain of the 512-tap ones).
      */
     private static final float X96_SYNTHESIS_SCALE = 2 * SYNTHESIS_SCALE;
+
+    /**
+     * The most subband samples a subframe holds: four subsubframes, the length of a high frequency vector (5.6,
+     * {@code HFREQ}).
+     */
+    private static final int MAX_SUBFRAME_SAMPLES = 32;
+
+    /**
+     * The last arrangement ({@code AMODE}) whose channels are all primary channels (Table 5-4).
+     */
+    private static final int LAST_PRIMARY_AMODE = 9;
 
     /**
      * The target of a downmix operation that stands for the LFE channel.
@@ -130,6 +148,11 @@ public final class CoreDecoder {
     private final int[] subsubframeCounts = new int[16];
 
     /**
+     * The number of samples of the partial subsubframe ({@code PSC}) by subframe, {@code 0} for none.
+     */
+    private final int[] partialCounts = new int[16];
+
+    /**
      * The index of the first subband sample of each subframe, then the sample count.
      */
     private final int[] subframeOffsets = new int[17];
@@ -178,6 +201,12 @@ public final class CoreDecoder {
      * The number of recorded downmix reversals of the frame.
      */
     private int operations;
+
+    /**
+     * Whether the frame has an arrangement of more than five channels ({@code AMODE} 10 to 15) whose primary channels
+     * no XXCH core loudspeaker mask has placed yet.
+     */
+    private boolean arrangementUnresolved;
 
     /**
      * Whether the frame was synthesized, which a frame is once.
@@ -323,12 +352,20 @@ public final class CoreDecoder {
     /**
      * Decodes a core frame and the extensions it carries to subband samples.
      *
+     * <p>A termination frame may end its last subframe in a partial subsubframe ({@code PSC}, clause 5.5.1), which the
+     * specification describes only as holding {@code PSC} samples per subband after the normal subsubframes, a DSYNC
+     * word after it. This decoder reads it as a subsubframe of that many samples: as many Huffman or plain codes per
+     * subband, or the block codes that cover them; the DSYNC words of the normal subsubframes as Table 5-29 places
+     * them, then one more; the high frequency vectors give the subframe's samples; and the LFE samples stay those of
+     * the normal subsubframes, the samples after them interpolated from silence. The XCh, XXCH, X96 and XBR data of
+     * the frame follow the same partition.
+     *
      * @param data the bytes
      * @param offset the index of the sync word
      * @param length the number of bytes of the core frame
      * @param extensions whether to decode the XCh, XXCH and X96 extensions
      * @throws MediaException.Malformed if the frame breaks the syntax
-     * @throws MediaException.Unsupported if the frame uses a channel arrangement this decoder cannot output
+     * @throws MediaException.Unsupported if the frame has a user defined channel arrangement ({@code AMODE} 16 to 63)
      */
     public void decode(byte[] data, int offset, int length, boolean extensions) {
         reader.reset(data, offset, length);
@@ -336,10 +373,10 @@ public final class CoreDecoder {
         if (header.frameSize > length) {
             throw new MediaException.Malformed("DTS frame of " + header.frameSize + " bytes cut to " + length);
         }
-        if (header.amode > 9) {
-            // TODO: AMODE 10 to 15 (more than five channels in the core without XXCH) has no defined coding order.
-            throw new MediaException.Unsupported("DTS", "channel arrangement " + header.amode + " is not supported");
+        if (header.amode >= AMODE_MASKS.length) {
+            throw new MediaException.Unsupported("DTS", "user defined channel arrangement " + header.amode);
         }
+        arrangementUnresolved = header.amode > LAST_PRIMARY_AMODE;
         steps = header.rate == 0x1F ? DtsCoreTables.STEP_LOSSLESS : DtsCoreTables.STEP_LOSSY;
         subframes = reader.read(4) + 1;
         var primaryChannels = reader.read(3) + 1;
@@ -376,14 +413,23 @@ public final class CoreDecoder {
         for (var subframe = 0; subframe < subframes; subframe++) {
             var subsubframes = reader.read(2) + 1;
             var partial = reader.read(3);
-            if (partial != 0) {
-                // TODO: partial subsubframes of termination frames (PSC above zero) are not decoded.
-                throw new MediaException.Unsupported("DTS", "partial subsubframes are not supported");
+            if (partial != 0 && header.normal) {
+                throw new MediaException.Malformed("DTS partial subsubframe in a normal frame");
             }
-            if (position + subsubframes * 8 > SubbandBuffer.MAX_SAMPLES) {
+            if (partial != 0 && subframe != subframes - 1) {
+                // clause 5.5.1 puts the partial subsubframe at the end of the frame; one inside it would also leave
+                // the LFE samples of the subframes after it out of step with their subband samples
+                throw new MediaException.Malformed("DTS partial subsubframe before the last subframe");
+            }
+            var count = subsubframes * 8 + partial;
+            if (count > MAX_SUBFRAME_SAMPLES) {
+                throw new MediaException.Malformed("DTS subframe of " + count + " subband samples");
+            }
+            if (position + count > SubbandBuffer.MAX_SAMPLES) {
                 throw new MediaException.Malformed("DTS frame holds more than 128 subband samples");
             }
             subsubframeCounts[subframe] = subsubframes;
+            partialCounts[subframe] = partial;
             subframeOffsets[subframe] = position;
             primary.readSideInformation(reader, subsubframes);
             recordTransients(primary, subframe);
@@ -393,21 +439,14 @@ public final class CoreDecoder {
             if (header.crcPresent) {
                 reader.skip(16);
             }
-            primary.readVectors(reader, buffer, position, subsubframes);
+            primary.readVectors(reader, buffer, position, count);
             if (header.lfe > 0) {
                 readLfe(subsubframes);
             }
-            for (var subsubframe = 0; subsubframe < subsubframes; subsubframe++) {
-                primary.readSubsubframe(reader, buffer, position + 8 * subsubframe, subsubframe, subsubframes, steps);
-                if (subsubframe == subsubframes - 1 || header.syncEverySubsubframe) {
-                    if (reader.read(16) != 0xFFFF) {
-                        throw new MediaException.Malformed("DTS DSYNC word missing");
-                    }
-                }
-            }
-            primary.applyJointIntensity(buffer, position, subsubframes * 8);
-            primary.clearInactive(buffer, position, subsubframes * 8);
-            position += subsubframes * 8;
+            readSubsubframes(primary, reader, subframe, "DTS");
+            primary.applyJointIntensity(buffer, position, count);
+            primary.clearInactive(buffer, position, count);
+            position += count;
         }
         subframeOffsets[subframes] = position;
         samples = position;
@@ -415,17 +454,20 @@ public final class CoreDecoder {
             throw new MediaException.Malformed("DTS frame codes " + samples + " subband samples for "
                     + header.blocks + " blocks");
         }
+        padLfe();
         reader.checkNotOverrun();
         for (var ch = 0; ch < primaryChannels; ch++) {
             buffer.saveHistory(ch, 0, 32, samples);
             buffer.clearBands(ch, 32, samples);
         }
-        if (header.amode == 3 || header.frontSumDifference) {
-            var left = header.amode >= 5 && header.amode != 6 && header.amode != 8 ? 1 : 0;
-            sumDifference(left, left + 1);
-        }
-        if (header.surroundSumDifference && primaryChannels >= 4 && header.amode >= 8) {
-            sumDifference(primaryChannels - 2, primaryChannels - 1);
+        if (!arrangementUnresolved) {
+            if (header.amode == 3 || header.frontSumDifference) {
+                var left = header.amode >= 5 && header.amode != 6 && header.amode != 8 ? 1 : 0;
+                sumDifference(left, left + 1);
+            }
+            if (header.surroundSumDifference && primaryChannels >= 4 && header.amode >= 8) {
+                sumDifference(primaryChannels - 2, primaryChannels - 1);
+            }
         }
         if (extensions && header.extension) {
             decodeExtensions(data, offset);
@@ -449,6 +491,61 @@ public final class CoreDecoder {
         for (var n = 0; n < count; n++) {
             lfeFixed[lfeSamples] = FixedLfeInterpolator.dequantize(codes[n], index);
             lfeDecimated[lfeSamples++] = ChannelSet.clip(codes[n] * scale);
+        }
+    }
+
+    /**
+     * Reads the audio data of the subsubframes of one subframe of a channel set and the DSYNC words between them:
+     * after the last normal subsubframe, or after every one when the header asks, and after a partial subsubframe.
+     *
+     * @param set the channel set, the side information of the subframe read
+     * @param reader the bit stream, standing on the audio data
+     * @param subframe the index of the subframe in the frame
+     * @param name the name of the coding in the message of a missing DSYNC word
+     */
+    private void readSubsubframes(ChannelSet set, MsbBitReader reader, int subframe, String name) {
+        var subsubframes = subsubframeCounts[subframe];
+        var partial = partialCounts[subframe];
+        var position = subframeOffsets[subframe];
+        for (var subsubframe = 0; subsubframe < subsubframes; subsubframe++) {
+            set.readSubsubframe(reader, buffer, position + 8 * subsubframe, subsubframe, subsubframes, 8, steps);
+            if (subsubframe == subsubframes - 1 || header.syncEverySubsubframe) {
+                checkSync(reader, name);
+            }
+        }
+        if (partial > 0) {
+            set.readSubsubframe(reader, buffer, position + 8 * subsubframes, subsubframes, subsubframes, partial,
+                    steps);
+            checkSync(reader, name);
+        }
+    }
+
+    /**
+     * Reads a DSYNC word.
+     *
+     * @param reader the bit stream
+     * @param name the name of the coding in the message
+     * @throws MediaException.Malformed if the next 16 bits are not a DSYNC word
+     */
+    static void checkSync(MsbBitReader reader, String name) {
+        if (reader.read(16) != 0xFFFF) {
+            throw new MediaException.Malformed(name + " DSYNC word missing");
+        }
+    }
+
+    /**
+     * Completes the decimated LFE samples of a frame that ends in a partial subsubframe with silent ones up to the
+     * frame's length: the frame codes LFE samples for its normal subsubframes only (Table 5-29), so the interpolation
+     * of the samples after them rings out the coded ones.
+     */
+    private void padLfe() {
+        if (header.lfe == 0) {
+            return;
+        }
+        var needed = (samples * header.lfe + 3) >> 2;
+        while (lfeSamples < needed) {
+            lfeFixed[lfeSamples] = 0;
+            lfeDecimated[lfeSamples++] = 0;
         }
     }
 
@@ -576,22 +673,16 @@ public final class CoreDecoder {
         for (var subframe = 0; subframe < subframes; subframe++) {
             var subsubframes = subsubframeCounts[subframe];
             var position = subframeOffsets[subframe];
+            var count = subframeOffsets[subframe + 1] - position;
             set.readSideInformation(reader, subsubframes);
             recordTransients(set, subframe);
             if (header.crcPresent) {
                 reader.skip(16);
             }
-            set.readVectors(reader, buffer, position, subsubframes);
-            for (var subsubframe = 0; subsubframe < subsubframes; subsubframe++) {
-                set.readSubsubframe(reader, buffer, position + 8 * subsubframe, subsubframe, subsubframes, steps);
-                if (subsubframe == subsubframes - 1 || header.syncEverySubsubframe) {
-                    if (reader.read(16) != 0xFFFF) {
-                        throw new MediaException.Malformed("DTS extension DSYNC word missing");
-                    }
-                }
-            }
-            set.applyJointIntensity(buffer, position, subsubframes * 8);
-            set.clearInactive(buffer, position, subsubframes * 8);
+            set.readVectors(reader, buffer, position, count);
+            readSubsubframes(set, reader, subframe, "DTS extension");
+            set.applyJointIntensity(buffer, position, count);
+            set.clearInactive(buffer, position, count);
         }
         reader.checkNotOverrun();
         for (var ch = 0; ch < set.channels; ch++) {
@@ -777,10 +868,19 @@ public final class CoreDecoder {
      *
      * @param undo whether to undo the downmixes the channel extensions embedded in the core channels; without, the
      *             core channels keep the downmix they were coded with, as the lossless extension expects
+     * @throws MediaException.Unsupported if the frame has an arrangement of more than five channels ({@code AMODE} 10
+     *         to 15) and no XXCH core loudspeaker mask placed its primary channels
      */
     public void synthesize(boolean undo) {
         if (synthesized) {
             return;
+        }
+        if (arrangementUnresolved) {
+            // AMODE 10 to 15 code at most five of their six to eight channels as primary channels and the rest in
+            // "extended data arrays" that ETSI TS 102 114 never defines (5.4.3, PCHS), so only an XXCH core speaker
+            // mask tells which speakers the primary channels feed.
+            throw new MediaException.Unsupported("DTS", "channel arrangement " + header.amode
+                    + " without an XXCH core loudspeaker mask");
         }
         synthesized = true;
         if (undo) {
@@ -1058,6 +1158,15 @@ public final class CoreDecoder {
     }
 
     /**
+     * {@return the number of samples of the partial subsubframe of a subframe, {@code 0} for none}
+     *
+     * @param subframe the index of the subframe in the frame
+     */
+    int partial(int subframe) {
+        return partialCounts[subframe];
+    }
+
+    /**
      * {@return the index of the first subband sample of a subframe}
      *
      * @param subframe the index of the subframe in the frame
@@ -1121,6 +1230,32 @@ public final class CoreDecoder {
                 masks[ch++] = 1 << bit;
             }
         }
+        if (arrangementUnresolved) {
+            arrangementUnresolved = false;
+            if (header.frontSumDifference) {
+                sumDifferencePair(Speakers.L, Speakers.R);
+            }
+            if (header.surroundSumDifference && !sumDifferencePair(Speakers.LS, Speakers.RS)) {
+                sumDifferencePair(Speakers.LSS, Speakers.RSS);
+            }
+        }
+    }
+
+    /**
+     * Applies sum/difference decoding to the primary channels of a pair of speakers, when both are primary channels.
+     *
+     * @param left the speaker bit of the channel that holds the sum
+     * @param right the speaker bit of the channel that holds the difference
+     * @return whether both are primary channels
+     */
+    private boolean sumDifferencePair(int left, int right) {
+        var first = indexOf(left);
+        var second = indexOf(right);
+        if (first < 0 || second < 0 || first >= primary.channels || second >= primary.channels) {
+            return false;
+        }
+        sumDifference(first, second);
+        return true;
     }
 
     /**

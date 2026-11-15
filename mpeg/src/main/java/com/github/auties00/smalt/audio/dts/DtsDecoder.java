@@ -38,9 +38,14 @@ import java.util.function.Consumer;
  * stream with XLL is output at the lossless resolution, bit for bit, its channels coded against a core added to the
  * fixed-point reconstruction of that core, with the downmixes its channel sets embed undone. When the extension
  * substream of a frame with a core needs what the decoder does not implement (channels coded against a core with a
- * 128 times interpolated LFE channel, a peak bit rate smoothing buffer), the core is output; a stream without core
- * that needs it (XLL with four frequency bands or above 192 kHz, a peak bit rate smoothing buffer) and termination
- * frames with a partial subsubframe raise {@link MediaException.Unsupported}. A frame output from its core inside a
+ * 128 times interpolated LFE channel), the core is output; a stream without core that needs it (XLL with four frequency
+ * bands or above 192 kHz) raises {@link MediaException.Unsupported}. Lossless data sent ahead through a peak bit rate
+ * smoothing buffer is decoded from its sync point once the sync point's delay has run out; until then a frame with a
+ * core outputs its core, and a frame without one outputs silence of its duration. Termination frames, which may end in
+ * a partial subsubframe, output their exact length. A core arrangement of more than five channels ({@code AMODE} 10 to
+ * 15) decodes when an XXCH extension places its primary channels by its core loudspeaker mask, and raises
+ * {@link MediaException.Unsupported} otherwise, as user defined arrangements do: the specification codes the channels
+ * beyond the fifth in data it does not define. A frame output from its core inside a
  * stream whose lossless channels have twice or four times the rate of the core comes out at that rate, so that a track
  * keeps one rate: the core is synthesized through the 64-band filter bank of X96 with its upper subbands silent, then,
  * for four times the rate, joined with a silent upper band as the two frequency bands of XLL are. The rate of the
@@ -287,7 +292,31 @@ public final class DtsDecoder implements AudioDecoder {
         }
         if (substream.decodeAlone(data, position, size)) {
             emitSubstream(output);
+        } else if (substream.waitingForLossless()) {
+            emitMuted(output);
         }
+    }
+
+    /**
+     * Passes on the muted output of an extension substream frame without core that waits for the delay of its peak
+     * bit rate smoothing buffer, when the substream header describes the frame.
+     */
+    private void emitMuted(Consumer<AudioBuffer> output) {
+        var masks = substream.mutedMasks();
+        var samples = substream.mutedSamples();
+        if (masks.length == 0 || samples == 0) {
+            return;
+        }
+        LimitChecks.checkChannels(options.limits(), masks.length);
+        var mapping = mapping(masks);
+        sampleRate = substream.mutedRate();
+        var buffer = mapping.buffer(sampleRate, samples);
+        for (var ch = 0; ch < masks.length; ch++) {
+            Arrays.fill(buffer.plane(ch), 0, samples, 0);
+        }
+        buffer.setFrames(samples);
+        layout = mapping.layout;
+        output.accept(buffer);
     }
 
     /**

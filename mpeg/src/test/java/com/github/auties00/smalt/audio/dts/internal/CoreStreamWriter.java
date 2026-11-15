@@ -73,13 +73,49 @@ public final class CoreStreamWriter {
         public final int[] jointBook = new int[8];
         public final int[][] jointIndex = new int[8][32];
         public final int[][] vector = new int[8][32];
-        public final int[][][] codes = new int[8][32][32];
+        /**
+         * The audio codes by channel, subband and sample: 32 samples, and room for a partial subsubframe after four
+         * normal ones, which a decoder must reject.
+         */
+        public final int[][][] codes = new int[8][32][40];
         public final int[] lfe = new int[16];
         public int lfeScale;
         public int dynamicRange;
+        /**
+         * The number of samples of the partial subsubframe after the normal ones ({@code PSC}), 0 for none.
+         */
+        public int partial;
 
         public Subframe(int subsubframes) {
             this.subsubframes = subsubframes;
+        }
+
+        /**
+         * {@return a copy of this subframe with another number of normal subsubframes and partial samples}
+         *
+         * @param subsubframes the number of normal subsubframes
+         * @param partial the number of samples of the partial subsubframe
+         */
+        public Subframe resized(int subsubframes, int partial) {
+            var copy = new Subframe(subsubframes);
+            copy.partial = partial;
+            for (var ch = 0; ch < 8; ch++) {
+                System.arraycopy(predictionMode[ch], 0, copy.predictionMode[ch], 0, 32);
+                System.arraycopy(predictionVector[ch], 0, copy.predictionVector[ch], 0, 32);
+                System.arraycopy(allocation[ch], 0, copy.allocation[ch], 0, 32);
+                System.arraycopy(transientMode[ch], 0, copy.transientMode[ch], 0, 32);
+                System.arraycopy(jointIndex[ch], 0, copy.jointIndex[ch], 0, 32);
+                System.arraycopy(vector[ch], 0, copy.vector[ch], 0, 32);
+                for (var n = 0; n < 32; n++) {
+                    System.arraycopy(scaleIndex[ch][n], 0, copy.scaleIndex[ch][n], 0, 2);
+                    System.arraycopy(codes[ch][n], 0, copy.codes[ch][n], 0, codes[ch][n].length);
+                }
+            }
+            System.arraycopy(jointBook, 0, copy.jointBook, 0, 8);
+            System.arraycopy(lfe, 0, copy.lfe, 0, 16);
+            copy.lfeScale = lfeScale;
+            copy.dynamicRange = dynamicRange;
+            return copy;
         }
     }
 
@@ -106,6 +142,14 @@ public final class CoreStreamWriter {
         public final List<Subframe> subframes = new ArrayList<>();
         public byte[] extensionData = new byte[0];
         public int minimumSize = 96;
+        /**
+         * Whether the frame is a termination frame ({@code FTYPE} 0).
+         */
+        public boolean termination;
+        /**
+         * The deficit sample count ({@code SHORT}), 31 for a normal frame.
+         */
+        public int deficit = 31;
 
         public Frame(Channels primary) {
             this.primary = primary;
@@ -114,9 +158,37 @@ public final class CoreStreamWriter {
         public int blocks() {
             var blocks = 0;
             for (var subframe : subframes) {
-                blocks += 8 * subframe.subsubframes;
+                blocks += 8 * subframe.subsubframes + subframe.partial;
             }
             return blocks;
+        }
+
+        /**
+         * {@return a copy of this frame sharing its channels and subframes}
+         */
+        public Frame copy() {
+            var copy = new Frame(primary);
+            copy.amode = amode;
+            copy.sfreq = sfreq;
+            copy.rate = rate;
+            copy.lfe = lfe;
+            copy.perfect = perfect;
+            copy.history = history;
+            copy.syncEverySubsubframe = syncEverySubsubframe;
+            copy.dynamicRange = dynamicRange;
+            copy.frontSumDifference = frontSumDifference;
+            copy.surroundSumDifference = surroundSumDifference;
+            copy.pcmResolution = pcmResolution;
+            copy.version = version;
+            copy.dialnorm = dialnorm;
+            copy.extensionType = extensionType;
+            copy.extension = extension;
+            copy.subframes.addAll(subframes);
+            copy.extensionData = extensionData;
+            copy.minimumSize = minimumSize;
+            copy.termination = termination;
+            copy.deficit = deficit;
+            return copy;
         }
     }
 
@@ -131,7 +203,7 @@ public final class CoreStreamWriter {
         writeAudioHeader(body, frame.primary, frame.subframes.size());
         for (var subframe : frame.subframes) {
             body.write(subframe.subsubframes - 1, 2);
-            body.write(0, 3);
+            body.write(subframe.partial, 3);
             writeSideInformation(body, frame.primary, subframe);
             if (frame.dynamicRange) {
                 body.write(subframe.dynamicRange, 8);
@@ -143,12 +215,7 @@ public final class CoreStreamWriter {
                 }
                 body.write(subframe.lfeScale, 8);
             }
-            for (var s = 0; s < subframe.subsubframes; s++) {
-                writeSubsubframe(body, frame.primary, subframe, s);
-                if (s == subframe.subsubframes - 1 || frame.syncEverySubsubframe) {
-                    body.write(0xFFFF, 16);
-                }
-            }
+            writeSubsubframes(body, frame.primary, subframe, frame.syncEverySubsubframe);
         }
         var header = new DtsBitWriter();
         var headerBits = 32 + 1 + 5 + 1 + 7 + 14 + 6 + 4 + 5 + 1 + 1 + 1 + 1 + 1 + 3 + 1 + 1 + 2 + 1 + 1 + 4 + 2 + 3
@@ -157,8 +224,8 @@ public final class CoreStreamWriter {
         var coreBytes = (int) ((coreBits + 31) / 32 * 4);
         var size = Math.max(frame.minimumSize, coreBytes + frame.extensionData.length);
         header.write(0x7FFE8001L, 32);
-        header.write(1, 1);
-        header.write(31, 5);
+        header.write(frame.termination ? 0 : 1, 1);
+        header.write(frame.deficit, 5);
         header.write(0, 1);
         header.write(frame.blocks() - 1, 7);
         header.write(size - 1, 14);
@@ -344,9 +411,35 @@ public final class CoreStreamWriter {
     }
 
     /**
+     * Writes the subsubframes of a subframe with their DSYNC words: after the last normal one, or every one, and after
+     * the partial one.
+     */
+    public static void writeSubsubframes(DtsBitWriter out, Channels set, Subframe subframe, boolean syncEvery) {
+        for (var s = 0; s < subframe.subsubframes; s++) {
+            writeSubsubframe(out, set, subframe, s);
+            if (s == subframe.subsubframes - 1 || syncEvery) {
+                out.write(0xFFFF, 16);
+            }
+        }
+        if (subframe.partial > 0) {
+            writeSubsubframe(out, set, subframe, subframe.subsubframes, subframe.partial);
+            out.write(0xFFFF, 16);
+        }
+    }
+
+    /**
      * Writes one subsubframe of audio codes.
      */
     public static void writeSubsubframe(DtsBitWriter out, Channels set, Subframe subframe, int subsubframe) {
+        writeSubsubframe(out, set, subframe, subsubframe, 8);
+    }
+
+    /**
+     * Writes one subsubframe of {@code count} samples per subband: the codes of those samples, or the blocks of four
+     * that cover them for block codes.
+     */
+    public static void writeSubsubframe(DtsBitWriter out, Channels set, Subframe subframe, int subsubframe,
+                                        int count) {
         for (var ch = 0; ch < set.count; ch++) {
             for (var n = 0; n < vqStart(set, ch); n++) {
                 var abits = subframe.allocation[ch][n];
@@ -358,13 +451,13 @@ public final class CoreStreamWriter {
                 var sel = abits <= 10 ? set.select[ch][abits - 1] : 0;
                 var huffmanBooks = abits == 1 ? 1 : abits <= 5 ? 3 : abits <= 10 ? 7 : 0;
                 if (sel < huffmanBooks) {
-                    for (var m = 0; m < 8; m++) {
+                    for (var m = 0; m < count; m++) {
                         huffman(out, PREFIXES[sel] + LEVELS[abits], codes[base + m]);
                     }
                 } else if (abits <= 7) {
                     var levels = LEVELS[abits];
                     var offset = (levels - 1) / 2;
-                    for (var block = 0; block < 2; block++) {
+                    for (var block = 0; block < (count + 3) / 4; block++) {
                         var code = 0;
                         for (var m = 3; m >= 0; m--) {
                             code = code * levels + codes[base + block * 4 + m] + offset;
@@ -372,7 +465,7 @@ public final class CoreStreamWriter {
                         out.write(code, BLOCK_BITS[abits]);
                     }
                 } else {
-                    for (var m = 0; m < 8; m++) {
+                    for (var m = 0; m < count; m++) {
                         out.writeSigned(codes[base + m], abits - 3);
                     }
                 }

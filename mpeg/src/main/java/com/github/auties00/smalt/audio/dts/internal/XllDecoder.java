@@ -237,6 +237,26 @@ final class XllDecoder {
     }
 
     /**
+     * {@return the size in bytes of the XLL frame at a position ({@code nLLFrameSize} + 1), or {@code -1} if no XLL
+     * sync word starts there or its header is cut short}
+     *
+     * @param data the bytes
+     * @param offset the index of the frame
+     * @param length the number of bytes available
+     */
+    static int frameSize(byte[] data, int offset, int length) {
+        if (length < 16 || CoreDecoder.readInt(data, offset) != SYNC) {
+            return -1;
+        }
+        var bits = 0L;
+        for (var i = 0; i < 8; i++) {
+            bits = bits << 8 | data[offset + 4 + i] & 0xFF;
+        }
+        var sizeBits = (int) (bits >>> 47 & 0x1F) + 1;
+        return (int) (bits >>> 47 - sizeBits & (1L << sizeBits) - 1) + 1;
+    }
+
+    /**
      * {@return the ratio of the rate of band 0 of an XLL component to the rate of a core, when the component has
      * frequency bands this decoder joins and every channel set has them at one rate, the rate of the core or twice it;
      * else {@code 0}}

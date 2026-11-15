@@ -274,9 +274,10 @@ final class X96Decoder {
         var everySubsubframe = core.header().syncEverySubsubframe;
         for (var subframe = 0; subframe < core.subframes(); subframe++) {
             var subsubframes = core.subsubframes(subframe);
+            var partial = core.partial(subframe);
             var offset = core.subframeOffset(subframe);
             readSideInformation(channels, core.header().crcPresent && !substream);
-            var count = subsubframes * 8;
+            var count = subsubframes * 8 + partial;
             for (var ch = 0; ch < channels; ch++) {
                 var planes = buffer.planes[firstPlane + ch];
                 for (var n = firstBand; n < lastBand[ch]; n++) {
@@ -295,7 +296,9 @@ final class X96Decoder {
                     }
                 }
             }
-            for (var subsubframe = 0; subsubframe < subsubframes; subsubframe++) {
+            var last = partial > 0 ? subsubframes : subsubframes - 1;
+            for (var subsubframe = 0; subsubframe <= last; subsubframe++) {
+                var samples = subsubframe < subsubframes ? 8 : partial;
                 for (var ch = 0; ch < channels; ch++) {
                     var planes = buffer.planes[firstPlane + ch];
                     for (var n = firstBand; n < lastBand[ch]; n++) {
@@ -303,21 +306,19 @@ final class X96Decoder {
                         if (abits <= 0) {
                             continue;
                         }
-                        readCodes(ch, abits);
+                        readCodes(ch, abits, samples);
                         var step = (long) scales[ch][n] * steps[abits];
                         var base = SubbandBuffer.HISTORY + offset + 8 * subsubframe;
-                        for (var m = 0; m < 8; m++) {
+                        for (var m = 0; m < samples; m++) {
                             add(planes[n], base + m, ChannelSet.dequantize(codes[m], step), n < 32);
                         }
                         if (predictionMode[ch][n] != 0 && n >= 32) {
-                            ChannelSet.inverseAdpcm(planes[n], base, predictionVector[ch][n]);
+                            ChannelSet.inverseAdpcm(planes[n], base, samples, predictionVector[ch][n]);
                         }
                     }
                 }
-                if (subsubframe == subsubframes - 1 || everySubsubframe) {
-                    if (reader.read(16) != 0xFFFF) {
-                        throw new MediaException.Malformed("DTS X96 DSYNC word missing");
-                    }
+                if (subsubframe >= subsubframes - 1 || everySubsubframe) {
+                    CoreDecoder.checkSync(reader, "DTS X96");
                 }
             }
             for (var ch = 0; ch < channels; ch++) {
@@ -412,20 +413,21 @@ final class X96Decoder {
     }
 
     /**
-     * Reads eight quantization indexes of one subband with the core quantizer {@code abits}.
+     * Reads the quantization indexes of one subband with the core quantizer {@code abits}: {@code count} of them, or
+     * the blocks of four that cover them for block codes.
      */
-    private void readCodes(int ch, int abits) {
+    private void readCodes(int ch, int abits, int count) {
         var sel = abits <= 10 ? select[ch][abits - 1] : 0;
         var huffmanBooks = abits == 1 ? 1 : abits <= 5 ? 3 : abits <= 10 ? 7 : 0;
         if (sel < huffmanBooks) {
             var book = DtsHuffman.book(PREFIXES[sel] + LEVELS[abits]);
-            for (var m = 0; m < 8; m++) {
+            for (var m = 0; m < count; m++) {
                 codes[m] = book.decode(reader);
             }
         } else if (abits <= 7) {
             var levels = LEVELS[abits];
             var offset = (levels - 1) >> 1;
-            for (var block = 0; block < 2; block++) {
+            for (var block = 0; block < (count + 3) >> 2; block++) {
                 var code = reader.read(BLOCK_BITS[abits]);
                 for (var m = 0; m < 4; m++) {
                     codes[block * 4 + m] = code % levels - offset;
@@ -436,7 +438,7 @@ final class X96Decoder {
                 }
             }
         } else {
-            for (var m = 0; m < 8; m++) {
+            for (var m = 0; m < count; m++) {
                 codes[m] = reader.readSigned(abits - 3);
             }
         }

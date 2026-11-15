@@ -97,12 +97,7 @@ public final class XxchStreamWriter {
         for (var subframe : set.subframes) {
             CoreStreamWriter.writeSideInformation(out, set.channels, subframe);
             CoreStreamWriter.writeVectors(out, set.channels, subframe);
-            for (var s = 0; s < subframe.subsubframes; s++) {
-                CoreStreamWriter.writeSubsubframe(out, set.channels, subframe, s);
-                if (s == subframe.subsubframes - 1 || syncEverySubsubframe) {
-                    out.write(0xFFFF, 16);
-                }
-            }
+            CoreStreamWriter.writeSubsubframes(out, set.channels, subframe, syncEverySubsubframe);
         }
         return out.toByteArray();
     }

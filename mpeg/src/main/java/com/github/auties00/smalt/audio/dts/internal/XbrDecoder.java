@@ -163,7 +163,10 @@ final class XbrDecoder {
                     }
                 }
             }
-            for (var subsubframe = 0; subsubframe < subsubframes; subsubframe++) {
+            var partial = core.partial(subframe);
+            var last = partial > 0 ? subsubframes : subsubframes - 1;
+            for (var subsubframe = 0; subsubframe <= last; subsubframe++) {
+                var count = subsubframe < subsubframes ? 8 : partial;
                 for (var ch = 0; ch < channels; ch++) {
                     var plane = firstPlane + ch;
                     var planes = buffer.planes[plane];
@@ -172,16 +175,15 @@ final class XbrDecoder {
                         if (abits == 0) {
                             continue;
                         }
-                        readCodes(abits);
+                        readCodes(abits, count);
                         var mode = useTransients ? core.transientMode(subframe, plane, n) : 0;
-                        var scale = subsubframe < (mode == 0 ? subsubframes : mode) ? scales[ch][n][0]
-                                : scales[ch][n][1];
+                        var scale = mode == 0 || subsubframe < mode ? scales[ch][n][0] : scales[ch][n][1];
                         var base = SubbandBuffer.HISTORY + offset + 8 * subsubframe;
                         var samples = planes[n];
                         if (core.fixedPoint()) {
                             var step = (long) scale * steps[abits];
                             var shift = ChannelSet.fixedStepShift(step);
-                            for (var m = 0; m < 8; m++) {
+                            for (var m = 0; m < count; m++) {
                                 // unlike a core sample the sum is not clipped: ffmpeg's lossless output needs it whole
                                 samples[base + m] = (long) samples[base + m]
                                         + ChannelSet.scaleFixed(codes[m], step >> shift, shift);
@@ -189,15 +191,13 @@ final class XbrDecoder {
                             continue;
                         }
                         var factor = scale * (steps[abits] * (1.0f / (1 << 22)));
-                        for (var m = 0; m < 8; m++) {
+                        for (var m = 0; m < count; m++) {
                             samples[base + m] += factor * codes[m];
                         }
                     }
                 }
-                if (subsubframe == subsubframes - 1 || everySubsubframe) {
-                    if (reader.read(16) != 0xFFFF) {
-                        throw new MediaException.Malformed("DTS XBR DSYNC word missing");
-                    }
+                if (subsubframe >= subsubframes - 1 || everySubsubframe) {
+                    CoreDecoder.checkSync(reader, "DTS XBR");
                 }
             }
         }
@@ -205,18 +205,19 @@ final class XbrDecoder {
     }
 
     /**
-     * Reads the eight residual codes of one subband and subsubframe.
+     * Reads the residual codes of one subband and subsubframe: {@code count} of them, or the blocks of four that
+     * cover them for block codes.
      */
-    private void readCodes(int abits) {
+    private void readCodes(int abits, int count) {
         if (abits > 7) {
-            for (var m = 0; m < 8; m++) {
+            for (var m = 0; m < count; m++) {
                 codes[m] = reader.readSigned(abits - 3);
             }
             return;
         }
         var levels = LEVELS[abits];
         var offset = (levels - 1) >> 1;
-        for (var block = 0; block < 2; block++) {
+        for (var block = 0; block < (count + 3) >> 2; block++) {
             var code = reader.read(BLOCK_BITS[abits]);
             for (var m = 0; m < 4; m++) {
                 codes[block * 4 + m] = code % levels - offset;

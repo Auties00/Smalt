@@ -360,10 +360,9 @@ final class ChannelSet {
      * @param reader the bit stream
      * @param buffer the subband planes
      * @param offset the index of the first sample of the subframe in each plane, history excluded
-     * @param subsubframes the number of subsubframes of the subframe
+     * @param count the number of subband samples of the subframe, at most the 32 of a vector
      */
-    void readVectors(MsbBitReader reader, SubbandBuffer buffer, int offset, int subsubframes) {
-        var count = subsubframes * 8;
+    void readVectors(MsbBitReader reader, SubbandBuffer buffer, int offset, int count) {
         for (var ch = 0; ch < channels; ch++) {
             var planes = buffer.planes[firstPlane + ch];
             for (var n = vqStart[ch]; n < subbands[ch]; n++) {
@@ -389,15 +388,21 @@ final class ChannelSet {
      * Reads one subsubframe of audio data of every channel (Table 5-29, {@code AUDIO}), dequantizes it and runs
      * the inverse ADPCM.
      *
+     * <p>A partial subsubframe ({@code PSC}, clause 5.5.1) follows the normal subsubframes of a termination frame
+     * and holds fewer than eight samples per subband: as many Huffman or plain codes, or the block codes that cover
+     * them, four samples each. It takes the scale factor after the transient when the subband has one, and the
+     * first one otherwise, as further samples of the last normal subsubframe would.
+     *
      * @param reader the bit stream
      * @param buffer the subband planes
      * @param offset the index of the first sample of the subsubframe in each plane, history excluded
-     * @param subsubframe the index of the subsubframe in its subframe
-     * @param subsubframes the number of subsubframes of the subframe
+     * @param subsubframe the index of the subsubframe in its subframe, {@code subsubframes} for a partial one
+     * @param subsubframes the number of normal subsubframes of the subframe
+     * @param count the number of samples of the subsubframe: 8, or 1 to 7 for a partial one
      * @param steps the step sizes times 2^22 by ABITS
      */
     void readSubsubframe(MsbBitReader reader, SubbandBuffer buffer, int offset, int subsubframe, int subsubframes,
-                         int[] steps) {
+                         int count, int[] steps) {
         for (var ch = 0; ch < channels; ch++) {
             var planes = buffer.planes[firstPlane + ch];
             for (var n = 0; n < vqStart[ch]; n++) {
@@ -405,14 +410,13 @@ final class ChannelSet {
                 var plane = planes[n];
                 var base = SubbandBuffer.HISTORY + offset;
                 if (abits == 0) {
-                    for (var m = 0; m < 8; m++) {
+                    for (var m = 0; m < count; m++) {
                         plane[base + m] = 0;
                     }
                 } else {
-                    readCodes(reader, ch, abits);
+                    readCodes(reader, ch, abits, count);
                     var mode = transientMode[ch][n];
-                    var scale = subsubframe < (mode == 0 ? subsubframes : mode) ? scales[ch][n][0]
-                            : scales[ch][n][1];
+                    var scale = mode == 0 || subsubframe < mode ? scales[ch][n][0] : scales[ch][n][1];
                     var adjusted = (long) scale;
                     if (abits <= 10) {
                         adjusted = adjusted * (long) (adjust[ch][abits - 1] * 16) >> 4;
@@ -420,17 +424,17 @@ final class ChannelSet {
                     var step = adjusted * steps[abits];
                     if (fixedPoint) {
                         var shift = fixedStepShift(step);
-                        for (var m = 0; m < 8; m++) {
+                        for (var m = 0; m < count; m++) {
                             plane[base + m] = dequantizeFixed(codes[m], step >> shift, shift);
                         }
                     } else {
-                        for (var m = 0; m < 8; m++) {
+                        for (var m = 0; m < count; m++) {
                             plane[base + m] = dequantize(codes[m], step);
                         }
                     }
                 }
                 if (predictionMode[ch][n] != 0) {
-                    inverseAdpcm(plane, base, predictionVector[ch][n]);
+                    inverseAdpcm(plane, base, count, predictionVector[ch][n]);
                 }
             }
         }
@@ -519,20 +523,21 @@ final class ChannelSet {
     }
 
     /**
-     * Reads the eight quantization indexes of one subband and subsubframe into {@link #codes}.
+     * Reads the quantization indexes of one subband and subsubframe into {@link #codes}: {@code count} of them, or
+     * the blocks of four that cover them for block codes.
      */
-    private void readCodes(MsbBitReader reader, int ch, int abits) {
+    private void readCodes(MsbBitReader reader, int ch, int abits, int count) {
         var sel = abits <= 10 ? select[ch][abits - 1] : 0;
         var book = abits <= 10 ? AUDIO_BOOKS[abits][sel] : null;
         if (book != null) {
-            for (var m = 0; m < 8; m++) {
+            for (var m = 0; m < count; m++) {
                 codes[m] = book.decode(reader);
             }
         } else if (abits <= 7) {
             var levels = LEVELS[abits];
             var offset = (levels - 1) >> 1;
             var bits = BLOCK_BITS[abits];
-            for (var block = 0; block < 2; block++) {
+            for (var block = 0; block < (count + 3) >> 2; block++) {
                 var code = reader.read(bits);
                 for (var m = 0; m < 4; m++) {
                     codes[block * 4 + m] = code % levels - offset;
@@ -544,27 +549,28 @@ final class ChannelSet {
             }
         } else {
             var bits = abits - 3;
-            for (var m = 0; m < 8; m++) {
+            for (var m = 0; m < count; m++) {
                 codes[m] = reader.readSigned(bits);
             }
         }
     }
 
     /**
-     * Runs the inverse ADPCM over the eight samples at {@code base} (clause C.3.3), the four samples before them
-     * being the history, in the integer arithmetic of the subband samples: the prediction is the sum of the Q13
-     * coefficients times the previous samples, rounded at 2^13, and each reconstructed sample is clipped.
+     * Runs the inverse ADPCM over the samples of a subsubframe at {@code base} (clause C.3.3), the four samples
+     * before them being the history, in the integer arithmetic of the subband samples: the prediction is the sum of
+     * the Q13 coefficients times the previous samples, rounded at 2^13, and each reconstructed sample is clipped.
      *
      * @param plane the subband plane
-     * @param base the index of the first of the eight samples
+     * @param base the index of the first sample
+     * @param count the number of samples, 8 or fewer for a partial subsubframe
      * @param vector the prediction coefficient vector ({@code PVQ})
      */
-    static void inverseAdpcm(float[] plane, int base, int vector) {
+    static void inverseAdpcm(float[] plane, int base, int count, int vector) {
         long c0 = DtsVqTables.adpcm(vector, 0);
         long c1 = DtsVqTables.adpcm(vector, 1);
         long c2 = DtsVqTables.adpcm(vector, 2);
         long c3 = DtsVqTables.adpcm(vector, 3);
-        for (var m = base; m < base + 8; m++) {
+        for (var m = base; m < base + count; m++) {
             var sum = c0 * (long) plane[m - 1] + c1 * (long) plane[m - 2] + c2 * (long) plane[m - 3]
                     + c3 * (long) plane[m - 4];
             plane[m] = clip(plane[m] + ((sum + (1 << 12)) >> 13));

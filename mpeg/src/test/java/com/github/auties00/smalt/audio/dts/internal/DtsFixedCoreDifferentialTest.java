@@ -348,32 +348,27 @@ final class DtsFixedCoreDifferentialTest {
         assertLossless("Rice " + bits, units, 0);
     }
 
-    @Test
-    @DisplayName("a peak bit rate smoothing buffer outputs the core of a stream with one")
-    void peakBufferOverCore() {
-        var random = new SplittableRandom(21);
-        var units = new ArrayList<byte[]>();
-        var cores = new ArrayList<byte[]>();
+    @ParameterizedTest(name = "core {0}")
+    @ValueSource(booleans = {true, false})
+    @DisplayName("a peak bit rate smoothing buffer without delay decodes each whole XLL frame in its own frame")
+    void peakBufferWithoutDelay(boolean core) {
+        var random = new SplittableRandom(core ? 21 : 22);
+        var smoothed = new ArrayList<byte[]>();
+        var plain = new ArrayList<byte[]>();
         for (var f = 0; f < 3; f++) {
-            var frame = plainFrame(random, 80, false, 6);
-            var set = set(6, 0x3F, 0, null, random, 100, 1);
-            var out = new ByteArrayOutputStream();
-            out.writeBytes(CoreStreamWriter.write(frame));
-            out.writeBytes(XllStreamWriter.substream(XllStreamWriter.component(List.of(set), FRAME), 6, 0xF, 12, 3,
-                    List.of()));
-            units.add(out.toByteArray());
-            cores.add(CoreStreamWriter.write(frame));
+            var frame = CoreStreamWriter.write(plainFrame(random, 80, false, 6));
+            var component = XllStreamWriter.component(List.of(set(6, 0x3F, core ? 0 : 0x3F, null, random, 100, 1)),
+                    FRAME);
+            for (var peakBuffer : new int[]{3, 0}) {
+                var out = new ByteArrayOutputStream();
+                if (core) {
+                    out.writeBytes(frame);
+                }
+                out.writeBytes(XllStreamWriter.substream(component, 6, 0xF, 12, peakBuffer, List.of()));
+                (peakBuffer == 0 ? plain : smoothed).add(out.toByteArray());
+            }
         }
-        assertArrayEquals(decode(cores).samples, decode(units).samples);
-    }
-
-    @Test
-    @DisplayName("a peak bit rate smoothing buffer is unsupported in a stream without a core")
-    void peakBufferAlone() {
-        var random = new SplittableRandom(22);
-        var set = set(6, 0x3F, 0x3F, null, random, 100, 1);
-        var unit = XllStreamWriter.substream(XllStreamWriter.component(List.of(set), FRAME), 6, 0xF, 12, 3, List.of());
-        assertThrows(MediaException.Unsupported.class, () -> decode(List.of(unit)));
+        assertArrayEquals(decode(plain).samples, decode(smoothed).samples);
     }
 
     @ParameterizedTest(name = "scale index {0}, perfect {1}, ratio {2}")

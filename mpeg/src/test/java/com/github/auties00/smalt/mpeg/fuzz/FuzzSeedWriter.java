@@ -1985,6 +1985,18 @@ class FuzzSeedWriter {
                 com.github.auties00.smalt.audio.dts.internal.XllFuzzSeeds.rice(), 48000, 6));
     }
 
+    @Test
+    @DisplayName("writes the DTS core seeds: a termination frame with a partial subsubframe, an arrangement above nine "
+            + "placed by XXCH, and lossless data through a peak bit rate smoothing buffer")
+    void dtsCore() {
+        write(MpegFuzzTest.class, "dts", "valid-core-termination.bin", dtsSeed(
+                com.github.auties00.smalt.audio.dts.internal.CoreFuzzSeeds.termination(), 48000, 6));
+        write(MpegFuzzTest.class, "dts", "valid-core-arrangement-xxch.bin", dtsSeed(
+                com.github.auties00.smalt.audio.dts.internal.CoreFuzzSeeds.arrangement(), 48000, 8));
+        write(MpegFuzzTest.class, "dts", "valid-xll-smoothed.bin", dtsSeed(
+                com.github.auties00.smalt.audio.dts.internal.CoreFuzzSeeds.smoothed(), 48000, 6));
+    }
+
     private static byte[] dtsSeed(List<byte[]> units, int sampleRate, int channels) {
         var parts = new ArrayList<FuzzPackets.Part>();
         for (var unit : units) {

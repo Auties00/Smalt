@@ -49,6 +49,11 @@ public final class ExtensionSubstream {
             12000, 24000, 48000, 96000, 192000, 384000};
 
     /**
+     * The reference clocks in Hz by {@code nuRefClockCode}, {@code 0} where reserved (Table 7-3).
+     */
+    private static final int[] REFERENCE_CLOCKS = {32000, 44100, 48000, 0};
+
+    /**
      * The reader of the substream.
      */
     private final MsbBitReader reader = new MsbBitReader(new byte[0]);
@@ -92,6 +97,11 @@ public final class ExtensionSubstream {
      * The frame duration in samples at the reference clock ({@code nuExSSFrameDurationCode}), or {@code 0}.
      */
     int frameDuration;
+
+    /**
+     * The reference clock of {@link #frameDuration} in Hz ({@code nuRefClockCode}), or {@code 0}.
+     */
+    private int referenceClock;
 
     /**
      * The coding mode of the asset ({@code nuCodingMode}).
@@ -155,14 +165,72 @@ public final class ExtensionSubstream {
     private final int[] mixOutChannels = new int[4];
 
     /**
-     * The peak bit rate smoothing buffer size of the XLL component of the asset, in units of 16 kB, 0 for none.
+     * Whether the XLL component of the asset signals a sync point ({@code bExSSXLLSyncPresent}).
+     */
+    private boolean xllSyncPresent;
+
+    /**
+     * The peak bit rate smoothing buffer size of the XLL component of the asset ({@code nuPeakBRCntrlBuffSzkB}), in
+     * units of 16 kB, 0 for none.
      */
     private int xllPeakBuffer;
 
     /**
-     * The offset of the first XLL frame in the XLL component of the asset, in bytes.
+     * The number of frames to wait after a sync point before the first XLL frame is decoded
+     * ({@code nuInitLLDecDlyFrames}).
+     */
+    private int xllDelay;
+
+    /**
+     * The offset of the first XLL frame in the XLL component of the asset, in bytes ({@code nuExSSXLLSyncOffset}).
      */
     private int xllSyncOffset;
+
+    /**
+     * The XLL data received and not yet decoded while a peak bit rate smoothing buffer is in use, from index 0.
+     */
+    private byte[] smoothing = new byte[0];
+
+    /**
+     * The number of bytes held in {@link #smoothing}.
+     */
+    private int smoothingLength;
+
+    /**
+     * The most bytes {@link #smoothing} may hold, from the buffer size of the sync point.
+     */
+    private int smoothingLimit;
+
+    /**
+     * The number of frames still to wait before the first XLL frame of the buffer is decoded.
+     */
+    private int smoothingDelay;
+
+    /**
+     * Whether the XLL data goes through {@link #smoothing}: from a sync point that uses it to a reset or an error.
+     */
+    private boolean smoothingActive;
+
+    /**
+     * The scratch copy of the buffered XLL data and the component of the frame, which {@link #losslessRatio} reads
+     * without consuming them.
+     */
+    private byte[] peek = new byte[0];
+
+    /**
+     * The bytes holding the XLL frame located by {@link #locateXll}.
+     */
+    private byte[] xllData;
+
+    /**
+     * The index of the XLL frame located by {@link #locateXll}.
+     */
+    private int xllOffset;
+
+    /**
+     * The number of bytes of the XLL frame located by {@link #locateXll}.
+     */
+    private int xllLength;
 
     /**
      * The speaker layout of each speaker remapping set ({@code nuSpkrMaskRemapSet}).
@@ -229,9 +297,8 @@ public final class ExtensionSubstream {
         if ((components & XBR) != 0) {
             xbr.decode(data, componentOffsets[5], componentSizes[5], core);
         }
-        if ((components & XLL) != 0) {
-            checkWholeXllFrame();
-            xll.decode(data, componentOffsets[9], componentSizes[9], this, core);
+        if ((components & XLL) != 0 && locateXll(data, true)) {
+            decodeXll(core);
             ownOutput = true;
         }
     }
@@ -240,7 +307,9 @@ public final class ExtensionSubstream {
      * {@return the ratio of the rate of band 0 of the XLL channels coded against a core to the rate of that core, 1 or
      * 2, when this decoder can add them to the core, or {@code 0}}
      *
-     * <p>A frame that breaks the syntax or needs a peak bit rate smoothing buffer codes none this decoder can add.
+     * <p>A frame that breaks the syntax codes none this decoder can add, nor does a frame that decodes no XLL frame
+     * while it waits for the delay of a peak bit rate smoothing buffer. The data of the frame is not consumed: the
+     * {@link #decode} of the same frame follows.
      *
      * @param data the bytes
      * @param offset the index of the sync word
@@ -250,11 +319,10 @@ public final class ExtensionSubstream {
     public int losslessRatio(byte[] data, int offset, int length, int coreRate) {
         try {
             parse(data, offset, length);
-            if ((components & XLL) == 0) {
+            if ((components & XLL) == 0 || !locateXll(data, false)) {
                 return 0;
             }
-            checkWholeXllFrame();
-            return xll.coreRatio(data, componentOffsets[9], componentSizes[9], this, coreRate);
+            return xll.coreRatio(xllData, xllOffset, xllLength, this, coreRate);
         } catch (MediaException.Malformed | MediaException.Unsupported unusable) {
             return 0;
         }
@@ -274,9 +342,10 @@ public final class ExtensionSubstream {
         parse(data, offset, length);
         ownOutput = false;
         if ((components & XLL) != 0) {
-            checkWholeXllFrame();
-            xll.decode(data, componentOffsets[9], componentSizes[9], this, null);
-            ownOutput = true;
+            if (locateXll(data, true)) {
+                decodeXll(null);
+                ownOutput = true;
+            }
         } else if ((components & LBR) != 0) {
             lbr.decode(data, componentOffsets[8], componentSizes[8], this);
             ownOutput = true;
@@ -285,18 +354,192 @@ public final class ExtensionSubstream {
     }
 
     /**
-     * Rejects an XLL component that is not one whole frame.
-     *
-     * @throws MediaException.Unsupported if the asset uses a peak bit rate smoothing buffer or an XLL frame does not
-     *         start with the component
+     * {@return whether the last frame decoded by {@link #decode} or {@link #decodeAlone} has an XLL component but
+     * decoded no XLL frame, because the delay of the sync point of its peak bit rate smoothing buffer has not run out
+     * or no sync point was found yet}
      */
-    private void checkWholeXllFrame() {
-        if (xllPeakBuffer != 0 || xllSyncOffset != 0) {
-            // TODO: peak bit rate smoothing (nuPeakBRCntrlBuffSzkB, nuInitLLDecDlyFrames, nuExSSXLLSyncOffset): XLL
-            // frames spread over the components of several extension substream frames need a buffer across frames.
-            // No stream known needs it (the FATE suite and the DTS-HD MA samples of samples.ffmpeg.org do not).
-            throw new MediaException.Unsupported("DTS", "XLL with a peak bit rate smoothing buffer");
+    public boolean waitingForLossless() {
+        return (components & XLL) != 0 && !ownOutput;
+    }
+
+    /**
+     * {@return the number of samples per channel of the muted output of a frame that waits for its lossless data
+     * without a core (clause 7.5.2, {@code nuInitLLDecDlyFrames}): the frame duration at the rate of the asset, or
+     * {@code 0} when the substream header does not give it}
+     */
+    public int mutedSamples() {
+        if (referenceClock == 0 || maxSampleRate == 0) {
+            return 0;
         }
+        var samples = (long) frameDuration * maxSampleRate;
+        return samples % referenceClock == 0 ? (int) (samples / referenceClock) : 0;
+    }
+
+    /**
+     * {@return the sample rate of the muted output of a frame that waits for its lossless data without a core: the
+     * rate of the asset}
+     */
+    public int mutedRate() {
+        return maxSampleRate;
+    }
+
+    /**
+     * {@return the DTS speaker bit of each channel of the muted output of a frame that waits for its lossless data
+     * without a core, from the speaker activity mask of the asset, or an empty array when the asset gives no mask for
+     * every channel}
+     */
+    public int[] mutedMasks() {
+        var expanded = Speakers.expand(speakerMask);
+        if (speakerMask == 0 || Integer.bitCount(expanded) != totalChannels) {
+            return new int[0];
+        }
+        var masks = new int[totalChannels];
+        var ch = 0;
+        for (var bit = 0; bit < 32; bit++) {
+            if ((expanded >> bit & 1) != 0) {
+                masks[ch++] = 1 << bit;
+            }
+        }
+        return masks;
+    }
+
+    /**
+     * Locates the XLL frame the current extension substream frame decodes into {@link #xllData}, {@link #xllOffset}
+     * and {@link #xllLength}.
+     *
+     * <p>An asset without a peak bit rate smoothing buffer carries one whole XLL frame in each component. One with a
+     * buffer (a sync point with a buffer size, a decoding delay or an offset to the first XLL sync word) sends the XLL
+     * frames as a byte stream cut at any point and ahead of their time (clause 7.5.2): from a sync point on, the data
+     * after its offset fills the buffer, the first XLL frame is decoded once the delay of the sync point has run out,
+     * and every frame after that decodes the next one, which the buffer must then hold whole. A frame that waits
+     * decodes no XLL frame. Before the first such sync point a frame is read as one whole XLL frame, unless it has no
+     * sync point and does not start with a whole XLL frame: a decoder that joins a buffered stream between its sync
+     * points cannot synchronize there (clause 7.5.2, {@code bExSSXLLSyncPresent}), so the frame decodes no XLL frame.
+     *
+     * @param data the bytes of the extension substream frame, parsed
+     * @param commit whether to consume the data of the frame: append it to the buffer and count the delay down;
+     *               without, the buffer is left as it was and the frame located in {@link #peek}
+     * @return whether the frame decodes an XLL frame
+     * @throws MediaException.Malformed if the sync point or the buffer breaks its limits: an offset past the component,
+     *         a delay or more data than the buffer holds, or a buffer without the whole next XLL frame; a consumed
+     *         frame then empties the buffer, so that decoding resumes at the next sync point
+     */
+    private boolean locateXll(byte[] data, boolean commit) {
+        var component = componentOffsets[9];
+        var size = componentSizes[9];
+        var startsBuffer = !smoothingActive && xllSyncPresent
+                && (xllPeakBuffer != 0 || xllDelay != 0 || xllSyncOffset != 0);
+        if (!smoothingActive && !startsBuffer) {
+            if (!xllSyncPresent) {
+                var frame = XllDecoder.frameSize(data, component, size);
+                if (frame < 16 || frame > size) {
+                    return false;
+                }
+            }
+            xllData = data;
+            xllOffset = component;
+            xllLength = size;
+            return true;
+        }
+        var held = smoothingActive ? smoothingLength : 0;
+        var from = smoothingActive ? 0 : xllSyncOffset;
+        var limit = smoothingActive ? smoothingLimit : smoothingLimit(xllPeakBuffer);
+        var delay = smoothingActive ? smoothingDelay : xllDelay;
+        if (from > size) {
+            throw failSmoothing(commit, "DTS XLL sync offset " + from + " past a component of " + size + " bytes");
+        }
+        if (delay > limit) {
+            throw failSmoothing(commit, "DTS XLL decoding delay of " + delay + " frames");
+        }
+        var total = held + size - from;
+        if (total > limit) {
+            throw failSmoothing(commit, "DTS XLL data of " + total + " bytes overflows a smoothing buffer of "
+                    + limit);
+        }
+        var target = commit ? smoothing : peek;
+        if (target.length < total) {
+            target = Arrays.copyOf(target, Math.min(limit, Math.max(total, 2 * target.length)));
+            if (commit) {
+                smoothing = target;
+            } else {
+                peek = target;
+            }
+        }
+        if (!commit) {
+            System.arraycopy(smoothing, 0, target, 0, held);
+        }
+        System.arraycopy(data, component + from, target, held, size - from);
+        if (commit) {
+            smoothingActive = true;
+            smoothingLength = total;
+            smoothingLimit = limit;
+            smoothingDelay = Math.max(delay - 1, 0);
+        }
+        if (delay > 0) {
+            return false;
+        }
+        var frame = XllDecoder.frameSize(target, 0, total);
+        if (frame < 16 || frame > total) {
+            throw failSmoothing(commit, "DTS XLL smoothing buffer of " + total + " bytes holds no whole XLL frame");
+        }
+        xllData = target;
+        xllOffset = 0;
+        xllLength = frame;
+        return true;
+    }
+
+    /**
+     * Decodes the XLL frame located by {@link #locateXll} and, when it came from the smoothing buffer, removes it from
+     * there; a frame of the buffer that breaks the syntax empties the buffer.
+     *
+     * @param core the core decoder with its frame decoded, or {@code null}
+     */
+    private void decodeXll(CoreDecoder core) {
+        if (xllData != smoothing) {
+            xll.decode(xllData, xllOffset, xllLength, this, core);
+            return;
+        }
+        try {
+            xll.decode(xllData, xllOffset, xllLength, this, core);
+        } catch (MediaException failure) {
+            dropSmoothing();
+            throw failure;
+        }
+        smoothingLength -= xllLength;
+        System.arraycopy(smoothing, xllLength, smoothing, 0, smoothingLength);
+    }
+
+    /**
+     * {@return the error for a smoothing buffer that breaks its limits, after emptying the buffer when the frame is
+     * being consumed}
+     *
+     * @param commit whether the frame is being consumed
+     * @param message the description of the broken limit
+     */
+    private MediaException.Malformed failSmoothing(boolean commit, String message) {
+        if (commit) {
+            dropSmoothing();
+        }
+        return new MediaException.Malformed(message);
+    }
+
+    /**
+     * Empties the smoothing buffer and leaves its synchronization.
+     */
+    private void dropSmoothing() {
+        smoothingActive = false;
+        smoothingLength = 0;
+        smoothingDelay = 0;
+    }
+
+    /**
+     * {@return the most bytes a peak bit rate smoothing buffer holds: its size, 16 kB per unit of the 4-bit code, or
+     * the largest size, 240 kB, for code 0}
+     *
+     * @param code the {@code nuPeakBRCntrlBuffSzkB} code
+     */
+    private static int smoothingLimit(int code) {
+        return (code == 0 ? 15 : code) * 16 * 1024;
     }
 
     /**
@@ -349,6 +592,7 @@ public final class ExtensionSubstream {
     public void reset() {
         xll.reset();
         lbr.reset();
+        dropSmoothing();
     }
 
     /**
@@ -368,8 +612,9 @@ public final class ExtensionSubstream {
         var mixMetadata = false;
         var mixOutConfigs = 0;
         frameDuration = 0;
+        referenceClock = 0;
         if (staticFields) {
-            reader.skip(2);
+            referenceClock = REFERENCE_CLOCKS[reader.read(2)];
             frameDuration = 512 * (reader.read(3) + 1);
             if (reader.readFlag()) {
                 reader.skip(36);
@@ -559,11 +804,13 @@ public final class ExtensionSubstream {
     private void readXllSize(int sizeBits) {
         componentSizes[9] = reader.read(sizeBits) + 1;
         xllPeakBuffer = 0;
+        xllDelay = 0;
         xllSyncOffset = 0;
-        if (reader.readFlag()) {
+        xllSyncPresent = reader.readFlag();
+        if (xllSyncPresent) {
             xllPeakBuffer = reader.read(4);
             var delayBits = reader.read(5) + 1;
-            reader.skip(delayBits);
+            xllDelay = (int) Math.min(reader.read(delayBits) & 0xFFFFFFFFL, Integer.MAX_VALUE);
             xllSyncOffset = reader.read(sizeBits);
         }
     }
