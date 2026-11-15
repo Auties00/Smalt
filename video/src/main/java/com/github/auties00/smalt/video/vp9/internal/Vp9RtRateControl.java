@@ -866,7 +866,7 @@ final class Vp9RtRateControl {
             adjustmentLimit = 1.0;
             dampedAdjustment[INTER_NORMAL] = true;
         } else {
-            adjustmentLimit = 0.25 + 0.5 * Math.min(1, Math.abs(Math.log10(0.01 * correction)));
+            adjustmentLimit = 0.25 + 0.5 * Math.min(1, Math.abs(StrictMath.log10(0.01 * correction)));
         }
         q2Frame = q1Frame;
         q1Frame = baseQindex;

@@ -94,19 +94,10 @@ public class ScalarMpeg4Dsp extends Mpeg4Dsp {
     static final int INTEGER_PLANE = 0;
 
     /**
-     * The index of the horizontal half sample plane, padded by three mirrored rows above and below.
+     * The index of the plane of samples interpolated horizontally to the vector's horizontal
+     * fraction, padded by three mirrored rows above and below.
      */
     static final int HORIZONTAL_PLANE = GRID_STRIDE * GRID_STRIDE;
-
-    /**
-     * The index of the vertical half sample plane.
-     */
-    static final int VERTICAL_PLANE = 2 * GRID_STRIDE * GRID_STRIDE;
-
-    /**
-     * The index of the center half sample plane.
-     */
-    static final int CENTER_PLANE = 3 * GRID_STRIDE * GRID_STRIDE;
 
     /**
      * Constructs the kernels.
@@ -405,56 +396,14 @@ public class ScalarMpeg4Dsp extends Mpeg4Dsp {
             }
             return;
         }
-        var cols = width + 1;
         var rows = height + 1;
-        var round = 16 - rounding;
-        padReference(src, srcOffset, srcStride, cols, rows, scratch);
+        padReference(src, srcOffset, srcStride, width + 1, rows, scratch);
+        var source = INTEGER_PLANE + 3;
         if (quarterX != 0) {
-            horizontalHalves(scratch, width, rows, round);
+            horizontalPass(scratch, width, rows, quarterX, rounding);
+            source = HORIZONTAL_PLANE;
         }
-        if (quarterY != 0) {
-            verticalHalves(scratch, INTEGER_PLANE + 3, VERTICAL_PLANE, cols, height, round);
-            if (quarterX != 0) {
-                verticalHalves(scratch, HORIZONTAL_PLANE, CENTER_PLANE, width, height, round);
-            }
-        }
-        var hx = quarterX >> 1;
-        var hy = quarterY >> 1;
-        var fx = quarterX & 1;
-        var fy = quarterY & 1;
-        var a = gridOrigin(hx, hy);
-        if (fx == 0 && fy == 0) {
-            for (var j = 0; j < height; j++) {
-                var d = dstOffset + j * dstStride;
-                var o = a + j * GRID_STRIDE;
-                for (var i = 0; i < width; i++) {
-                    dst[d + i] = (byte) scratch[o + i];
-                }
-            }
-        } else if (fx == 0 || fy == 0) {
-            var b = gridOrigin(hx + fx, hy + fy) - a;
-            var add = 1 - rounding;
-            for (var j = 0; j < height; j++) {
-                var d = dstOffset + j * dstStride;
-                var o = a + j * GRID_STRIDE;
-                for (var i = 0; i < width; i++) {
-                    dst[d + i] = (byte) ((scratch[o + i] + scratch[o + b + i] + add) >> 1);
-                }
-            }
-        } else {
-            var b = gridOrigin(hx + 1, hy) - a;
-            var c = gridOrigin(hx, hy + 1) - a;
-            var e = gridOrigin(hx + 1, hy + 1) - a;
-            var add = 2 - rounding;
-            for (var j = 0; j < height; j++) {
-                var d = dstOffset + j * dstStride;
-                var o = a + j * GRID_STRIDE;
-                for (var i = 0; i < width; i++) {
-                    dst[d + i] = (byte) ((scratch[o + i] + scratch[o + b + i] + scratch[o + c + i]
-                            + scratch[o + e + i] + add) >> 2);
-                }
-            }
-        }
+        verticalPass(scratch, source, dst, dstOffset, dstStride, width, height, quarterY, rounding);
     }
 
     /**
@@ -491,15 +440,21 @@ public class ScalarMpeg4Dsp extends Mpeg4Dsp {
     }
 
     /**
-     * Computes the horizontal half samples of every block row into the horizontal plane, and
-     * extends the plane by three mirrored rows above and below for the center half samples.
+     * Interpolates every row of the padded reference block to the horizontal fraction into the
+     * horizontal plane (the half sample of the 8-tap filter, averaged with the integer sample to its
+     * left or right for a quarter fraction), and extends the plane by three mirrored rows above and
+     * below for the vertical pass.
      *
      * @param scratch the scratch buffer holding the padded reference block
-     * @param width the number of half samples per row
+     * @param width the number of samples per row
      * @param rows the number of block rows
-     * @param round the rounding term of the filter
+     * @param quarterX the horizontal quarter sample fraction, from 1 to 3
+     * @param rounding the rounding control, 0 or 1
      */
-    static void horizontalHalves(int[] scratch, int width, int rows, int round) {
+    static void horizontalPass(int[] scratch, int width, int rows, int quarterX, int rounding) {
+        var round = 16 - rounding;
+        var add = 1 - rounding;
+        var neighbor = quarterX == 3 ? 1 : 0;
         for (var j = 0; j < rows; j++) {
             var c = INTEGER_PLANE + (j + 3) * GRID_STRIDE + 3;
             var o = HORIZONTAL_PLANE + (j + 3) * GRID_STRIDE;
@@ -507,7 +462,8 @@ public class ScalarMpeg4Dsp extends Mpeg4Dsp {
                 var k = c + i;
                 var sum = 20 * (scratch[k] + scratch[k + 1]) - 6 * (scratch[k - 1] + scratch[k + 2])
                         + 3 * (scratch[k - 2] + scratch[k + 3]) - (scratch[k - 3] + scratch[k + 4]);
-                scratch[o + i] = clip((sum + round) >> 5);
+                var half = clip((sum + round) >> 5);
+                scratch[o + i] = quarterX == 2 ? half : (half + scratch[k + neighbor] + add) >> 1;
             }
         }
         for (var k = 0; k < 3; k++) {
@@ -519,46 +475,42 @@ public class ScalarMpeg4Dsp extends Mpeg4Dsp {
     }
 
     /**
-     * Computes vertical half samples from a plane padded by three mirrored rows above and below.
+     * Interpolates the columns of a plane padded by three mirrored rows above and below to the
+     * vertical fraction into the destination: the plane's samples for fraction 0, the half sample of
+     * the 8-tap filter for fraction 2, and for a quarter fraction that half sample averaged with the
+     * plane's sample above or below it.
      *
      * @param scratch the scratch buffer
      * @param source the index of the first column of the source plane in its top padding row
-     * @param target the index of the target plane
+     * @param dst the destination plane
+     * @param dstOffset the index of the destination's top-left sample
+     * @param dstStride the row stride of the destination
      * @param width the number of columns
-     * @param height the number of half samples per column
-     * @param round the rounding term of the filter
+     * @param height the number of rows
+     * @param quarterY the vertical quarter sample fraction, from 0 to 3
+     * @param rounding the rounding control, 0 or 1
      */
-    static void verticalHalves(int[] scratch, int source, int target, int width, int height, int round) {
+    static void verticalPass(int[] scratch, int source, byte[] dst, int dstOffset, int dstStride, int width,
+                             int height, int quarterY, int rounding) {
         final var s = GRID_STRIDE;
+        var round = 16 - rounding;
+        var add = 1 - rounding;
+        var neighbor = quarterY == 3 ? s : 0;
         for (var j = 0; j < height; j++) {
             var c = source + (j + 3) * s;
-            var o = target + j * s;
+            var d = dstOffset + j * dstStride;
             for (var i = 0; i < width; i++) {
                 var k = c + i;
+                if (quarterY == 0) {
+                    dst[d + i] = (byte) scratch[k];
+                    continue;
+                }
                 var sum = 20 * (scratch[k] + scratch[k + s]) - 6 * (scratch[k - s] + scratch[k + 2 * s])
                         + 3 * (scratch[k - 2 * s] + scratch[k + 3 * s]) - (scratch[k - 3 * s] + scratch[k + 4 * s]);
-                scratch[o + i] = clip((sum + round) >> 5);
+                var half = clip((sum + round) >> 5);
+                dst[d + i] = (byte) (quarterY == 2 ? half : (half + scratch[k + neighbor] + add) >> 1);
             }
         }
-    }
-
-    /**
-     * Returns the index in the scratch buffer of the half sample grid point (x, y) of the top-left
-     * output sample; the point of output sample (i, j) lies {@code j * GRID_STRIDE + i} further.
-     *
-     * @param x the horizontal grid coordinate, 0 to 2
-     * @param y the vertical grid coordinate, 0 to 2
-     * @return the index
-     */
-    static int gridOrigin(int x, int y) {
-        var column = x >> 1;
-        var row = y >> 1;
-        return switch ((x & 1) | (y & 1) << 1) {
-            case 0 -> INTEGER_PLANE + (row + 3) * GRID_STRIDE + column + 3;
-            case 1 -> HORIZONTAL_PLANE + (row + 3) * GRID_STRIDE + column;
-            case 2 -> VERTICAL_PLANE + row * GRID_STRIDE + column;
-            default -> CENTER_PLANE + row * GRID_STRIDE + column;
-        };
     }
 
     /**

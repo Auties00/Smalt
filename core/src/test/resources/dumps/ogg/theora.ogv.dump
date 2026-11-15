@@ -1,0 +1,29 @@
+# demux dump of ogg/theora.ogv; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 600000
+seekable true
+metadata encoder="Lavc61.19.100 libtheora"
+track 0 VIDEO THEORA timebase=1/10 duration=6 config=3311:a35d8953
+  video 96x64 orientation=NORMAL rate=10/1 sar=1/1
+  metadata encoder="Lavc61.19.100 libtheora"
+packets 6
+0 t0 pts=0 dts=0 dur=1 flags=KEY size=1746 crc=7f2d7acf
+1 t0 pts=1 dts=1 dur=1 flags=- size=540 crc=22f9bc93
+2 t0 pts=2 dts=2 dur=1 flags=- size=658 crc=5ea6d27b
+3 t0 pts=3 dts=3 dur=1 flags=- size=480 crc=ca5b02b1
+4 t0 pts=4 dts=4 dur=1 flags=KEY size=1978 crc=0987dd9d
+5 t0 pts=5 dts=5 dur=1 flags=- size=615 crc=c7fabd05
+seek 0: t0@0
+seek 200000: t0@0
+seek 400000: t0@4
+seek 600000: end
+seek -1000000: t0@0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  metadata encoder="Lavc61.19.100 libtheora"
+  track 0 VIDEO THEORA timebase=1/10 duration=? config=3311:a35d8953
+    video 96x64 orientation=NORMAL rate=10/1 sar=1/1
+    metadata encoder="Lavc61.19.100 libtheora"
+not seekable over READ_ONCE_UNKNOWN_LENGTH

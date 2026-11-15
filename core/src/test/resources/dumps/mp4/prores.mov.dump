@@ -1,0 +1,22 @@
+# demux dump of mp4/prores.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 400000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+track 1 VIDEO PRORES timebase=1/15360 duration=6144 config=4:12f55311
+  video 64x48 orientation=NORMAL rate=15/1 sar=1/1 interlacing=PROGRESSIVE
+packets 6
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=1728 crc=80bd0ce1
+1 t1 pts=1024 dts=1024 dur=1024 flags=KEY size=1728 crc=80bd0ce1
+2 t1 pts=2048 dts=2048 dur=1024 flags=KEY size=1727 crc=5fe670e9
+3 t1 pts=3072 dts=3072 dur=1024 flags=KEY size=1727 crc=5fe670e9
+4 t1 pts=4096 dts=4096 dur=1024 flags=KEY size=1725 crc=f1573c29
+5 t1 pts=5120 dts=5120 dur=1024 flags=KEY size=1725 crc=f1573c29
+seek 0: t1@0
+seek 133333: t1@1
+seek 266666: t1@3
+seek 400000: end
+seek -1000000: t1@0

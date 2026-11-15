@@ -1,18 +1,16 @@
 package com.github.auties00.smalt.image.jp2;
 
-import org.junit.jupiter.api.Assumptions;
+import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -21,7 +19,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@code opj_dump}) as black-box oracles. Tests skip when a tool is not on {@code PATH}.
  */
 final class OpenJpeg {
-    private static final Map<String, Optional<Path>> RESOLVED = new ConcurrentHashMap<>();
     private static final AtomicInteger COUNTER = new AtomicInteger();
 
     private OpenJpeg() {
@@ -29,35 +26,11 @@ final class OpenJpeg {
     }
 
     static Optional<Path> find(String tool) {
-        return RESOLVED.computeIfAbsent(tool, OpenJpeg::lookup);
-    }
-
-    private static Optional<Path> lookup(String tool) {
-        var path = System.getenv("PATH");
-        if (path == null) {
-            return Optional.empty();
-        }
-        var windows = System.getProperty("os.name", "").toLowerCase().contains("win");
-        for (var directory : path.split(File.pathSeparator)) {
-            if (directory.isBlank()) {
-                continue;
-            }
-            for (var candidate : windows ? List.of(tool + ".exe", tool) : List.of(tool)) {
-                try {
-                    var file = Path.of(directory.trim(), candidate);
-                    if (Files.isRegularFile(file)) {
-                        return Optional.of(file);
-                    }
-                } catch (RuntimeException ignored) {
-                    // malformed PATH entry
-                }
-            }
-        }
-        return Optional.empty();
+        return Oracle.find(tool);
     }
 
     static void assume(String tool) {
-        Assumptions.assumeTrue(find(tool).isPresent(), tool + " is not on PATH");
+        Oracle.assume(tool);
     }
 
     /** Runs a tool and returns its output, or null when it fails. */
@@ -87,13 +60,7 @@ final class OpenJpeg {
 
     /** Returns a fresh path under target/jp2-tests. */
     static Path temp(String name) {
-        try {
-            var directory = Path.of("target", "jp2-tests");
-            Files.createDirectories(directory);
-            return directory.resolve(COUNTER.incrementAndGet() + "-" + name).toAbsolutePath();
-        } catch (IOException exception) {
-            throw new UncheckedIOException(exception);
-        }
+        return Scratch.directory("jp2-tests").resolve(COUNTER.incrementAndGet() + "-" + name).toAbsolutePath();
     }
 
     /**

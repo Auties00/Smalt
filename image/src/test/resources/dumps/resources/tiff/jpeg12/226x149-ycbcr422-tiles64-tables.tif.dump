@@ -1,0 +1,19 @@
+# image dump of resources/tiff/jpeg12/226x149-ycbcr422-tiles64-tables.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=226, height=149, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 226x149 rgba8 alpha=false crc=81d5166d
+  format=TIFF orientation=NORMAL source=226x149
+  icc=none exif=none xmp=none
+  profile=none
+scaled 56x37
+picture 226x149 rgba8 alpha=false crc=81d5166d
+  format=TIFF orientation=NORMAL source=226x149
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=TIFF, width=226, height=149, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 226x149 rgba8 alpha=false crc=81d5166d
+  format=TIFF orientation=NORMAL source=226x149
+  icc=none exif=none xmp=none
+  profile=none

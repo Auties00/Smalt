@@ -91,7 +91,9 @@ public final class IntraPredictor {
      * @param log2Size        the block size as a power of two, 2 to 5
      * @param mode            the intra prediction mode, 0 to 34
      * @param luma            whether the block is a luma block, which enables strong intra
-     *                        smoothing and, below 32x32, the DC boundary filter
+     *                        smoothing and, below 32x32 and unless
+     *                        {@code intra_boundary_filtering_disabled_flag} is set, the DC
+     *                        boundary filter
      * @param filter          whether the neighboring sample filter of 8.4.4.2.3 may apply: for luma
      *                        blocks and the chroma blocks of 4:4:4 video, unless
      *                        {@code intra_smoothing_disabled_flag} is set
@@ -99,14 +101,16 @@ public final class IntraPredictor {
      * @param edgeFilters     whether the vertical and horizontal modes filter their first column or
      *                        row below 32x32: for luma blocks unless
      *                        {@code disableIntraBoundaryFilter} is set
+     * @param dcFilter        whether a luma block may filter the DC prediction: unless
+     *                        {@code intra_boundary_filtering_disabled_flag} is set
      * @param bitDepth        the bit depth of the component
      * @param out             receives the prediction
      * @param offset          the index of the block's top-left sample in {@code out}
      * @param stride          the row stride of {@code out}
      */
     public void predict(int[] boundary, int log2Size, int mode, boolean luma, boolean filter,
-                        boolean strongSmoothing, boolean edgeFilters, int bitDepth, short[] out, int offset,
-                        int stride) {
+                        boolean strongSmoothing, boolean edgeFilters, boolean dcFilter, int bitDepth, short[] out,
+                        int offset, int stride) {
         var size = 1 << log2Size;
         var p = boundary;
         if (filter && mode != 1 && size != 4) {
@@ -119,7 +123,7 @@ public final class IntraPredictor {
         if (mode == 0) {
             planar(p, log2Size, out, offset, stride);
         } else if (mode == 1) {
-            dc(p, log2Size, luma && size < 32, out, offset, stride);
+            dc(p, log2Size, luma && dcFilter && size < 32, out, offset, stride);
         } else {
             angular(p, log2Size, mode, edgeFilters && size < 32, bitDepth, out, offset, stride);
         }

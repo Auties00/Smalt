@@ -588,6 +588,59 @@ public final class FloatMath {
     }
 
     /**
+     * Returns the base-10 logarithm of a float, {@code log10f}.
+     *
+     * @implNote This implementation follows musl 1.2.5's {@code src/math/log10f.c} (from FreeBSD's
+     * msun) operation for operation in single precision.
+     * @param x the argument
+     * @return {@code log10(x)}; minus infinity for zero, NaN for negative arguments
+     */
+    public static float log10f(float x) {
+        final var ivln10hi = 4.3432617188e-01f;
+        final var ivln10lo = -3.1689971365e-05f;
+        final var log10_2hi = 3.0102920532e-01f;
+        final var log10_2lo = 7.9034151668e-07f;
+        final var lg1 = 0x0.aaaaaap0f;
+        final var lg2 = 0xccce13.0p-25f;
+        final var lg3 = 0x91e9ee.0p-25f;
+        final var lg4 = 0xf89e26.0p-26f;
+        var ix = Float.floatToRawIntBits(x);
+        var k = 0;
+        if (Integer.compareUnsigned(ix, 0x00800000) < 0 || (ix >>> 31) != 0) {
+            if (ix << 1 == 0) {
+                return -1 / (x * x);
+            }
+            if ((ix >>> 31) != 0) {
+                return (x - x) / 0.0f;
+            }
+            k -= 25;
+            x *= 0x1p25f;
+            ix = Float.floatToRawIntBits(x);
+        } else if (Integer.compareUnsigned(ix, 0x7f800000) >= 0) {
+            return x;
+        } else if (ix == 0x3f800000) {
+            return 0;
+        }
+        ix += 0x3f800000 - 0x3f3504f3;
+        k += (ix >>> 23) - 0x7f;
+        ix = (ix & 0x007fffff) + 0x3f3504f3;
+        x = Float.intBitsToFloat(ix);
+        var f = x - 1.0f;
+        var s = f / (2.0f + f);
+        var z = s * s;
+        var w = z * z;
+        var t1 = w * (lg2 + w * lg4);
+        var t2 = z * (lg1 + w * lg3);
+        var r = t2 + t1;
+        var hfsq = 0.5f * f * f;
+        var hi = f - hfsq;
+        hi = Float.intBitsToFloat(Float.floatToRawIntBits(hi) & 0xfffff000);
+        var lo = f - hi - hfsq + s * (hfsq + r);
+        float dk = k;
+        return dk * log10_2lo + (lo + hi) * ivln10lo + lo * ivln10hi + hi * ivln10hi + dk * log10_2hi;
+    }
+
+    /**
      * Returns the larger of two floats as {@code std::max} does: {@code a} unless
      * {@code a < b}.
      *

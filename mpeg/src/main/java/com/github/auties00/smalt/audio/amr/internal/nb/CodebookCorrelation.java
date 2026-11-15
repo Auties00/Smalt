@@ -2,13 +2,19 @@
    PacketVideo; Apache License 2.0. Modified for Smalt. */
 package com.github.auties00.smalt.audio.amr.internal.nb;
 
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.MAX_16;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.extractH;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.fxpMac;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lAbs;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lAdd;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lMac;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lMult;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lShl;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.mult;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.negate;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.normL;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.round;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.sub;
 import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.L_CODE;
 import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.NB_TRACK;
 import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.STEP;
@@ -23,6 +29,13 @@ import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.STEP;
  */
 final class CodebookCorrelation {
     /**
+     * The largest sum of absolute products a correlation accumulates without any doubled partial sum
+     * leaving the 32-bit range, so that the saturating accumulation of the reference is exact in plain
+     * arithmetic.
+     */
+    private static final long NO_SATURATION = 0x3FFFFFFFL;
+
+    /**
      * Prevents instantiation.
      */
     private CodebookCorrelation() {
@@ -31,7 +44,8 @@ final class CodebookCorrelation {
 
     /**
      * Convolves a signal with an impulse response ({@code Convolve}):
-     * {@code y[n] = (sum(x[i] * h[n - i], i = 0..n)) >> 12}.
+     * {@code y[n] = (sum(x[i] * h[n - i], i = 0..n)) >> 12}, saturated as the 32-bit
+     * accumulation of TS 26.073 saturates.
      *
      * @param x the signal
      * @param xOffset the first sample
@@ -40,14 +54,28 @@ final class CodebookCorrelation {
      * @param y receives the output
      * @param yOffset the first output
      * @param length the number of samples, even
+     * @param overflow the saturation flag
      */
-    static void convolve(short[] x, int xOffset, short[] h, int hOffset, short[] y, int yOffset, int length) {
+    static void convolve(short[] x, int xOffset, short[] h, int hOffset, short[] y, int yOffset, int length,
+                         Flag overflow) {
         for (var n = 0; n < length; n++) {
-            var s = 0;
+            var sum = 0L;
+            var magnitude = 0L;
             for (var i = 0; i <= n; i++) {
-                s += x[xOffset + i] * h[hOffset + n - i];
+                var product = x[xOffset + i] * h[hOffset + n - i];
+                sum += product;
+                magnitude += Math.abs(product);
             }
-            y[yOffset + n] = (short) (s >> 12);
+            int s;
+            if (magnitude <= NO_SATURATION) {
+                s = (int) sum << 1;
+            } else {
+                s = 0;
+                for (var i = 0; i <= n; i++) {
+                    s = lMac(s, x[xOffset + i], h[hOffset + n - i], overflow);
+                }
+            }
+            y[yOffset + n] = extractH(lShl(s, (short) 3));
         }
     }
 
@@ -62,31 +90,10 @@ final class CodebookCorrelation {
      * @param dn receives the 40 correlations
      * @param sf the scaling shift
      * @param y32 scratch of 40 values
+     * @param overflow the saturation flag
      */
-    static void corHX(short[] h, int hOffset, short[] x, int xOffset, short[] dn, int sf, int[] y32) {
-        var tot = 5;
-        for (var k = 0; k < NB_TRACK; k++) {
-            var max = 0;
-            for (var i = k; i < L_CODE; i += STEP) {
-                var s = 0;
-                for (var j = i; j < L_CODE; j++) {
-                    s += (x[xOffset + j] * h[hOffset + j - i]) << 1;
-                }
-                y32[i] = s;
-                if (s < 0) {
-                    s = -s;
-                }
-                if (s > max) {
-                    max = s;
-                }
-            }
-            tot += max >> 1;
-        }
-        var shift = (short) (normL(tot) - sf);
-        for (var i = 0; i < L_CODE; i++) {
-            var s = lShl(y32[i], shift);
-            dn[i] = (short) ((s + 0x00008000) >> 16);
-        }
+    static void corHX(short[] h, int hOffset, short[] x, int xOffset, short[] dn, int sf, int[] y32, Flag overflow) {
+        corHX2(h, hOffset, x, xOffset, dn, sf, NB_TRACK, STEP, y32, overflow);
     }
 
     /**
@@ -96,6 +103,7 @@ final class CodebookCorrelation {
      * @param h the impulse response
      * @param hOffset the first coefficient
      * @param x the target
+     * @param xOffset the first sample
      * @param dn receives the 40 correlations
      * @param sf the scaling shift
      * @param nbTrack the number of tracks
@@ -103,26 +111,37 @@ final class CodebookCorrelation {
      * @param y32 scratch of 40 values
      * @param overflow the saturation flag
      */
-    static void corHX2(short[] h, int hOffset, short[] x, short[] dn, int sf, int nbTrack, int step, int[] y32,
-                       Flag overflow) {
+    static void corHX2(short[] h, int hOffset, short[] x, int xOffset, short[] dn, int sf, int nbTrack, int step,
+                       int[] y32, Flag overflow) {
         var tot = 5;
         for (var k = 0; k < nbTrack; k++) {
             var max = 0;
             for (var i = k; i < L_CODE; i += step) {
-                var s = 0;
+                var sum = 0L;
+                var magnitude = 0L;
                 for (var j = i; j < L_CODE; j++) {
-                    s = fxpMac(x[j], h[hOffset + j - i], s);
+                    var product = x[xOffset + j] * h[hOffset + j - i];
+                    sum += product;
+                    magnitude += Math.abs(product);
                 }
-                s = s << 1;
+                int s;
+                if (magnitude <= NO_SATURATION) {
+                    s = (int) sum << 1;
+                } else {
+                    s = 0;
+                    for (var j = i; j < L_CODE; j++) {
+                        s = lMac(s, x[xOffset + j], h[hOffset + j - i], overflow);
+                    }
+                }
                 y32[i] = s;
                 s = lAbs(s);
                 if (s > max) {
                     max = s;
                 }
             }
-            tot = tot + (max >> 1);
+            tot = lAdd(tot, max >> 1, overflow);
         }
-        var shift = (short) (normL(tot) - sf);
+        var shift = sub(normL(tot), (short) sf, overflow);
         for (var i = 0; i < L_CODE; i++) {
             dn[i] = round(lShl(y32[i], shift), overflow);
         }
@@ -137,30 +156,35 @@ final class CodebookCorrelation {
      * @param sign the sign of every position, +-32767
      * @param rr receives the 40 x 40 matrix
      * @param h2 scratch of 40 values
+     * @param overflow the saturation flag
      */
-    static void corH(short[] h, int hOffset, short[] sign, short[] rr, short[] h2) {
-        var s = 1;
+    static void corH(short[] h, int hOffset, short[] sign, short[] rr, short[] h2, Flag overflow) {
+        var energy = 1L;
         for (var i = 0; i < L_CODE; i++) {
             var tmp = h[hOffset + i];
-            s = fxpMac(tmp, tmp, s);
+            energy += tmp * tmp;
         }
-        s <<= 1;
-        if ((s & 0x80000000) != 0) {
+        // the saturated sum 2 + 2 * sum(h * h) of the reference
+        var s = (int) Math.min(energy << 1, Integer.MAX_VALUE);
+        if (extractH(s) == MAX_16) {
             for (var i = 0; i < L_CODE; i++) {
                 h2[i] = (short) (h[hOffset + i] >> 1);
             }
         } else {
             s >>= 1;
-            s = FixedMath.invSqrt(s);
-            short dec;
-            if (s < 0x00ffffff) {
-                dec = (short) (((s >> 9) * 32440) >> 15);
-            } else {
-                dec = 32440;
-            }
+            var k = extractH(lShl(FixedMath.invSqrt(s), (short) 7));
+            k = mult(k, (short) 32440, overflow);
             for (var i = 0; i < L_CODE; i++) {
-                h2[i] = (short) (fxpMac(h[hOffset + i], dec, 0x020) >> 6);
+                h2[i] = round(lShl(lMult(h[hOffset + i], k, overflow), (short) 9), overflow);
             }
+        }
+        var squares = 0L;
+        for (var i = 0; i < L_CODE; i++) {
+            squares += h2[i] * h2[i];
+        }
+        if (squares << 1 > 0x7FFF7FFFL) {
+            corHSaturated(sign, rr, h2, overflow);
+            return;
         }
         s = 0;
         var rr1 = (L_CODE - 1) * L_CODE + L_CODE - 1;
@@ -200,6 +224,33 @@ final class CodebookCorrelation {
             var tmp2 = (short) ((sign[sign1] * sign[sign2]) >> 15);
             rr[rr1] = (short) ((tmp1 * tmp2) >> 15);
             rr[rr2] = rr[rr1];
+        }
+    }
+
+    /**
+     * Computes the matrix of {@link #corH} with the saturating 32-bit accumulation of TS 26.073,
+     * for an impulse response energetic enough that a correlation may saturate.
+     *
+     * @param sign the sign of every position, +-32767
+     * @param rr receives the 40 x 40 matrix
+     * @param h2 the scaled impulse response
+     * @param overflow the saturation flag
+     */
+    private static void corHSaturated(short[] sign, short[] rr, short[] h2, Flag overflow) {
+        var s = 0;
+        for (int k = 0, i = L_CODE - 1; k < L_CODE; k++, i--) {
+            s = lMac(s, h2[k], h2[k], overflow);
+            rr[i * L_CODE + i] = round(s, overflow);
+        }
+        for (var dec = 1; dec < L_CODE; dec++) {
+            s = 0;
+            var j = L_CODE - 1;
+            var i = j - dec;
+            for (var k = 0; k < L_CODE - dec; k++, i--, j--) {
+                s = lMac(s, h2[k], h2[k + dec], overflow);
+                rr[j * L_CODE + i] = mult(round(s, overflow), mult(sign[i], sign[j], overflow), overflow);
+                rr[i * L_CODE + j] = rr[j * L_CODE + i];
+            }
         }
     }
 
@@ -263,12 +314,12 @@ final class CodebookCorrelation {
             var val = cn[i];
             s = lMac(s, val, val, overflow);
             val = dn[i];
-            t += (val * val) << 1;
+            t = lMac(t, val, val, overflow);
         }
         s = FixedMath.invSqrt(s);
-        var kCn = (short) (lShl(s, (short) 5) >> 16);
+        var kCn = extractH(lShl(s, (short) 5));
         t = FixedMath.invSqrt(t);
-        var kDn = (short) (t >> 11);
+        var kDn = extractH(lShl(t, (short) 5));
         for (var i = L_CODE - 1; i >= 0; i--) {
             var lTemp = (kCn * cn[i]) << 1;
             var val = dn[i];

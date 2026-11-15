@@ -148,8 +148,26 @@ public final class CeltLpc {
      * @param ord  the filter order
      */
     public static void celtFir(float[] x, int xOff, float[] num, int nOff, float[] y, int yOff, int N, int ord) {
-        var rnum = new float[ord];
-        var sum = new float[4];
+        celtFir(x, xOff, num, nOff, y, yOff, N, ord, new float[ord], new float[4]);
+    }
+
+    /**
+     * Filters {@code x} with the FIR filter {@code 1 + num(z)} using caller-provided scratch, as
+     * {@link #celtFir(float[], int, float[], int, float[], int, int, int)} does.
+     *
+     * @param x    the input
+     * @param xOff the index of the first input sample
+     * @param num  the filter coefficients
+     * @param nOff the index of the first coefficient
+     * @param y    receives the output; must not overlap the input
+     * @param yOff the index of the first output sample
+     * @param N    the number of samples
+     * @param ord  the filter order
+     * @param rnum scratch of at least {@code ord} floats
+     * @param sum  scratch of at least 4 floats
+     */
+    public static void celtFir(float[] x, int xOff, float[] num, int nOff, float[] y, int yOff, int N, int ord,
+                               float[] rnum, float[] sum) {
         for (var i = 0; i < ord; i++) {
             rnum[i] = num[nOff + ord - i - 1];
         }

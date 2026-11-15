@@ -86,12 +86,14 @@ public final class TinyDng {
             shorts(339, 3);
         }
         if (samplesPerPixel == 1 && cfa != null) {
-            shorts(33421, 2, 2);
-            var codes = new byte[4];
-            for (var i = 0; i < 4; i++) {
+            // a square repeat: 2x2 for four colors, 6x6 for an X-Trans pattern of 36
+            var repeat = (int) Math.round(Math.sqrt(cfa.length()));
+            shorts(33421, repeat, repeat);
+            var codes = new byte[repeat * repeat];
+            for (var i = 0; i < codes.length; i++) {
                 codes[i] = (byte) "RGBCMYW".indexOf(cfa.charAt(i));
             }
-            entries.add(new Entry(33422, 1, 4, codes));
+            entries.add(new Entry(33422, 1, codes.length, codes));
             if (planeColors != null) {
                 var planes = new byte[planeColors.length];
                 for (var i = 0; i < planes.length; i++) {

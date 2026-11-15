@@ -92,6 +92,23 @@ public final class CouplingChannel {
     private int previousShape;
 
     /**
+     * The AAC Main predictor bank of the coupling channel, or {@code null} for other object types.
+     */
+    private final FrequencyPredictor predictor;
+
+    /**
+     * The long term predictor of an independently switched AAC LTP coupling channel, or
+     * {@code null} for other object types.
+     */
+    private final LongTermPredictor longTermPredictor;
+
+    /**
+     * The SSR filterbank memory of an independently switched AAC SSR coupling channel, or
+     * {@code null} for other object types.
+     */
+    private final SsrSynthesis.State ssrState;
+
+    /**
      * The synthesized time signal of an independently switched coupling channel.
      */
     private final float[] timeSignal;
@@ -100,13 +117,17 @@ public final class CouplingChannel {
      * Allocates a coupling channel decoder.
      *
      * @param frameLength the frame length
-     * @param tableIndex  the sampling table index
-     * @param kernel      the DSP kernel
+     * @param tableIndex the sampling table index
+     * @param objectType the core audio object type
+     * @param kernel the DSP kernel
      */
-    public CouplingChannel(int frameLength, int tableIndex, AacKernel kernel) {
-        this.stream = new ChannelStream(frameLength, tableIndex, kernel);
+    public CouplingChannel(int frameLength, int tableIndex, int objectType, AacKernel kernel) {
+        this.stream = new ChannelStream(frameLength, tableIndex, objectType, kernel);
         this.overlap = new float[frameLength];
         this.timeSignal = new float[frameLength];
+        this.predictor = objectType == AudioSpecificConfig.AOT_MAIN ? new FrequencyPredictor(frameLength, tableIndex) : null;
+        this.longTermPredictor = objectType == AudioSpecificConfig.AOT_LTP ? new LongTermPredictor(frameLength, kernel) : null;
+        this.ssrState = objectType == AudioSpecificConfig.AOT_SSR ? new SsrSynthesis.State() : null;
     }
 
     /**
@@ -137,7 +158,7 @@ public final class CouplingChannel {
         }
         afterTns = reader.readFlag();
         var signed = reader.readFlag();
-        var scale = Math.pow(2, Math.pow(2, reader.read(2) - 3));
+        var scale = StrictMath.pow(2, StrictMath.pow(2, reader.read(2) - 3));
         stream.parse(reader, false, false);
         var stride = 8 * ChannelStream.MAX_BANDS;
         Arrays.fill(gains, 0, stride, 1);
@@ -179,7 +200,7 @@ public final class CouplingChannel {
             }
             value >>= 1;
         }
-        return (float) (sign * Math.pow(scale, -value));
+        return (float) (sign * StrictMath.pow(scale, -value));
     }
 
     /**
@@ -289,14 +310,44 @@ public final class CouplingChannel {
     }
 
     /**
+     * Runs the AAC Main predictor bank over the coupling spectrum, once its noise bands are
+     * filled; does nothing for other object types.
+     */
+    public void predict() {
+        if (predictor != null) {
+            predictor.apply(stream);
+        }
+    }
+
+    /**
+     * Adds the long term prediction of an independently switched AAC LTP coupling channel to its
+     * spectrum, before TNS; does nothing for other object types.
+     *
+     * @param synthesis the filterbank whose windows the frame uses
+     */
+    public void predictLongTerm(Synthesis synthesis) {
+        if (longTermPredictor != null) {
+            longTermPredictor.predict(stream, overlap, previousShape, synthesis);
+        }
+    }
+
+    /**
      * Synthesizes the time signal of an independently switched coupling channel.
      *
      * @param synthesis the filterbank
+     * @param ssr the SSR filterbank, used for AAC SSR streams
      */
-    public void synthesize(Synthesis synthesis) {
-        synthesis.synthesize(stream.spectrum(), stream.windowSequence(), previousShape, stream.windowShape(),
-                overlap, timeSignal, 0);
+    public void synthesize(Synthesis synthesis, SsrSynthesis ssr) {
+        if (ssrState != null) {
+            ssr.synthesize(stream, ssrState, timeSignal, 0);
+        } else {
+            synthesis.synthesize(stream.spectrum(), stream.windowSequence(), previousShape, stream.windowShape(),
+                    overlap, timeSignal, 0);
+        }
         previousShape = stream.windowShape();
+        if (longTermPredictor != null) {
+            longTermPredictor.update(timeSignal, 0);
+        }
     }
 
     /**

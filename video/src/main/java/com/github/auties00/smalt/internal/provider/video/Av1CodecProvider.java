@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.internal.provider.video;
 
+import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.spi.VideoCodecProvider;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -33,8 +34,13 @@ import com.github.auties00.smalt.video.av1.Av1EncoderSpeed;
  *                 bits than the real-time engine for the same PSNR and SSIM, at about nine times
  *                 its encoding time, and the slower good-quality speeds save a further 1 to 2% for
  *                 a third more time;</li>
+ *             <li>a key frame interval: {@link Av1EncoderOptions.Builder#keyframeInterval(int)}, and
+ *                 no periodic key frames: {@link Av1EncoderOptions.Builder#noPeriodicKeyframes()},
+ *                 in place of the preset's;</li>
  *             <li>a thread count above one: {@link Av1EncoderOptions#threads()}, which caps it
- *                 at 64; {@code 0} and {@code 1} keep the single thread of the presets.</li>
+ *                 at 64; {@code 0} and {@code 1} keep the single thread of the presets;</li>
+ *             <li>a color description: {@link Av1EncoderOptions.Builder#color}, and a bit depth: 4:2:0
+ *                 at 8, 10 or 12 bits, the depth rounded up ({@link Av1EncoderOptions.Builder#pictureFormat}).</li>
  *           </ul>
  */
 public final class Av1CodecProvider implements VideoCodecProvider {
@@ -69,9 +75,16 @@ public final class Av1CodecProvider implements VideoCodecProvider {
                 : Av1EncoderOptions.ofBitrate(options.bitrate()).toBuilder().speed(Av1EncoderSpeed.FAST))
                 .frameRate(options.frameRate())
                 .bitrate(options.bitrate());
+        if (!options.periodicKeyframes()) {
+            builder.noPeriodicKeyframes();
+        } else {
+            options.keyframeInterval().ifPresent(builder::keyframeInterval);
+        }
         if (options.threads() > 1) {
             builder.threads(options.threads());
         }
+        options.color().ifPresent(builder::color);
+        builder.pictureFormat(ChromaFormat.YUV420, options.bitDepth() <= 8 ? 8 : options.bitDepth() <= 10 ? 10 : 12);
         return new Av1Encoder(options.width(), options.height(), builder.build());
     }
 }

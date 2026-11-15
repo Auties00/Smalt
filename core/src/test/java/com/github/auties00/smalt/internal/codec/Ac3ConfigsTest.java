@@ -33,8 +33,9 @@ class Ac3ConfigsTest {
 
     private byte[] box(Path stream, String type) {
         var mp4 = directory.resolve("remux.mp4");
-        Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-y", "-i", stream.toString(), "-c", "copy",
-                mp4.toString()));
+        // the input format is named: the arm64 builds of ffmpeg 7.1 do not always probe a short raw E-AC-3 stream
+        Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-y", "-f",
+                type.equals("dec3") ? "eac3" : "ac3", "-i", stream.toString(), "-c", "copy", mp4.toString()));
         var data = Fixtures.read(mp4);
         var name = type.getBytes(StandardCharsets.ISO_8859_1);
         for (var i = 4; i + 4 <= data.length; i++) {

@@ -100,6 +100,61 @@ final class AudioStreams {
     }
 
     /**
+     * Returns a workload that decodes packets as a real-time receiver that loses some: every seventh packet is
+     * concealed for its duration instead of decoded, one decoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param packets the packets, whose durations count output samples
+     * @param decoder the decoder, kept across rounds
+     * @return the workload
+     */
+    static TrainingWorkload decodeLossy(String name, List<Packet> packets, AudioDecoder decoder) {
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of(name, () -> {
+            for (var i = 0; i < packets.size(); i++) {
+                var packet = packets.get(i);
+                if (i % 7 == 3 && packet.duration() > 0) {
+                    Blackhole.consume(decoder.conceal((int) packet.duration(), output));
+                } else {
+                    decoder.decode(packet, output);
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes planes as a real-time sender following a congestion controller: the target
+     * bitrate cycles through the given values, one change per second of input, one encoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param planes the input samples
+     * @param layout the layout of the input
+     * @param rate the sampling rate of the input
+     * @param encoder the encoder, kept across rounds
+     * @param targets the targets, in bits per second
+     * @return the workload
+     */
+    static TrainingWorkload encodeRetargeted(String name, float[][] planes, ChannelLayout layout, int rate,
+                                             AudioEncoder encoder, long... targets) {
+        var block = new AudioBuffer(layout, rate, rate / 50);
+        Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
+        return TrainingWorkload.of(name, () -> {
+            var blocks = 0;
+            var changes = 0;
+            for (var offset = 0; offset + block.capacity() <= planes[0].length; offset += block.capacity()) {
+                if (blocks++ % 50 == 0) {
+                    encoder.setTargetBitrate(targets[changes++ % targets.length]);
+                }
+                for (var c = 0; c < planes.length; c++) {
+                    System.arraycopy(planes[c], offset, block.plane(c), 0, block.capacity());
+                }
+                block.setFrames(block.capacity());
+                encoder.encode(block, output);
+            }
+        });
+    }
+
+    /**
      * Consumes a decoded block.
      *
      * @param buffer the block

@@ -12,6 +12,7 @@ import java.lang.invoke.MethodHandle;
 import java.util.Locale;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
@@ -41,6 +42,22 @@ final class CoreAudio {
      * AudioToolbox.
      */
     private static final String AUDIO_TOOLBOX_PATH = "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox";
+
+    /**
+     * The private framework holding the only query of the System Audio Recording permission; macOS
+     * has no public one.
+     */
+    private static final String TCC_PATH = "/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC";
+
+    /**
+     * The name of the System Audio Recording permission.
+     */
+    private static final String TCC_AUDIO_CAPTURE = "kTCCServiceAudioCapture";
+
+    /**
+     * The result of {@code TCCAccessPreflight} when the user refused the permission.
+     */
+    static final int TAP_PERMISSION_DENIED = 1;
 
     /**
      * {@code kAudioObjectSystemObject}.
@@ -106,6 +123,27 @@ final class CoreAudio {
      * {@code kAudioDevicePropertyDeviceIsAlive}.
      */
     static final int DEVICE_IS_ALIVE = FourCc.of("livn");
+
+    /**
+     * {@code kAudioDevicePropertyHogMode}: the process that owns the device exclusively, or
+     * {@code -1}.
+     */
+    static final int HOG_MODE = FourCc.of("oink");
+
+    /**
+     * {@code kAudioTapPropertyUID}.
+     */
+    static final int TAP_UID = FourCc.of("tuid");
+
+    /**
+     * {@code kAudioTapPropertyFormat}.
+     */
+    static final int TAP_FORMAT = FourCc.of("tfmt");
+
+    /**
+     * {@code kAudioDevicePermissionsError}: another process owns the device exclusively.
+     */
+    static final int PERMISSIONS_ERROR = FourCc.of("!hog");
 
     /**
      * {@code kAudioObjectPropertyScopeGlobal}.
@@ -241,6 +279,18 @@ final class CoreAudio {
     static final FunctionDescriptor PROPERTY_LISTENER = FunctionDescriptor.of(JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS);
 
     /**
+     * The {@code AudioDeviceIOProc} signature: {@code OSStatus (AudioObjectID, const AudioTimeStamp
+     * *inNow, const AudioBufferList *inInputData, const AudioTimeStamp *inInputTime, AudioBufferList
+     * *outOutputData, const AudioTimeStamp *inOutputTime, void *inClientData)}.
+     */
+    static final FunctionDescriptor IO_PROC = FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
+
+    /**
+     * The name of the Objective-C class describing a process tap, present from macOS 14.2.
+     */
+    private static final String TAP_DESCRIPTION_CLASS = "CATapDescription";
+
+    /**
      * {@code OSStatus AudioObjectGetPropertyDataSize(AudioObjectID, const
      * AudioObjectPropertyAddress*, UInt32, const void*, UInt32*)}.
      */
@@ -325,6 +375,55 @@ final class CoreAudio {
     private static final MethodHandle UNIT_RENDER;
 
     /**
+     * {@code OSStatus AudioHardwareCreateAggregateDevice(CFDictionaryRef, AudioObjectID*)}.
+     */
+    private static final MethodHandle CREATE_AGGREGATE_DEVICE;
+
+    /**
+     * {@code OSStatus AudioHardwareDestroyAggregateDevice(AudioObjectID)}.
+     */
+    private static final MethodHandle DESTROY_AGGREGATE_DEVICE;
+
+    /**
+     * {@code OSStatus AudioDeviceCreateIOProcID(AudioObjectID, AudioDeviceIOProc, void*,
+     * AudioDeviceIOProcID*)}.
+     */
+    private static final MethodHandle CREATE_IO_PROC_ID;
+
+    /**
+     * {@code OSStatus AudioDeviceDestroyIOProcID(AudioObjectID, AudioDeviceIOProcID)}.
+     */
+    private static final MethodHandle DESTROY_IO_PROC_ID;
+
+    /**
+     * {@code OSStatus AudioDeviceStart(AudioObjectID, AudioDeviceIOProcID)}.
+     */
+    private static final MethodHandle DEVICE_START;
+
+    /**
+     * {@code OSStatus AudioDeviceStop(AudioObjectID, AudioDeviceIOProcID)}.
+     */
+    private static final MethodHandle DEVICE_STOP;
+
+    /**
+     * {@code OSStatus AudioHardwareCreateProcessTap(CATapDescription*, AudioObjectID*)}, or
+     * {@code null} before macOS 14.2.
+     */
+    private static final MethodHandle CREATE_PROCESS_TAP;
+
+    /**
+     * {@code OSStatus AudioHardwareDestroyProcessTap(AudioObjectID)}, or {@code null} before
+     * macOS 14.2.
+     */
+    private static final MethodHandle DESTROY_PROCESS_TAP;
+
+    /**
+     * {@code int TCCAccessPreflight(CFStringRef, CFDictionaryRef)}, or {@code null} when the private
+     * framework does not have it.
+     */
+    private static final MethodHandle TCC_PREFLIGHT;
+
+    /**
      * {@code uint64_t mach_absolute_time(void)}.
      */
     private static final MethodHandle MACH_ABSOLUTE_TIME;
@@ -366,6 +465,28 @@ final class CoreAudio {
         OUTPUT_UNIT_STOP = Native.function(toolbox, "AudioOutputUnitStop", FunctionDescriptor.of(JAVA_INT, ADDRESS));
         UNIT_RENDER = Native.function(toolbox, "AudioUnitRender",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS));
+        CREATE_AGGREGATE_DEVICE = Native.function(coreAudio, "AudioHardwareCreateAggregateDevice",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        DESTROY_AGGREGATE_DEVICE = Native.function(coreAudio, "AudioHardwareDestroyAggregateDevice",
+                FunctionDescriptor.of(JAVA_INT, JAVA_INT));
+        CREATE_IO_PROC_ID = Native.function(coreAudio, "AudioDeviceCreateIOProcID",
+                FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        DESTROY_IO_PROC_ID = Native.function(coreAudio, "AudioDeviceDestroyIOProcID",
+                FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS));
+        DEVICE_START = Native.function(coreAudio, "AudioDeviceStart", FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS));
+        DEVICE_STOP = Native.function(coreAudio, "AudioDeviceStop", FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS));
+        CREATE_PROCESS_TAP = Native.optionalFunction(coreAudio, "AudioHardwareCreateProcessTap",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS)).orElse(null);
+        DESTROY_PROCESS_TAP = Native.optionalFunction(coreAudio, "AudioHardwareDestroyProcessTap",
+                FunctionDescriptor.of(JAVA_INT, JAVA_INT)).orElse(null);
+        MethodHandle preflight = null;
+        try {
+            preflight = Native.optionalFunction(Frameworks.load(TCC_PATH), "TCCAccessPreflight",
+                    FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS)).orElse(null);
+        } catch (IllegalArgumentException absent) {
+            // a system without the private framework reports the permission as undetermined
+        }
+        TCC_PREFLIGHT = preflight;
         MACH_ABSOLUTE_TIME = Native.function(system, "mach_absolute_time", FunctionDescriptor.of(JAVA_LONG));
         var timebase = Native.function(system, "mach_timebase_info", FunctionDescriptor.of(JAVA_INT, ADDRESS));
         var info = Arena.global().allocate(JAVA_INT, 2);
@@ -465,9 +586,9 @@ final class CoreAudio {
      */
     static double doubleProperty(int object, int selector, int scope, double fallback) {
         try (var arena = Arena.ofConfined()) {
-            var value = arena.allocate(java.lang.foreign.ValueLayout.JAVA_DOUBLE);
+            var value = arena.allocate(JAVA_DOUBLE);
             return property(object, address(arena, selector, scope), value, arena) == 8
-                    ? value.get(java.lang.foreign.ValueLayout.JAVA_DOUBLE, 0) : fallback;
+                    ? value.get(JAVA_DOUBLE, 0) : fallback;
         }
     }
 
@@ -511,6 +632,25 @@ final class CoreAudio {
     }
 
     /**
+     * Writes a 64-bit floating-point property.
+     *
+     * @param object the audio object
+     * @param selector the property selector
+     * @param scope the property scope
+     * @param value the number to write
+     * @return the status, {@code 0} on success
+     */
+    static int setDoubleProperty(int object, int selector, int scope, double value) {
+        try (var arena = Arena.ofConfined()) {
+            var data = arena.allocate(JAVA_DOUBLE);
+            data.set(JAVA_DOUBLE, 0, value);
+            return (int) SET_PROPERTY_DATA.invokeExact(object, address(arena, selector, scope), 0, MemorySegment.NULL, 8, data);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
      * Registers a property listener.
      *
      * @param object the audio object
@@ -538,6 +678,151 @@ final class CoreAudio {
     static void removeListener(int object, MemorySegment address, MemorySegment listener, MemorySegment clientData) {
         try {
             var ignored = (int) REMOVE_PROPERTY_LISTENER.invokeExact(object, address, listener, clientData);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Returns whether this system has process taps.
+     *
+     * @return whether the functions and the description class of macOS 14.2 are present
+     */
+    static boolean processTapsAvailable() {
+        return CREATE_PROCESS_TAP != null && DESTROY_PROCESS_TAP != null && !ObjC.isNull(ObjC.objcClass(TAP_DESCRIPTION_CLASS));
+    }
+
+    /**
+     * Returns the state of this process's System Audio Recording permission, without asking the user.
+     *
+     * @return {@code 0} if granted, {@link #TAP_PERMISSION_DENIED} if refused, any other value if the
+     * user has not been asked or the state cannot be read
+     */
+    static int tapPermission() {
+        if (TCC_PREFLIGHT == null) {
+            return -1;
+        }
+        var service = CoreFoundation.createString(TCC_AUDIO_CAPTURE);
+        try {
+            return (int) TCC_PREFLIGHT.invokeExact(service, MemorySegment.NULL);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        } finally {
+            CoreFoundation.release(service);
+        }
+    }
+
+    /**
+     * Creates a process tap.
+     *
+     * @param description the {@code CATapDescription}
+     * @param tap receives the tap's {@code AudioObjectID}
+     * @return the status, {@code 0} on success
+     */
+    static int createProcessTap(MemorySegment description, MemorySegment tap) {
+        try {
+            return (int) CREATE_PROCESS_TAP.invokeExact(description, tap);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Destroys a process tap.
+     *
+     * @param tap the tap's {@code AudioObjectID}
+     */
+    static void destroyProcessTap(int tap) {
+        try {
+            var ignored = (int) DESTROY_PROCESS_TAP.invokeExact(tap);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Creates an aggregate device.
+     *
+     * @param description the {@code CFDictionaryRef} or {@code NSDictionary} describing it
+     * @param device receives the device's {@code AudioObjectID}
+     * @return the status, {@code 0} on success
+     */
+    static int createAggregateDevice(MemorySegment description, MemorySegment device) {
+        try {
+            return (int) CREATE_AGGREGATE_DEVICE.invokeExact(description, device);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Destroys an aggregate device.
+     *
+     * @param device the device's {@code AudioObjectID}
+     */
+    static void destroyAggregateDevice(int device) {
+        try {
+            var ignored = (int) DESTROY_AGGREGATE_DEVICE.invokeExact(device);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Registers an I/O callback with a device.
+     *
+     * @param device the device's {@code AudioObjectID}
+     * @param callback the callback's upcall stub
+     * @param clientData the value passed back to the callback
+     * @param id receives the {@code AudioDeviceIOProcID}
+     * @return the status, {@code 0} on success
+     */
+    static int createIoProc(int device, MemorySegment callback, MemorySegment clientData, MemorySegment id) {
+        try {
+            return (int) CREATE_IO_PROC_ID.invokeExact(device, callback, clientData, id);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Unregisters an I/O callback.
+     *
+     * @param device the device's {@code AudioObjectID}
+     * @param id the {@code AudioDeviceIOProcID}
+     */
+    static void destroyIoProc(int device, MemorySegment id) {
+        try {
+            var ignored = (int) DESTROY_IO_PROC_ID.invokeExact(device, id);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Starts a device's I/O callback.
+     *
+     * @param device the device's {@code AudioObjectID}
+     * @param id the {@code AudioDeviceIOProcID}
+     * @return the status, {@code 0} on success
+     */
+    static int startDevice(int device, MemorySegment id) {
+        try {
+            return (int) DEVICE_START.invokeExact(device, id);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Stops a device's I/O callback; returns once the callback has finished.
+     *
+     * @param device the device's {@code AudioObjectID}
+     * @param id the {@code AudioDeviceIOProcID}
+     */
+    static void stopDevice(int device, MemorySegment id) {
+        try {
+            var ignored = (int) DEVICE_STOP.invokeExact(device, id);
         } catch (Throwable throwable) {
             throw Native.rethrow(throwable);
         }
@@ -729,7 +1014,7 @@ final class CoreAudio {
      */
     static MemorySegment floatFormat(Arena arena, double rate, int channels) {
         var format = arena.allocate(ASBD_SIZE, 8);
-        format.set(java.lang.foreign.ValueLayout.JAVA_DOUBLE, 0, rate);
+        format.set(JAVA_DOUBLE, 0, rate);
         format.set(JAVA_INT, 8, FORMAT_LINEAR_PCM);
         format.set(JAVA_INT, 12, FLAGS_PACKED_FLOAT);
         format.set(JAVA_INT, 16, 4 * channels);
@@ -750,7 +1035,7 @@ final class CoreAudio {
      */
     static void check(int status, String operation) {
         if (status != 0) {
-            throw failure(operation + " failed", status);
+            throw failure(operation + " failed" + (status == PERMISSIONS_ERROR ? ": another application uses the device exclusively" : ""), status);
         }
     }
 

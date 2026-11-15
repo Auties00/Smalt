@@ -3,6 +3,7 @@ package com.github.auties00.smalt.video.av1.internal.encoder;
 import com.github.auties00.smalt.internal.plane.Planes;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.video.av1.internal.Av1Picture;
+import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
 
 /**
  * Holds one reconstructed reference picture together with an edge-extended copy of its planes,
@@ -43,6 +44,21 @@ final class RefFrame {
     int orderHint;
 
     /**
+     * 1 when the reference's chroma is subsampled horizontally, 0 otherwise.
+     */
+    int ssHor = 1;
+
+    /**
+     * 1 when the reference's chroma is subsampled vertically, 0 otherwise.
+     */
+    int ssVer = 1;
+
+    /**
+     * The number of planes of the reference: 1 for monochrome, 3 otherwise.
+     */
+    int planes = 3;
+
+    /**
      * Creates an empty reference.
      */
     RefFrame() {
@@ -79,22 +95,28 @@ final class RefFrame {
      */
     void build(Av1Picture pic, int width, int height, int bands) {
         pyramid = null;
-        for (var pl = 0; pl < 3; pl++) {
-            var ss = pl != 0 ? 1 : 0;
-            var w = (width + ss) >> ss;
-            var h = (height + ss) >> ss;
-            var border = BORDER >> ss;
-            var s = w + 2 * border;
-            var size = s * (h + 2 * border);
+        var layout = pic.layout;
+        ssHor = layout == SequenceHeader.LAYOUT_I420 || layout == SequenceHeader.LAYOUT_I422 ? 1 : 0;
+        ssVer = layout == SequenceHeader.LAYOUT_I420 ? 1 : 0;
+        planes = layout == SequenceHeader.LAYOUT_I400 ? 1 : 3;
+        for (var pl = 0; pl < planes; pl++) {
+            var ssx = pl != 0 ? ssHor : 0;
+            var ssy = pl != 0 ? ssVer : 0;
+            var w = (width + ssx) >> ssx;
+            var h = (height + ssy) >> ssy;
+            var borderX = BORDER >> ssx;
+            var borderY = BORDER >> ssy;
+            var s = w + 2 * borderX;
+            var size = s * (h + 2 * borderY);
             if (padded[pl] == null || padded[pl].length != size) {
                 padded[pl] = new short[size];
             }
             stride[pl] = s;
-            origin[pl] = border * s + border;
+            origin[pl] = borderY * s + borderX;
         }
         var count = Math.max(1, Math.min(bands, (height + 1) >> 1));
         if (count == 1) {
-            for (var pl = 0; pl < 3; pl++) {
+            for (var pl = 0; pl < planes; pl++) {
                 copyRows(pic, pl, width, 0, planeHeight(pl, height));
                 extendTop(pl);
                 extendBottom(pl, height);
@@ -102,7 +124,7 @@ final class RefFrame {
             return;
         }
         ParallelBands.run(count, band -> {
-            for (var pl = 0; pl < 3; pl++) {
+            for (var pl = 0; pl < planes; pl++) {
                 var h = planeHeight(pl, height);
                 copyRows(pic, pl, width, ParallelBands.start(band, count, h), ParallelBands.start(band + 1, count, h));
                 if (band == 0) {
@@ -122,8 +144,8 @@ final class RefFrame {
      * @param height the visible luma height
      * @return the height
      */
-    private static int planeHeight(int pl, int height) {
-        return pl != 0 ? (height + 1) >> 1 : height;
+    private int planeHeight(int pl, int height) {
+        return pl != 0 ? (height + ssVer) >> ssVer : height;
     }
 
     /**
@@ -137,13 +159,13 @@ final class RefFrame {
      * @param end the row after the last
      */
     private void copyRows(Av1Picture pic, int pl, int width, int first, int end) {
-        var ss = pl != 0 ? 1 : 0;
-        var w = (width + ss) >> ss;
-        var border = BORDER >> ss;
+        var ssx = pl != 0 ? ssHor : 0;
+        var w = (width + ssx) >> ssx;
+        var border = BORDER >> ssx;
         var s = stride[pl];
         var dst = padded[pl];
         var srcStride = pic.stride[pl != 0 ? 1 : 0];
-        var d = (first + border) * s + border;
+        var d = (first + (BORDER >> (pl != 0 ? ssVer : 0))) * s + border;
         Planes.copy(pic.data[pl], first * srcStride, srcStride, dst, d, s, w, end - first);
         Planes.extendSides(dst, d, s, w, end - first, border, s - border - w);
     }
@@ -154,7 +176,7 @@ final class RefFrame {
      * @param pl the plane
      */
     private void extendTop(int pl) {
-        var border = BORDER >> (pl != 0 ? 1 : 0);
+        var border = BORDER >> (pl != 0 ? ssVer : 0);
         var s = stride[pl];
         Planes.extendTop(padded[pl], border * s, s, s, border);
     }
@@ -167,7 +189,7 @@ final class RefFrame {
      */
     private void extendBottom(int pl, int height) {
         var h = planeHeight(pl, height);
-        var border = BORDER >> (pl != 0 ? 1 : 0);
+        var border = BORDER >> (pl != 0 ? ssVer : 0);
         var s = stride[pl];
         Planes.extendBottom(padded[pl], (border + h - 1) * s, s, s, border);
     }

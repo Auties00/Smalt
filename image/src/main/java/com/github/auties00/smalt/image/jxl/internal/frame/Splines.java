@@ -244,7 +244,7 @@ public record Splines(List<QuantSpline> splines, int quantAdjust) {
                     continuousIdct(xyb[2], t) * length,
             };
             var maxColor = Math.max(0.01f, Math.max(values[0], Math.max(values[1], values[2])));
-            var maxDistance = (float) Math.sqrt(2.0f * ((float) Math.log(10.0) * 3.0f + maxColor)) * Math.abs(sigma);
+            var maxDistance = (float) Math.sqrt(2.0f * ((float) StrictMath.log(10.0) * 3.0f + maxColor)) * Math.abs(sigma);
             var xBegin = Math.max(0, (int) Math.floor(px - maxDistance + 0.5f));
             var xEnd = Math.min(width, (int) Math.floor(px + maxDistance + 1.5f));
             var yBegin = Math.max(0, (int) Math.floor(py - maxDistance + 0.5f));
@@ -301,7 +301,7 @@ public record Splines(List<QuantSpline> splines, int quantAdjust) {
             for (var k = 1; k < 4; k++) {
                 var dx = ext[p0 + 2 * k] - ext[p0 + 2 * (k - 1)];
                 var dy = ext[p0 + 2 * k + 1] - ext[p0 + 2 * (k - 1) + 1];
-                t[k] = t[k - 1] + (float) Math.pow(dx * dx + dy * dy, 0.25);
+                t[k] = t[k - 1] + (float) StrictMath.pow(dx * dx + dy * dy, 0.25);
             }
             for (var step = 1; step < 16; step++) {
                 var knot = t[1] + (step / 16.0f) * (t[2] - t[1]);
@@ -377,7 +377,7 @@ public record Splines(List<QuantSpline> splines, int quantAdjust) {
         var result = dct[0];
         for (var i = 1; i < 32; i++) {
             var theta = i * ((float) Math.PI / 32.0f) * (t + 0.5f);
-            result += (float) Math.sqrt(2.0) * dct[i] * (float) Math.cos(theta);
+            result += (float) Math.sqrt(2.0) * dct[i] * (float) StrictMath.cos(theta);
         }
         return result;
     }

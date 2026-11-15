@@ -21,9 +21,9 @@ import java.util.Arrays;
  * <p>Generated from {@code tools/codegen/vp9}; edit the template.
  *
  * @implNote This implementation follows the kernel rules of
- * {@link com.github.auties00.smalt.internal.simd.Simd} and needs 256-bit vectors: on narrower
- * hardware {@link #create()} returns the scalar kernels. The note at the top of the class body
- * describes the lane layouts.
+ * {@link com.github.auties00.smalt.internal.simd.Simd} and needs 256-bit vectors, so it is
+ * selected only when {@link com.github.auties00.smalt.internal.simd.Simd#WIDE} is {@code true}.
+ * The note at the top of the class body describes the lane layouts.
  */
 final class VectorVp9Dsp extends Vp9Dsp {
     /*
@@ -574,13 +574,13 @@ final class VectorVp9Dsp extends Vp9Dsp {
     }
 
     /**
-     * Creates the vector implementation when the hardware has 256-bit vectors, otherwise the
-     * scalar one; called only when the Vector API is available.
+     * Creates the vector implementation; called only when
+     * {@link com.github.auties00.smalt.internal.simd.Simd#WIDE} is {@code true}.
      *
      * @return the implementation
      */
     static Vp9Dsp create() {
-        return ShortVector.SPECIES_PREFERRED.vectorBitSize() >= 256 ? new VectorVp9Dsp() : new ScalarVp9Dsp();
+        return new VectorVp9Dsp();
     }
 
     /**

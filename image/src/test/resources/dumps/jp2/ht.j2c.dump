@@ -1,0 +1,13 @@
+# image dump of jp2/ht.j2c; regenerate with -Dsmalt.test.updateDumps=true
+format JP2
+info ImageInfo[format=JP2, width=48, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=false crc=d7400316
+  format=JP2 orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 12x8
+picture 12x8 rgba8 alpha=false crc=e0aafbbf
+  format=JP2 orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none

@@ -1,0 +1,59 @@
+# Fills the Actions cache entries of the default branch that every other branch restores: the oracle tools and
+# the ffmpeg builds of the four test runners, the clips (derived on Linux x64, restored on every runner) and the
+# smoke tier of the test vectors. The pkg/* snapshot branches only restore these entries
+# (.github/scripts/cache-policy.sh), so that they do not keep a copy each in the 10 GB repository cache; GitHub
+# lets a branch restore only its own entries and the default branch's, so the entries must exist there. The keys
+# are hashes of the files that make each entry (tools/testdata/oracles.tsv and the oracle sources, the ffmpeg build
+# script, the smoke rows of vectors.tsv, clips.tsv), so a branch that did not change those files finds the default
+# branch's entry under its own key. It runs when those files change on the default branch, and daily, since the
+# cache evicts an entry that nothing restored for a week; a push that brings this file to the default branch runs it
+# for the first time (schedules run only the default branch's workflows). The push trigger names the default
+# branch, so it must follow when the default branch changes.
+name: Warm caches
+
+on:
+  # int is the default branch: the branch whose entries every other branch can restore.
+  push:
+    branches: [int]
+    paths:
+      - 'tools/testdata/**'
+      - '.github/actions/**'
+      - '.github/scripts/cache-policy.sh'
+      - '.github/workflows/oracle-tools.yml'
+      - '.github/workflows/warm-caches.yml'
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+# An ffmpeg build takes most of an hour on macOS and Windows: a newer run waits instead of canceling it.
+concurrency:
+  group: warm-caches-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # the cache listing of .github/scripts/cache-policy.sh
+  actions: read
+
+jobs:
+  # The oracle tools and the ffmpeg build of every test runner, and the clips.
+  oracles:
+    uses: ./.github/workflows/oracle-tools.yml
+    with:
+      os: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+
+  # The smoke tier, one cross-OS entry; an older entry seeds the fetch of the vectors that changed.
+  smoke:
+    name: smoke vectors
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/testdata
+        with:
+          clips: 'false'

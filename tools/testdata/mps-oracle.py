@@ -1,0 +1,461 @@
+#!/usr/bin/env python3
+"""Writes the oracle files of smalt-mpeg's MpegSurroundTest into <conformance cache>/mps-oracle.
+
+The MPEG Surround (ISO/IEC 23003-1) conformance streams are not public, so the oracle is the MPEG Surround decoder
+of the ISO/IEC 23003-3 reference software (mp4spatialdec, the full 23003-1 decoder: every tree, residual coding,
+arbitrary downmix, temporal shaping), driven by a small frontend (mps-oracle/mpsref.c) and fed two kinds of
+streams:
+
+1. Synthetic streams written by mps-oracle/mpsgen.py: every tree configuration (5151 to 7572), quantization and
+   TTT mode, temporal shaping, arbitrary downmix gains, residual and arbitrary downmix residual coding, the
+   arbitrary tree extension, at 24, 48, 88.2 and 96 kHz and frames of 15 to 64 slots, each with a synthetic downmix:
+   <case>.bs, <case>_dmx.wav and <case>_ref.wav.
+2. Streams of the reference encoder (mp4spatialenc, trees 5151, 5152 and 525 at 16 and 32 slots per frame) of a
+   synthetic 5.1 signal: enc<tree>_<slots>.bs, its downmix enc<tree>_<slots>_dmx.wav and the decode
+   enc<tree>_<slots>_ref.wav.
+
+The .bs files hold length-prefixed blocks (32-bit little endian): the header (sacTimeAlignFlag, sacHeaderLen and the
+SpatialSpecificConfig), then one byte-aligned SpatialFrame() per frame. The WAV files are float in 16-bit scale
+divided by 32768.
+
+The reference software, which this script downloads from standards.iso.org (pinned by SHA-256) into
+<work directory>/download and never redistributes, trims the configuration syntax to the 2-1-2 tree of USAC: the
+script patches copies of sac_bitdec.c and bitstream.c to read and write the full SpatialSpecificConfig of
+ISO/IEC 23003-1 (sampling frequency index, frame length and tree, differential parameter slots, the high rate
+mode outside 2-1-2), patches copies of sac_TPprocess.c and sac_arbitraryTree.c so that the decoder runs the
+arbitrary tree it parses (it never calls arbitraryTreeProcess, whose buffers it keeps on the stack), patches a copy of
+sac_calcM1andM2.c so that a singular 3D stereo product leaves no NaN in the decoder's filter states (see
+CALC_PATCHES), patches the binaural path to take every sampling frequency, a chosen data set and the delay of each QMF
+bank (see the BINAURAL patches; the frontend feeds the reverb, which the decoder declares but never feeds), patches a
+copy of sac_mdct2qmf.c so that residual frames of more than 2048 QMF samples and short residual windows of the
+128-band bank fill every subband (see MDCT2QMF_PATCHES), and builds
+the decoder and encoder libraries with gcc (on Windows from an MSYS2 UCRT64 shell).
+
+The binaural decodes (<case>_b<model><quality>_ref.wav, of the streams of BINAURAL_ALL with data set 0 and of
+BINAURAL_MODELS with every data set, model 0 Kemar, 1 Vast and 2 MPSVT, quality 0 the band parameters and 1 the
+filterbank) run the same streams through upmix type 2 of the decoder.
+
+    python -I tools/testdata/mps-oracle.py <work directory>
+"""
+import hashlib
+import math
+import os
+import random
+import shutil
+import struct
+import subprocess
+import sys
+import urllib.request
+import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testdata  # noqa: E402
+
+URL = 'https://standards.iso.org/iso-iec/23003/-3/ed-2/en/ISO_IEC_23003-3_2019(E)_Reference_Software.zip'
+SHA256 = 'e775283aa86c9e525fc6941889ebbc083d9fc1ae19fbbc52971ef5eeccd1245e'
+ROOT = 'MPEG-D_USAC_refSoft_src_v02_03_00_20190711/mpegD_usac/'
+SOURCES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mps-oracle')
+ENCODES = [(tree, slots) for tree in (5151, 5152, 525) for slots in (16, 32)]
+
+BITDEC_PATCHES = [(
+    """  config->bsTreeConfig = 7;  /* only MPS212 in USAC  */
+
+  if(config->bsTreeConfig != 7){
+    config->bsFrameLength = s_GetBits(bitstream, 7);
+  } else {
+    config->bsFrameLength = bsFrameLength;
+  }
+  config->bsFreqRes = s_GetBits(bitstream, 3);
+""",
+    """  {
+    int samplingFrequencyIndex = s_GetBits(bitstream, 4);
+    if (samplingFrequencyIndex == 15) {
+      s_GetBits(bitstream, 24);
+    }
+  }
+  config->bsFrameLength = s_GetBits(bitstream, 7);
+  config->bsFreqRes = s_GetBits(bitstream, 3);
+  config->bsTreeConfig = s_GetBits(bitstream, 4);
+  config->bsHighRateMode = 1;
+"""), (
+    """  for(i = 0; i < self->numParameterSets; i++) {
+    if(bsFramingType) {
+      int bitsParamSlot = 0;
+      while((1<<bitsParamSlot) < self->timeSlots) bitsParamSlot++;
+      self->paramSlot[i] = s_GetBits(bitstream, bitsParamSlot);
+    } else {""",
+    """  for(i = 0; i < self->numParameterSets; i++) {
+    if(bsFramingType && self->treeConfig != 7) {
+      int bitsParamSlot = 0;
+      int previousSlot = i > 0 ? self->paramSlot[i - 1] : -1;
+      while((1<<bitsParamSlot) < (self->timeSlots - self->numParameterSets + i - previousSlot)) bitsParamSlot++;
+      self->paramSlot[i] = previousSlot + 1 + (bitsParamSlot ? s_GetBits(bitstream, bitsParamSlot) : 0);
+    } else if(bsFramingType) {
+      int bitsParamSlot = 0;
+      while((1<<bitsParamSlot) < self->timeSlots) bitsParamSlot++;
+      self->paramSlot[i] = s_GetBits(bitstream, bitsParamSlot);
+    } else {"""), (
+    """  if(self->treeConfig == 7){
+    self->bsHighRateMode = config->bsHighRateMode;
+  }""",
+    """  if(self->treeConfig == 7){
+    self->bsHighRateMode = config->bsHighRateMode;
+  } else {
+    self->bsHighRateMode = 1;
+  }"""), (
+    """  if(self->bsConfig.arbitraryTree == 1)
+    self->numOutputChannelsAT""",
+    """  if(self->bsConfig.arbitraryTree == 1 && self->upmixType != 2)
+    self->numOutputChannelsAT""")]
+
+# The decoder parses the arbitrary tree extension but never calls arbitraryTreeProcess, whose temporary buffers are
+# also too large for a thread stack: the patches call it where tpProcess declares it, between the subband domain
+# temporal processing and the hybrid synthesis, and make the buffers static.
+TPPROCESS_PATCHES = [(
+    """#endif
+
+  SpatialDecHybridQMFSynthesis(self);
+""",
+    """#endif
+
+  if (self->upmixType != 2) arbitraryTreeProcess(self);
+
+  SpatialDecHybridQMFSynthesis(self);
+""")]
+
+ARBITRARY_TREE_PATCHES = [(
+    """  float pTempReal [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];
+  float pTempImag [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];""",
+    """  static float pTempReal [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];
+  static float pTempImag [MAX_OUTPUT_CHANNELS_AT][MAX_TIME_SLOTS][MAX_HYBRID_BANDS];""")]
+
+# The decomposition of a singular 3D stereo product takes the square root of a discriminant and of a singular value
+# that rounding can leave just below zero, and divides by zero when a singular vector of a matrix of rank one cannot be
+# normalized (always for the null vector of an exact rank one, as with HRTFs equal at both ears). A NaN then stays in
+# the decorrelators and hybrid filters until the end of the stream, so nothing after it could be compared. The patches,
+# which change no finite result, clamp both square roots to zero, complete the vectors to an orthonormal pair as the
+# decomposition means to, and make a band with a product of zero (an arbitrary downmix with both gains at zero) silent.
+CALC_PATCHES = [(
+    """  temp = (float) sqrt(poly[1] * poly[1] - 4 * poly[0]);
+""",
+    """  temp = poly[1] * poly[1] - 4 * poly[0];
+  temp = (float) sqrt(temp > 0.0f ? temp : 0.0f);
+"""), (
+    """  s[1] = (float) sqrt(root[1]);
+""",
+    """  s[1] = (float) sqrt(root[1] > 0.0f ? root[1] : 0.0f);
+"""), (
+    """  v_real[0][0] = p_real[0][1] / temp;
+  v_imag[0][0] = p_imag[0][1] / temp;
+  v_real[1][0] = root[0] / temp;
+""",
+    """  v_real[0][0] = temp == 0.0f ? 1.0f : p_real[0][1] / temp;
+  v_imag[0][0] = temp == 0.0f ? 0.0f : p_imag[0][1] / temp;
+  v_real[1][0] = temp == 0.0f ? 0.0f : root[0] / temp;
+"""), (
+    """  v_real[0][1] = p_real[0][1] / temp;
+  v_imag[0][1] = p_imag[0][1] / temp;
+  v_real[1][1] = root[1] / temp;
+""",
+    """  v_real[0][1] = temp == 0.0f ? 1.0f : p_real[0][1] / temp;
+  v_imag[0][1] = temp == 0.0f ? 0.0f : p_imag[0][1] / temp;
+  v_real[1][1] = temp == 0.0f ? 0.0f : root[1] / temp;
+"""), (
+    """  u_real[0][1] /= temp;
+  u_imag[0][1] /= temp;
+  u_real[1][1] /= temp;
+  u_imag[1][1] /= temp;
+""",
+    """  if (temp == 0.0f) {
+    u_real[0][1] = -u_real[1][0];
+    u_imag[0][1] = u_imag[1][0];
+    u_real[1][1] = u_real[0][0];
+    u_imag[1][1] = -u_imag[0][0];
+  } else {
+    u_real[0][1] /= temp;
+    u_imag[0][1] /= temp;
+    u_real[1][1] /= temp;
+    u_imag[1][1] /= temp;
+  }
+"""), (
+    """  Q_imag[ 1 ][ 1 ] =  h11_real*inv_norm_imag + h11_imag*inv_norm_real;
+""",
+    """  Q_imag[ 1 ][ 1 ] =  h11_real*inv_norm_imag + h11_imag*inv_norm_real;
+  if (!isfinite(Q_real[0][0]) || !isfinite(Q_imag[0][0]) || !isfinite(Q_real[0][1]) || !isfinite(Q_imag[0][1])
+      || !isfinite(Q_real[1][0]) || !isfinite(Q_imag[1][0]) || !isfinite(Q_real[1][1]) || !isfinite(Q_imag[1][1])) {
+    memset(Q_real, 0, 4 * sizeof(float));
+    memset(Q_imag, 0, 4 * sizeof(float));
+  }
+""")]
+
+# The data sets are of 44.1 kHz and the decoder asserts that rate, though it applies a set per QMF subband alike at any
+# rate of the same bank: the patch lets every rate through.
+CALC_PATCHES.append((
+    """    assert((self->samplingFreq == self->hrtfData->sampleRate) || (0 == self->hrtfData->sampleRate));
+""",
+    """"""))
+
+# The decoder takes data set 0; the patch takes the frontend's.
+BINAURAL_DEC_PATCHES = [(
+    """#include "sac_parallelReverb.h"
+""",
+    """#include "sac_parallelReverb.h"
+extern int mpsrefHrtfModel;
+"""), (
+    """  SpatialDecInitM1andM2(self, 0);
+""",
+    """  SpatialDecInitM1andM2(self, mpsrefHrtfModel);
+""")]
+
+# The 2048 samples of the MPSVT responses need 66 slots at 32 QMF subbands, past the limit the decoder asserts.
+BINAURAL_FILTER_PATCHES = [(
+    """#define MAX_MASK_SLOTS                  (40)""",
+    """#define MAX_MASK_SLOTS                  (80)""")]
+
+# The delay the reverb lines up with is that of the 64-band bank; the patch scales it to the bank in use.
+BINAURAL_REVERB_PATCHES = [(
+    """  self->systemDelay = SYSTEM_DELAY_HQ;
+""",
+    """  self->systemDelay = 20 * self->qmfBands + 1;
+""")]
+
+# The conversion of residual spectra into the QMF domain keeps 2048 lines (and the long windows zero their padding in
+# the 2048 floats of the decoder's residual buffer), though a residual frame of 18 to 32 slots at 128 QMF subbands pads
+# its spectrum to 4096 lines: the patches convert a copy of the spectrum in buffers of 4096. Its short windows pad
+# their 128 lines to 64 subbands alone, leaving the upper half of a 128-band bank unwritten: the patches pad each
+# window to its slots at the bank's subbands where that is longer, as the long windows pad, which changes nothing at
+# 64 subbands or fewer.
+MDCT2QMF_PATCHES = [(
+    """    float        *   const   mdctIn,
+""",
+    """    float        *   const   mdctSource,
+"""), (
+    """    float V1[ MDCT_LENGTH_HI ];
+    float V2[ MDCT_LENGTH_HI ];
+""",
+    """    float V1[ 4 * AAC_FRAME_LENGTH ];
+    float V2[ 4 * AAC_FRAME_LENGTH ];
+    float mdctIn[ 4 * AAC_FRAME_LENGTH ];
+"""), (
+    """    float mdctSF[ MDCT_LENGTH_SF ];""",
+    """    float mdctSF[ 4 * AAC_SHORT_FRAME_LENGTH ];"""), (
+    """    errorCode = LOCAL_MDCT_windows( updQMF, windowType, &wf[ 0 ], &wt[ 0 ] );
+""",
+    """    for ( i = 0; i < MDCT_LENGTH_HI; i++ )
+    {
+        mdctIn[ i ] = mdctSource[ i ];
+    }
+
+    errorCode = LOCAL_MDCT_windows( updQMF, windowType, &wf[ 0 ], &wt[ 0 ] );
+"""), (
+    """            LOCAL_fold_out( mdctSF, mdctLength, &wf[ windowOffset ], L, &V1[ 0 ], &V2[ 0 ] );
+            LOCAL_hybcmdct2qmf( &V1[ 0 ], &V2[ 0 ], mdctLength, &wt[ windowOffset ], L, Z1Real, Z1Imag );
+""",
+    """            {
+                int paddedLength = mdctLength;
+                if ( ( L / 2 ) * qmfBands > paddedLength )
+                {
+                    paddedLength = ( L / 2 ) * qmfBands;
+                    LOCAL_zero( paddedLength - mdctLength, &mdctSF[ mdctLength ] );
+                }
+                LOCAL_fold_out( mdctSF, paddedLength, &wf[ windowOffset ], L, &V1[ 0 ], &V2[ 0 ] );
+                LOCAL_hybcmdct2qmf( &V1[ 0 ], &V2[ 0 ], paddedLength, &wt[ windowOffset ], L, Z1Real, Z1Imag );
+            }
+""")]
+
+BINAURAL_ALL = ['t5151', 't5152', 't5151q2', 't525cpc', 't525cld', 't525dual', 't525inv', 't525mode4',
+                't7271', 't7272', 'stp5151', 'stp525', 'ges5152', 'ges525', 'rate24', 'rate96', 'slots16',
+                'arbdmx5151', 'arbdmx525', 'res5151', 'res5152x2', 'res525', 'res525cpc0', 'res7272',
+                'arbres5151', 'arbres525', 'arbres96', 'arbres96s', 'v_fr3', 'v_fr2', 'at5151', 'at525', 'at7271',
+                'long64', 'long24',
+                'short8', 'short96', '3d525', '3d525inv', '3dbands', '3d7271', '3dstp', '3darbres',
+                'enc5151_32', 'enc5152_32', 'enc525_32', 'bfr5', 'bfr6', 'bfr7', 'bfr5m', 'bfrdual', 'bfrarb', 'bfrarbm',
+                '3dbdual']
+BINAURAL_MODELS = ['t5151', 't5152', 't525cpc', 't525cld', 't525inv', 't7271', 'rate24', 'rate96',
+                   'arbres525', '3d525', 'enc525_32', 'bfr5']
+
+BITSTREAM_PATCHES = [(
+    """int FreqResBinTable[] = {0, 28, 20, 14, 10, 7, 5, 4};""",
+    """int FreqResBinTable[] = {0, 28, 20, 14, 10, 7, 5, 4};
+
+int mpsrefSamplingFrequencyIndex = 3;"""), (
+    """  if(config->bsTreeConfig == 7) {
+    treeDescription->numOttBoxes""",
+    """  if(config->bsTreeConfig == 7 || config->bsTreeConfig <= 2) {
+    treeDescription->numOttBoxes"""), (
+    """    if(config->bsTreeConfig != 7) {
+      writeBits(bitstream, config->bsFrameLength, 7);
+    }
+    writeBits(bitstream, config->bsFreqRes, 3);
+""",
+    """    if(config->bsTreeConfig != 7) {
+      writeBits(bitstream, mpsrefSamplingFrequencyIndex, 4);
+      writeBits(bitstream, config->bsFrameLength, 7);
+    }
+    writeBits(bitstream, config->bsFreqRes, 3);
+""")]
+
+
+def fetch(target):
+    if not os.path.exists(target):
+        urllib.request.urlretrieve(URL, target)
+    digest = hashlib.sha256(open(target, 'rb').read()).hexdigest()
+    if digest != SHA256:
+        raise SystemExit(target + ' has SHA-256 ' + digest + ', expected ' + SHA256)
+
+
+def extract(archive, target):
+    with zipfile.ZipFile(archive) as source:
+        for name in source.namelist():
+            if not name.startswith(ROOT) or name.endswith('/') or '..' in name.split('/'):
+                continue
+            path = os.path.join(target, *name[len(ROOT):].split('/'))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with source.open(name) as data, open(path, 'wb') as out:
+                shutil.copyfileobj(data, out)
+
+
+def patch(source, target, pairs):
+    text = open(source, encoding='latin-1', newline='').read()
+    crlf = '\r\n' in text
+    for old, new in pairs:
+        if crlf:
+            old = old.replace('\n', '\r\n')
+            new = new.replace('\n', '\r\n')
+        if text.count(old) != 1:
+            raise SystemExit(source + ': the patch anchor occurs ' + str(text.count(old)) + ' times:\n' + old)
+        text = text.replace(old, new)
+    open(target, 'w', encoding='latin-1', newline='').write(text)
+
+
+def compile_all(sources, includes, flags, objects, prefix, replaced):
+    built = []
+    for name in sorted(os.listdir(sources)):
+        if not name.endswith('.c'):
+            continue
+        source = replaced.get(name, os.path.join(sources, name))
+        target = os.path.join(objects, prefix + name[:-2] + '.o')
+        subprocess.check_call(['gcc', '-O2', '-fcommon', '-w', '-c'] + flags + includes + ['-o', target, source])
+        built.append(target)
+    return built
+
+
+def build(work):
+    download = os.path.join(work, 'download')
+    os.makedirs(download, exist_ok=True)
+    archive = os.path.join(download, 'ISO_IEC_23003-3_2019_Reference_Software.zip')
+    fetch(archive)
+    refsoft = os.path.join(work, 'refsoft')
+    if not os.path.isdir(refsoft):
+        extract(archive, refsoft)
+    decoder = os.path.join(refsoft, 'mp4spatialdec')
+    encoder = os.path.join(refsoft, 'mp4spatialenc')
+    common = os.path.join(refsoft, 'usacEncDec')
+    patched = os.path.join(work, 'patched')
+    stub = os.path.join(work, 'stub')
+    objects = os.path.join(work, 'obj')
+    for directory in (patched, stub, objects):
+        os.makedirs(directory, exist_ok=True)
+    patch(os.path.join(decoder, 'src', 'sac_bitdec.c'), os.path.join(patched, 'sac_bitdec.c'), BITDEC_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_TPprocess.c'), os.path.join(patched, 'sac_TPprocess.c'),
+          TPPROCESS_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_arbitraryTree.c'), os.path.join(patched, 'sac_arbitraryTree.c'),
+          ARBITRARY_TREE_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_calcM1andM2.c'), os.path.join(patched, 'sac_calcM1andM2.c'), CALC_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_dec.c'), os.path.join(patched, 'sac_dec.c'), BINAURAL_DEC_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_hrtffilter.c'), os.path.join(patched, 'sac_hrtffilter.c'),
+          BINAURAL_FILTER_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_parallelReverb.c'), os.path.join(patched, 'sac_parallelReverb.c'),
+          BINAURAL_REVERB_PATCHES)
+    patch(os.path.join(decoder, 'src', 'sac_mdct2qmf.c'), os.path.join(patched, 'sac_mdct2qmf.c'), MDCT2QMF_PATCHES)
+    patch(os.path.join(encoder, 'src', 'bitstream.c'), os.path.join(patched, 'bitstream.c'), BITSTREAM_PATCHES)
+    shutil.copy(os.path.join(SOURCES, 'libtsp.h'), stub)
+    shared = ['-I' + os.path.join(common, 'src_frame'), '-I' + os.path.join(common, 'include'),
+              '-I' + os.path.join(common, 'src_tf')]
+    decoder_includes = ['-I' + stub, '-I' + os.path.join(decoder, 'include'), '-I' + os.path.join(decoder, 'src'),
+                        '-I' + os.path.join(common, 'src_ic')] + shared
+    encoder_includes = ['-I' + stub, '-I' + os.path.join(encoder, 'include'),
+                        '-I' + os.path.join(encoder, 'src')] + shared
+    built = compile_all(os.path.join(decoder, 'src'), decoder_includes, ['-DTP_BUG_FIX', '-DHRTF_DYNAMIC_UPDATE'],
+                        objects, 'dec_', {name: os.path.join(patched, name)
+                                          for name in ('sac_bitdec.c', 'sac_TPprocess.c', 'sac_arbitraryTree.c',
+                                                       'sac_calcM1andM2.c', 'sac_dec.c', 'sac_hrtffilter.c',
+                                                       'sac_parallelReverb.c', 'sac_mdct2qmf.c')})
+    built += compile_all(os.path.join(encoder, 'src'), encoder_includes, ['-std=gnu89'], objects, 'enc_',
+                         {'bitstream.c': os.path.join(patched, 'bitstream.c')})
+    for name, includes in (('mpsref.c', decoder_includes + ['-I' + os.path.join(encoder, 'include'),
+                                                           '-I' + os.path.join(encoder, 'src')]),
+                           ('dump.c', decoder_includes), ('common.c', [])):
+        target = os.path.join(objects, 'frontend_' + name[:-2] + '.o')
+        subprocess.check_call(['gcc', '-O2', '-fcommon', '-w', '-c'] + includes
+                              + ['-o', target, os.path.join(SOURCES, name)])
+        built.append(target)
+    executable = os.path.join(work, 'mpsref' + ('.exe' if os.name == 'nt' else ''))
+    # the filterbank's prototype solver keeps megabytes on the stack
+    stack = ['-Wl,--stack=67108864'] if os.name == 'nt' else []
+    subprocess.check_call(['gcc', '-fcommon', '-o', executable] + built + ['-lm'] + stack)
+    return executable, os.path.join(decoder, 'src')
+
+
+def surround_signal(path, rate, seconds, seed):
+    """Writes a 5.1 signal (L R C LFE Ls Rs) of tones, sweeps and noise bursts whose levels and panning change."""
+    generator = random.Random(seed)
+    frames = int(rate * seconds)
+    smoothed = [0.0] * 6
+    data = bytearray()
+    for n in range(frames):
+        t = n / rate
+        common = 0.3 * math.sin(2 * math.pi * 220 * t)
+        for c in range(6):
+            tone = 0.25 * math.sin(2 * math.pi * (330 + 110 * c) * t + c)
+            sweep = 0.1 * math.sin(2 * math.pi * (200 + 2000 * t / seconds * (c + 1) / 3) * t)
+            weight = 1.0 / (8 + 4 * c)
+            smoothed[c] += weight * (generator.uniform(-1.7, 1.7) - smoothed[c])
+            bursts = 1.0 if (t * (2 + c)) % 1.0 < 0.08 else 0.0
+            envelope = 0.5 + 0.5 * math.sin(2 * math.pi * (0.3 + 0.2 * c) * t + c)
+            value = ((common * (0.8 if c != 3 else 0.2) + tone + sweep) * envelope + 0.4 * smoothed[c] * bursts) * 0.4
+            if c == 3:
+                value = 0.5 * common + 0.2 * math.sin(2 * math.pi * 60 * t)
+            data += struct.pack('<h', max(-32768, min(32767, int(round(value * 32767)))))
+    with open(path, 'wb') as out:
+        out.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt '
+                  + struct.pack('<IHHIIHH', 16, 1, 6, rate, rate * 12, 12, 16))
+        out.write(b'data' + struct.pack('<I', len(data)) + data)
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit(__doc__)
+    work = os.path.abspath(sys.argv[1])
+    os.makedirs(work, exist_ok=True)
+    mpsref, tables = build(work)
+    directory = os.path.join(testdata.conformance_dir(), 'mps-oracle')
+    os.makedirs(directory, exist_ok=True)
+    subprocess.check_call([sys.executable, '-I', os.path.join(SOURCES, 'mpsgen.py'), tables, directory])
+    cases = sorted(name[:-3] for name in os.listdir(directory) if name.endswith('.bs') and not name.startswith('enc'))
+    source = os.path.join(work, 'surround.wav')
+    surround_signal(source, 48000, 2.0, 1)
+    for tree, slots in ENCODES:
+        name = 'enc%d_%d' % (tree, slots)
+        subprocess.check_call([mpsref, 'enc', str(tree), source, os.path.join(directory, name + '_dmx.wav'),
+                               os.path.join(directory, name + '.bs'), str(slots)])
+        cases.append(name)
+    for name in cases:
+        subprocess.check_call([mpsref, 'dec', os.path.join(directory, name + '_dmx.wav'),
+                               os.path.join(directory, name + '.bs'), os.path.join(directory, name + '_ref.wav')])
+    for name in BINAURAL_ALL + BINAURAL_MODELS:
+        models = (0, 1, 2) if name in BINAURAL_MODELS else (0,)
+        for model in models:
+            for quality in (0, 1):
+                target = os.path.join(directory, '%s_b%d%d_ref.wav' % (name, model, quality))
+                subprocess.check_call([mpsref, 'dec', os.path.join(directory, name + '_dmx.wav'),
+                                       os.path.join(directory, name + '.bs'), target, '0', '2', str(quality),
+                                       str(model)])
+    for name in cases:
+        digest = hashlib.sha256(open(os.path.join(directory, name + '.bs'), 'rb').read()).hexdigest()
+        print(name, digest)
+    print(len(cases), 'cases in', directory)
+
+
+if __name__ == '__main__':
+    main()

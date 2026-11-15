@@ -1,0 +1,20 @@
+# video decode dump of h264-extended/dp-cip; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 400000
+seekable true
+track 1 H264 176x144 timebase=1/90000
+0 pts=0 dur=3600 key=true 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=957a45bd u=a8443fc0 v=cc1a476b
+1 pts=3600 dur=3600 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=72d704eb u=6ce8cbb4 v=3fc1b607
+2 pts=7200 dur=3600 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2e49d5d0 u=cbd691da v=0c5ae25e
+3 pts=10800 dur=3600 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=bcafad82 u=bf35edd5 v=445b493a
+4 pts=14400 dur=3600 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2747349e u=054495d6 v=a1a40086
+5 pts=18000 dur=3600 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=3c08315f u=96ce55f3 v=7296995e
+6 pts=21600 dur=3600 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=9d32bccc u=398f0522 v=5d9d5147
+7 pts=25200 dur=3600 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=efca7f55 u=52d9c1fc v=ab9ddd84
+8 pts=28800 dur=3600 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=711ae3d7 u=099d7bce v=e87bd088
+9 pts=32400 dur=3600 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=84909e50 u=d276fe4f v=7a42b1ec
+seek 0: @0
+seek 133333: @3
+seek 266666: @6
+seek 400000: end
+seek -1000000: @0

@@ -26,8 +26,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers the RGB to Y'CbCr conversion of the intra encoders' input: the luma weights of every
- * matrix, the BT.709 fallback of an unspecified matrix, the matrices it cannot convert with, and a
- * ProRes round trip of RGB input in the FCC matrix.
+ * matrix, the BT.709 fallback of an unspecified matrix, the matrices it converts as the core conversion
+ * does, and a ProRes round trip of RGB input in the FCC matrix.
  */
 @DisplayName("intra encoder input")
 class IntraInputTest {
@@ -115,10 +115,87 @@ class IntraInputTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = MatrixCoefficients.class, names = {"IDENTITY", "YCGCO", "BT2020_CL", "SMPTE2085",
-            "CHROMA_DERIVED_NCL", "CHROMA_DERIVED_CL", "ICTCP"})
-    @DisplayName("rejects RGB input for a matrix that two luma weights do not define")
-    void unsupported(MatrixCoefficients matrix) {
-        assertThrows(MediaException.Unsupported.class, () -> convert(solid(10, 200, 30), matrix));
+    @EnumSource(value = MatrixCoefficients.class, names = {"YCGCO", "BT2020_CL", "SMPTE2085",
+            "CHROMA_DERIVED_CL", "ICTCP", "IPT_C2", "YCGCO_RE", "YCGCO_RO"})
+    @DisplayName("converts RGB input in a matrix weighted luma does not define as the core conversion does")
+    void exact(MatrixCoefficients matrix) {
+        var source = saturated(30, 18);
+        var color = ColorInfo.BT709_LIMITED.withMatrix(matrix);
+        for (var format : new ChromaFormat[]{ChromaFormat.YUV444, ChromaFormat.YUV422}) {
+            var planes = IntraInput.yuv(source, format, 10, color, 0, 32, 18, 1, null);
+            var expected = ImageOps.toYuv16(source, format, color, 10);
+            assertEquals(color, planes.color());
+            for (var y = 0; y < 18; y++) {
+                for (var x = 0; x < 30; x++) {
+                    assertEquals(expected.y()[y * expected.yStride() + x], planes.first()[y * 32 + x], matrix + " luma");
+                }
+                for (var x = 0; x < expected.chromaWidth(); x++) {
+                    assertEquals(expected.u()[y * expected.uvStride() + x], planes.second()[y * planes.chromaStride() + x]);
+                    assertEquals(expected.v()[y * expected.uvStride() + x], planes.third()[y * planes.chromaStride() + x]);
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{0} {1} at {2} bits")
+    @org.junit.jupiter.params.provider.CsvSource({"YCGCO_RE, LIMITED, 8", "YCGCO_RE, FULL, 10", "YCGCO_RO, LIMITED, 9",
+            "YCGCO, FULL, 10", "IDENTITY, FULL, 10"})
+    @DisplayName("converts planar input whose samples a per-sample mapping would recolor as the core conversion does")
+    void planar(MatrixCoefficients matrix, com.github.auties00.smalt.image.ColorRange range, int sourceDepth) {
+        var color = ColorInfo.BT709_LIMITED.withMatrix(matrix).withRange(range);
+        var source = ImageOps.toYuv16(saturated(30, 18), ChromaFormat.YUV444, color, sourceDepth);
+        var limited = color.withRange(com.github.auties00.smalt.image.ColorRange.LIMITED);
+        var expected = ImageOps.toYuv16(source, ChromaFormat.YUV444, limited, 12);
+        for (var picture : java.util.List.<com.github.auties00.smalt.image.Picture>of(source,
+                ImageOps.toEightBit(source))) {
+            if (picture instanceof com.github.auties00.smalt.image.YuvPicture && sourceDepth != 8) {
+                continue;
+            }
+            var planes = IntraInput.yuv(picture, ChromaFormat.YUV444, 12, ColorInfo.BT709_LIMITED, 0, 32, 18, 1, null);
+            assertEquals(limited, planes.color());
+            for (var y = 0; y < 18; y++) {
+                for (var x = 0; x < 30; x++) {
+                    var at = y * expected.yStride() + x;
+                    assertEquals(expected.y()[at], planes.first()[y * 32 + x], matrix + " luma");
+                    assertEquals(expected.u()[at], planes.second()[y * planes.chromaStride() + x], matrix + " Cb");
+                    assertEquals(expected.v()[at], planes.third()[y * planes.chromaStride() + x], matrix + " Cr");
+                }
+            }
+        }
+        // the conversion keeps the colors: 8-bit R'G'B' within one code value of the source
+        var back = ImageOps.toRgba(expected);
+        var reference = ImageOps.toRgba(source);
+        for (var i = 0; i < 30 * 18 * 4; i++) {
+            assertTrue(Math.abs((back.pixels()[i] & 0xFF) - (reference.pixels()[i] & 0xFF)) <= 1, matrix + " " + i);
+        }
+        assertEquals(null, IntraInput.yuvDeferred(source, ChromaFormat.YUV444, 12, 32, 32, null));
+    }
+
+    @Test
+    @DisplayName("rejects RGB input in the identity matrix, which the intra formats cannot signal for Y'CbCr")
+    void identity() {
+        var color = ColorInfo.BT709_LIMITED.withMatrix(MatrixCoefficients.IDENTITY);
+        assertThrows(MediaException.Unsupported.class,
+                () -> IntraInput.yuv(saturated(30, 18), ChromaFormat.YUV444, 10, color, 0, 32, 18, 1, null));
+        var options = ProResEncoderOptions.of(ProResProfile.PRORES_4444).toBuilder().threads(1).color(color).build();
+        try (var encoder = new ProResEncoder(30, 18, options)) {
+            assertThrows(MediaException.Unsupported.class,
+                    () -> encoder.encodeFrame(new VideoFrame(saturated(30, 18), 0, 1, true)));
+        }
+        var yuv = ImageOps.toYuv16(saturated(30, 18), ChromaFormat.YUV444, ColorInfo.BT709_LIMITED, 10);
+        assertEquals(ColorInfo.BT709_LIMITED,
+                IntraInput.yuv(yuv, ChromaFormat.YUV444, 10, color, 0, 32, 18, 1, null).color());
+    }
+
+    @Test
+    @DisplayName("converts the chromaticity-derived non-constant-luminance matrix with the weights of the primaries")
+    void chromaticityDerived() {
+        var color = ColorInfo.BT709_LIMITED.withMatrix(MatrixCoefficients.CHROMA_DERIVED_NCL)
+                .withPrimaries(com.github.auties00.smalt.image.ColorPrimaries.SMPTE432);
+        var weights = LumaWeights.of(com.github.auties00.smalt.image.ColorPrimaries.SMPTE432);
+        var planes = IntraInput.yuv(solid(0, 0, 255), ChromaFormat.YUV444, 10, color, 0, 16, 16, 1, null);
+        assertEquals((short) Math.round((16 + 219 * weights.kb()) * 4), planes.first()[0]);
+        assertEquals(java.util.Optional.of(weights), IntraInput.weights(color));
+        assertTrue(IntraInput.weights(ColorInfo.BT709_LIMITED.withMatrix(MatrixCoefficients.ICTCP)).isEmpty());
     }
 }

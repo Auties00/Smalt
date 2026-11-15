@@ -217,6 +217,11 @@ final class Vp9LoopFilter {
     private int bitDepth;
 
     /**
+     * Whether only the luma plane is filtered, as the encoder's search of the filter level does.
+     */
+    boolean lumaOnly;
+
+    /**
      * Constructs a filter of the frames whose parameters a decoder or an encoder keeps.
      *
      * @param params the parameters, which the owner updates before each frame
@@ -270,6 +275,9 @@ final class Vp9LoopFilter {
         bitDepth = frame.bitDepth;
         selectPlane(frame, 0);
         filterPlaneSs00(miRow, miCol);
+        if (lumaOnly) {
+            return;
+        }
         var ssX = frame.ssX;
         var ssY = frame.ssY;
         for (var plane = 1; plane < 3; plane++) {

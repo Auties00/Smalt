@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.container.ogg;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -81,7 +81,7 @@ class OggCrcTest {
         var scalar = new byte[length + 4];
         new ScalarBitReverser().reverse(source, 3, scalar, 2, length);
         assertArrayEquals(expected, scalar, "scalar");
-        Assumptions.assumeTrue(Simd.ENABLED, "the Vector API is not available");
+        Skip.unlessVector(Simd.ENABLED);
         var vector = new byte[length + 4];
         VectorBitReverser.create().reverse(source, 3, vector, 2, length);
         assertArrayEquals(expected, vector, "vector");

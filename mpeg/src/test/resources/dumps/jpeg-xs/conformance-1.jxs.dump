@@ -1,0 +1,13 @@
+# image dump of jpeg-xs/conformance-1.jxs; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG_XS
+info ImageInfo[format=JPEG_XS, width=1024, height=436, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1024x436 rgba8 alpha=false crc=a15c60dc
+  format=JPEG_XS orientation=NORMAL source=1024x436
+  icc=none exif=none xmp=none
+  profile=none
+scaled 256x109
+picture 1024x436 rgba8 alpha=false crc=a15c60dc
+  format=JPEG_XS orientation=NORMAL source=1024x436
+  icc=none exif=none xmp=none
+  profile=none

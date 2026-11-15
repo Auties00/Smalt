@@ -25,6 +25,14 @@ import java.util.Objects;
  *
  * <p>Equal input and output rates copy the input unchanged, with no filtering and no look-ahead.
  *
+ * <p>{@link #setRatio(double)} turns the resampler into a variable-ratio one, for example to follow
+ * the drift between two audio clocks: from then on output frames are spaced {@code 1 / ratio} input
+ * frames apart, the ratio taking effect at the first frame not yet written (withheld frames included),
+ * and the stream ends with the last output frame whose position lies at least half a spacing before
+ * the end of the input. Positions are kept in fixed point with 32 fractional bits, so they never
+ * drift, and output stays bit-identical however the input is split into calls, as long as the ratio
+ * changes at the same output frames. The filter stays the one designed for the nominal rates.
+ *
  * <p>A resampler is not thread-safe. After {@link #flush(float[][], int)} it is back in its
  * initial state and can resample a new stream.
  *
@@ -40,7 +48,8 @@ import java.util.Objects;
  * the scalar and Vector API kernels are bit-identical. When {@code L} exceeds 1024, or the exact
  * table would exceed 2^22 coefficients, the table instead holds at most 1024 evenly spaced phases
  * and each output interpolates linearly between the two neighboring phases, which bounds memory
- * for rates such as 35467 Hz at the cost of a second dot product per output sample.
+ * for rates such as 35467 Hz at the cost of a second dot product per output sample. The
+ * variable-ratio mode always interpolates between such phases.
  */
 public final class Resampler {
     /**
@@ -82,6 +91,21 @@ public final class Resampler {
      * The largest number of input frames appended to the history before output is computed.
      */
     private static final int SLICE = 4096;
+
+    /**
+     * The smallest accepted ratio between a variable ratio and the nominal one.
+     */
+    private static final double MIN_RATIO_FACTOR = 0.5;
+
+    /**
+     * The largest accepted ratio between a variable ratio and the nominal one.
+     */
+    private static final double MAX_RATIO_FACTOR = 2;
+
+    /**
+     * The mask of the 32 fractional bits of a fixed-point position.
+     */
+    private static final long FRACTION_MASK = 0xFFFF_FFFFL;
 
     /**
      * Selects the trade-off between filter length, stopband attenuation and speed.
@@ -243,6 +267,56 @@ public final class Resampler {
     private long produced;
 
     /**
+     * The sinc cutoff in cycles per input sample.
+     */
+    private final double cutoff;
+
+    /**
+     * The Kaiser window parameter.
+     */
+    private final double beta;
+
+    /**
+     * Whether the output spacing follows {@link #ratio} instead of the exact nominal ratio.
+     */
+    private boolean variable;
+
+    /**
+     * The output frames per input frame.
+     */
+    private double ratio;
+
+    /**
+     * The whole part of the input position of the next output frame, in variable mode.
+     */
+    private long positionWhole;
+
+    /**
+     * The fractional part of the input position of the next output frame, in units of {@code 2^-32}.
+     */
+    private long positionFraction;
+
+    /**
+     * The input advance per output frame in variable mode, in units of {@code 2^-32}.
+     */
+    private long step;
+
+    /**
+     * The interpolated phases of the variable mode, built on first use.
+     */
+    private float[] variableTable;
+
+    /**
+     * The differences between consecutive phases of {@link #variableTable}.
+     */
+    private float[] variableSlopes;
+
+    /**
+     * The number of phases of {@link #variableTable}.
+     */
+    private int variablePhases;
+
+    /**
      * Creates a resampler.
      *
      * @param inputRate  the input sampling rate in hertz; between 1 and 16777216
@@ -292,7 +366,8 @@ public final class Resampler {
         var span = quality.taps() * Math.max(1.0, (double) inputRate / outputRate);
         this.taps = (int) Math.ceil(span / 8) * 8;
         this.half = taps / 2;
-        var cutoff = CUTOFF * 0.5 * Math.min(inputRate, outputRate) / inputRate;
+        this.cutoff = CUTOFF * 0.5 * Math.min(inputRate, outputRate) / inputRate;
+        this.beta = quality.beta();
         if (up <= MAX_EXACT_PHASES && (long) up * taps <= MAX_TABLE_FLOATS) {
             this.table = design(up, up, taps, cutoff, quality.beta());
             this.slopes = null;
@@ -357,7 +432,7 @@ public final class Resampler {
             return 1;
         }
         var pix = Math.PI * x;
-        return Math.sin(pix) / pix;
+        return StrictMath.sin(pix) / pix;
     }
 
     /**
@@ -424,15 +499,85 @@ public final class Resampler {
     }
 
     /**
+     * Returns the ratio of output frames to input frames: {@code outputRate / inputRate} until
+     * {@link #setRatio(double)} changes it.
+     *
+     * @return the ratio
+     */
+    public double ratio() {
+        return variable ? ratio : (double) outputRate / inputRate;
+    }
+
+    /**
+     * Sets the ratio of output frames to input frames for every frame not yet written.
+     *
+     * <p>A ratio equal to the nominal one leaves a resampler that was never given another ratio in
+     * its exact mode, and is otherwise kept in variable mode. {@link #flush(float[][], int)} returns
+     * the resampler to the nominal ratio.
+     *
+     * @param ratio the output frames per input frame, within a factor of two of
+     * {@code outputRate / inputRate}
+     * @throws IllegalArgumentException if {@code ratio} is not finite or out of range
+     */
+    public void setRatio(double ratio) {
+        var nominal = (double) outputRate / inputRate;
+        if (!(ratio >= nominal * MIN_RATIO_FACTOR && ratio <= nominal * MAX_RATIO_FACTOR)) {
+            throw new IllegalArgumentException("ratio " + ratio + " is not within a factor of two of " + nominal);
+        }
+        if (!variable) {
+            if (ratio == nominal) {
+                return;
+            }
+            enterVariableMode();
+        }
+        this.ratio = ratio;
+        this.step = Math.round(0x1p32 / ratio);
+    }
+
+    /**
+     * Switches to variable mode at the current output position, building the interpolated phases.
+     */
+    private void enterVariableMode() {
+        if (slopes != null) {
+            variableTable = table;
+            variableSlopes = slopes;
+            variablePhases = interpolatedPhases;
+        } else if (variableTable == null) {
+            var phases = (int) Math.max(MIN_INTERPOLATED_PHASES,
+                    Math.min(MAX_EXACT_PHASES, MAX_TABLE_FLOATS / (2L * taps) - 1));
+            var full = design(phases + 1, phases, taps, cutoff, beta);
+            variableTable = Arrays.copyOf(full, phases * taps);
+            variableSlopes = new float[phases * taps];
+            for (var i = 0; i < phases * taps; i++) {
+                variableSlopes[i] = full[i + taps] - full[i];
+            }
+            variablePhases = phases;
+        }
+        if (passthrough) {
+            positionWhole = produced;
+            positionFraction = 0;
+        } else {
+            positionWhole = floorMulDiv(produced, down, up);
+            var remainder = produced % up * down % up;
+            positionFraction = (remainder << 32) / up;
+        }
+        variable = true;
+    }
+
+    /**
      * Returns the filter's look-ahead: how many output frames {@link #process(float[][], int,
      * float[][], int)} withholds until later input or {@link #flush(float[][], int)} releases
      * them.
      *
-     * <p>This is a latency, not a shift: the output is never delayed relative to the input.
+     * <p>This is a latency, not a shift: the output is never delayed relative to the input. In
+     * variable mode it follows the current ratio.
      *
      * @return the look-ahead in output frames
      */
     public int delay() {
+        if (variable) {
+            return (int) Math.ceil(half * ratio);
+        }
         return passthrough ? 0 : (int) ceilMulDiv(half, up, down);
     }
 
@@ -452,6 +597,13 @@ public final class Resampler {
     public int maxOutputFrames(int inputFrames) {
         if (inputFrames < 0) {
             throw new IllegalArgumentException("negative frame count " + inputFrames);
+        }
+        if (variable) {
+            var frames = variableTotal(this.inputFrames + inputFrames);
+            if (frames > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("output of " + frames + " frames exceeds the largest array");
+            }
+            return (int) frames;
         }
         if (passthrough) {
             return inputFrames;
@@ -492,11 +644,14 @@ public final class Resampler {
                 throw new IllegalArgumentException("input plane " + c + " holds fewer than " + inputFrames + " frames");
             }
         }
-        if (passthrough) {
+        if (passthrough && !variable) {
             checkCapacity(output, outputOffset, inputFrames);
             for (var c = 0; c < channels; c++) {
                 System.arraycopy(input[c], 0, output[c], outputOffset, inputFrames);
             }
+            rememberTail(input, inputFrames);
+            this.inputFrames += inputFrames;
+            produced += inputFrames;
             return inputFrames;
         }
         checkCapacity(output, outputOffset, available(this.inputFrames + inputFrames));
@@ -533,10 +688,11 @@ public final class Resampler {
         if (outputOffset < 0) {
             throw new IllegalArgumentException("negative offset " + outputOffset);
         }
-        if (passthrough) {
+        if (passthrough && !variable) {
+            reset();
             return 0;
         }
-        var total = roundMulDiv(inputFrames, up, down);
+        var total = variable ? produced + variableTotal(inputFrames) : roundMulDiv(inputFrames, up, down);
         checkCapacity(output, outputOffset, total - produced);
         var written = 0;
         var silence = new float[Math.min(SLICE, taps)];
@@ -563,6 +719,50 @@ public final class Resampler {
         historyLength = half;
         inputFrames = 0;
         produced = 0;
+        variable = false;
+    }
+
+    /**
+     * Keeps the last input frames of a pass-through call in the history, so that a later switch to
+     * variable mode filters across the call boundary.
+     *
+     * @param input the planes just copied
+     * @param count the number of frames copied
+     */
+    private void rememberTail(float[][] input, int count) {
+        if (count >= half) {
+            for (var c = 0; c < channels; c++) {
+                System.arraycopy(input[c], count - half, history[c], 0, half);
+            }
+        } else {
+            var keep = half - count;
+            for (var c = 0; c < channels; c++) {
+                System.arraycopy(history[c], historyLength - keep, history[c], 0, keep);
+                System.arraycopy(input[c], 0, history[c], keep, count);
+            }
+        }
+        historyStart = inputFrames + count - half;
+        historyLength = half;
+    }
+
+    /**
+     * Returns the number of output frames, from the next one on, whose variable-mode position lies
+     * at least half a spacing before the end of an input of {@code end} frames; for inputs more than
+     * 2^30 frames past the position, an upper bound of it.
+     *
+     * @param end the number of input frames of the stream
+     * @return the frame count, non-negative
+     */
+    private long variableTotal(long end) {
+        var whole = end - positionWhole;
+        if (whole <= 0) {
+            return 0;
+        }
+        if (whole >= 1L << 30) {
+            return Math.max(0, (long) Math.floor((end - positionWhole - positionFraction * 0x1p-32) * ratio - 0.5) + 2);
+        }
+        var distance = (whole << 32) - positionFraction - step / 2;
+        return distance < 0 ? 0 : distance / step + 1;
     }
 
     /**
@@ -576,6 +776,14 @@ public final class Resampler {
         var last = end - 1 - half;
         if (last < 0) {
             return 0;
+        }
+        if (variable) {
+            var whole = last + 1 - positionWhole;
+            if (whole <= 0) {
+                return 0;
+            }
+            var distance = (whole << 32) - positionFraction;
+            return (distance + step - 1) / step;
         }
         return Math.max(0, ceilMulDiv(last + 1, up, down) - produced);
     }
@@ -602,7 +810,7 @@ public final class Resampler {
      * @return the absolute input index
      */
     private long nextFirstTap() {
-        return floorMulDiv(produced, down, up) - half + 1;
+        return (variable ? positionWhole : floorMulDiv(produced, down, up)) - half + 1;
     }
 
     /**
@@ -639,6 +847,20 @@ public final class Resampler {
         var frames = (int) count;
         if (frames <= 0) {
             return 0;
+        }
+        if (variable) {
+            var start = (int) (positionWhole - historyStart) - half + 1;
+            var stepWhole = step >>> 32;
+            var stepFraction = step & FRACTION_MASK;
+            for (var c = 0; c < channels; c++) {
+                kernel.runVariable(history[c], start, positionFraction, (int) stepWhole, stepFraction,
+                        variablePhases, variableTable, variableSlopes, taps, output[c], offset, frames);
+            }
+            var fraction = positionFraction + frames * stepFraction;
+            positionWhole += frames * stepWhole + (fraction >>> 32);
+            positionFraction = fraction & FRACTION_MASK;
+            produced += frames;
+            return frames;
         }
         var step = down / up;
         var remainder = down % up;

@@ -8,7 +8,9 @@ import java.util.Arrays;
  * <p>The first level is indexed by the next {@code rootBits} bits of the stream. Its entries hold
  * either a decoded symbol and its code length, or a link to a second-level table indexed by the
  * bits that follow, sized for the longest code sharing that prefix. A bit string that starts no
- * code decodes to {@link #INVALID} without consuming anything.
+ * code decodes to {@link #INVALID} without consuming anything. The codes stay available, in the
+ * order they were given, to the encoders that write the table ({@link #size()}, {@link #symbol(int)},
+ * {@link #code(int)} and {@link #length(int)}).
  *
  * <p>Instances are immutable and thread-safe once built.
  */
@@ -31,6 +33,21 @@ public final class Vlc {
     private final int[] entries;
 
     /**
+     * The symbol of each code, in the order given.
+     */
+    private final int[] symbols;
+
+    /**
+     * The bits of each code, right-aligned.
+     */
+    private final int[] codes;
+
+    /**
+     * The length of each code in bits.
+     */
+    private final int[] lengths;
+
+    /**
      * Builds a table from code strings.
      *
      * @param rootBits the number of bits of the first level, from 1 to 16
@@ -48,6 +65,9 @@ public final class Vlc {
         var count = codes.length;
         var values = new long[count];
         var lengths = new int[count];
+        this.symbols = symbols.clone();
+        this.codes = new int[count];
+        this.lengths = lengths;
         for (var i = 0; i < count; i++) {
             var code = codes[i].replace(" ", "");
             if (code.isEmpty() || code.length() > 32 || symbols[i] < 0 || symbols[i] >= 1 << 26) {
@@ -55,6 +75,7 @@ public final class Vlc {
             }
             values[i] = Long.parseLong(code, 2);
             lengths[i] = code.length();
+            this.codes[i] = (int) values[i];
         }
         var root = new int[1 << rootBits];
         var second = new int[0];
@@ -105,6 +126,43 @@ public final class Vlc {
         var all = Arrays.copyOf(root, root.length + second.length);
         System.arraycopy(second, 0, all, root.length, second.length);
         this.entries = all;
+    }
+
+    /**
+     * {@return the number of codes of the table}
+     */
+    public int size() {
+        return symbols.length;
+    }
+
+    /**
+     * Returns the symbol of a code.
+     *
+     * @param index the code index, in the order the codes were given
+     * @return the symbol
+     */
+    public int symbol(int index) {
+        return symbols[index];
+    }
+
+    /**
+     * Returns the bits of a code.
+     *
+     * @param index the code index, in the order the codes were given
+     * @return the code, right-aligned in {@link #length(int)} bits
+     */
+    public int code(int index) {
+        return codes[index];
+    }
+
+    /**
+     * Returns the length of a code.
+     *
+     * @param index the code index, in the order the codes were given
+     * @return the length in bits, from 1 to 32
+     */
+    public int length(int index) {
+        return lengths[index];
     }
 
     /**
