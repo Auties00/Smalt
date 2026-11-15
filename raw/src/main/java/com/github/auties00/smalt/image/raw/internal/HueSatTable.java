@@ -23,6 +23,12 @@ final class HueSatTable {
      * the spacing of any table's value divisions.
      */
     static final float[] SRGB_ENCODING = encoding();
+
+    /**
+     * Holds the linear values of the sRGB-encoded values {@code index / ENCODING_STEPS}, the inverse of
+     * {@link #SRGB_ENCODING}.
+     */
+    static final float[] SRGB_DECODING = decoding();
     /**
      * The hue divisions.
      */
@@ -122,8 +128,9 @@ final class HueSatTable {
      * zeros. Cells whose interpolation would read past the last saturation or value division are
      * never read and hold zeros.
      *
-     * @implNote This implementation builds the table on first use and keeps it: the vector kernel
-     * reads the corners of a pixel with one load, and the scalar kernel never needs it.
+     * @implNote This implementation builds the table when a kernel prepares this table
+     * ({@link HueSatKernel#prepare}), or on first use, and keeps it: the vector kernel reads the
+     * corners of a pixel with one load, and the scalar kernel never needs it.
      *
      * @return the corner table
      */
@@ -193,6 +200,61 @@ final class HueSatTable {
             table[index] = (float) Transfer.encode(RawColorSpace.SRGB, index / (double) ENCODING_STEPS);
         }
         return table;
+    }
+
+    /**
+     * Samples the inverse of the sRGB transfer function.
+     *
+     * @return the {@link #ENCODING_STEPS} + 1 samples
+     */
+    private static float[] decoding() {
+        var table = new float[ENCODING_STEPS + 1];
+        for (var index = 0; index <= ENCODING_STEPS; index++) {
+            table[index] = (float) decodeExact(index / (double) ENCODING_STEPS);
+        }
+        return table;
+    }
+
+    /**
+     * Decodes an sRGB-encoded value with the formula of the transfer function, continued above 1 by its power law.
+     *
+     * @param value the encoded value, non-negative
+     * @return the linear value
+     */
+    private static double decodeExact(double value) {
+        return value <= 0.04045 ? value / 12.92 : StrictMath.pow((value + 0.055) / 1.055, 2.4);
+    }
+
+    /**
+     * Encodes a linear value of any size with the sRGB transfer function: as {@link #encode} below 1, by the
+     * function's power law above.
+     *
+     * @param value the linear value
+     * @return the encoded value, 0 for a value that is not positive
+     */
+    static float encodeExtended(float value) {
+        if (value >= 1) {
+            return (float) (1.055 * StrictMath.pow(value, 1 / 2.4) - 0.055);
+        }
+        return encode(value);
+    }
+
+    /**
+     * Decodes an sRGB-encoded value of any size, the inverse of {@link #encodeExtended}.
+     *
+     * @param value the encoded value
+     * @return the linear value, 0 for a value that is not positive
+     */
+    static float decodeExtended(float value) {
+        if (!(value > 0)) {
+            return 0;
+        }
+        if (value >= 1) {
+            return (float) decodeExact(value);
+        }
+        var scaled = value * ENCODING_STEPS;
+        var index = (int) scaled;
+        return SRGB_DECODING[index] + (SRGB_DECODING[index + 1] - SRGB_DECODING[index]) * (scaled - index);
     }
 
     /**

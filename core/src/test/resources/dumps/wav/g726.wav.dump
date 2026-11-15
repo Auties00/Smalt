@@ -1,0 +1,21 @@
+# demux dump of wav/g726.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 500000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 0 AUDIO ADPCM_G726 timebase=1/8000 duration=4000 config=none
+  audio rate=8000 bits=3 skip=0 layout=[FRONT_CENTER]
+packets 8
+0 t0 pts=0 dts=0 dur=512 flags=KEY size=192 crc=a2e6c93d
+1 t0 pts=512 dts=512 dur=512 flags=KEY size=192 crc=cb8670f2
+2 t0 pts=1024 dts=1024 dur=512 flags=KEY size=192 crc=edf9a4a2
+3 t0 pts=1536 dts=1536 dur=512 flags=KEY size=192 crc=eba91a98
+4 t0 pts=2048 dts=2048 dur=512 flags=KEY size=192 crc=c37ee364
+5 t0 pts=2560 dts=2560 dur=512 flags=KEY size=192 crc=a969380c
+6 t0 pts=3072 dts=3072 dur=512 flags=KEY size=192 crc=8d33ec25
+7 t0 pts=3584 dts=3584 dur=416 flags=KEY size=156 crc=5a110928
+seek 0: t0@0
+seek 166666: t0@2
+seek 333333: t0@5
+seek 500000: end
+seek -1000000: t0@0

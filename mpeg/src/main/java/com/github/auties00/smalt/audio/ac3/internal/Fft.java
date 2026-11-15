@@ -90,8 +90,8 @@ public final class Fft {
         this.sin = new float[length / 2];
         for (var k = 0; k < length / 2; k++) {
             var angle = 2 * Math.PI * k / length;
-            cos[k] = (float) Math.cos(angle);
-            sin[k] = (float) Math.sin(angle);
+            cos[k] = (float) StrictMath.cos(angle);
+            sin[k] = (float) StrictMath.sin(angle);
         }
         var stages = bits;
         this.stageCos = new float[stages][];

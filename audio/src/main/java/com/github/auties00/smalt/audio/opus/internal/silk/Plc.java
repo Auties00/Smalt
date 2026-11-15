@@ -1,6 +1,8 @@
 /* Ports libopus 1.5.2 (silk/PLC.c, silk/PLC.h). Copyright Skype Limited; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
+import com.github.auties00.smalt.audio.opus.internal.dnn.LpcnetPlc;
+
 import java.util.Arrays;
 
 import static com.github.auties00.smalt.audio.opus.internal.silk.Define.LTP_ORDER;
@@ -24,7 +26,9 @@ import static com.github.auties00.smalt.audio.opus.internal.silk.SigProcFix.sqrt
  * Conceals lost SILK frames by extrapolating the pitch and LPC parameters of the last good frame,
  * and smooths the transition back to decoded frames.
  *
- * @implNote This implementation omits the deep PLC ({@code ENABLE_DEEP_PLC}) extension.
+ * <p>A channel in deep PLC mode ({@link DecoderState#dnn}) behaves as the reference built with
+ * {@code ENABLE_DEEP_PLC}: at 16 kHz the deep PLC receives every decoded frame and replaces the concealment when
+ * enabled or when DRED features are queued, and the energy glue after a loss is skipped.
  */
 public final class Plc {
     /**
@@ -122,17 +126,24 @@ public final class Plc {
      * @param frame     the decoded frame, or receives the concealed frame
      * @param frameOff  the index of the first sample
      * @param lost      nonzero when the frame is lost
+     * @param lpcnet    the deep PLC, or {@code null}
      */
-    public static void plc(DecoderState psDec, DecoderControl psDecCtrl, short[] frame, int frameOff, int lost) {
+    public static void plc(DecoderState psDec, DecoderControl psDecCtrl, short[] frame, int frameOff, int lost,
+                           LpcnetPlc lpcnet) {
         if (psDec.fs_kHz != psDec.sPLC.fs_kHz) {
             plcReset(psDec);
             psDec.sPLC.fs_kHz = psDec.fs_kHz;
         }
         if (lost != 0) {
-            plcConceal(psDec, psDecCtrl, frame, frameOff);
+            plcConceal(psDec, psDecCtrl, frame, frameOff, lpcnet);
             psDec.lossCnt++;
         } else {
             plcUpdate(psDec, psDecCtrl);
+            if (lpcnet != null && psDec.sPLC.fs_kHz == 16) {
+                for (var k = 0; k < psDec.nb_subfr; k += 2) {
+                    lpcnet.update(frame, frameOff + k * psDec.subfr_length);
+                }
+            }
         }
     }
 
@@ -197,11 +208,12 @@ public final class Plc {
      * @param prevGain_Q10 the gains of the last two subframes in Q10
      * @param subfr_length the subframe length
      * @param nb_subfr     the number of subframes
-     * @return the energy and shift of the first subframe at index 0 and of the second subframe at
-     *         index 1, each packed as by {@link SumSqrShift#sumSqrShift(short[], int, int)}
+     * @param energies     receives the result
+     * @return {@code energies}, holding the energy and shift of the first subframe at index 0 and of the second
+     *         subframe at index 1, each packed as by {@link SumSqrShift#sumSqrShift(short[], int, int)}
      */
     private static long[] plcEnergy(short[] exc_buf, int[] exc_Q14, int[] prevGain_Q10, int subfr_length,
-                                    int nb_subfr) {
+                                    int nb_subfr, long[] energies) {
         var exc_buf_ptr = 0;
         for (var k = 0; k < 2; k++) {
             for (var i = 0; i < subfr_length; i++) {
@@ -210,8 +222,9 @@ public final class Plc {
             }
             exc_buf_ptr += subfr_length;
         }
-        return new long[]{SumSqrShift.sumSqrShift(exc_buf, 0, subfr_length),
-                SumSqrShift.sumSqrShift(exc_buf, subfr_length, subfr_length)};
+        energies[0] = SumSqrShift.sumSqrShift(exc_buf, 0, subfr_length);
+        energies[1] = SumSqrShift.sumSqrShift(exc_buf, subfr_length, subfr_length);
+        return energies;
     }
 
     /**
@@ -221,18 +234,22 @@ public final class Plc {
      * @param psDecCtrl receives the pitch lags used
      * @param frame     receives the concealed frame
      * @param frameOff  the index of the first sample
+     * @param lpcnet    the deep PLC, or {@code null}
      */
-    private static void plcConceal(DecoderState psDec, DecoderControl psDecCtrl, short[] frame, int frameOff) {
+    private static void plcConceal(DecoderState psDec, DecoderControl psDecCtrl, short[] frame, int frameOff,
+                                   LpcnetPlc lpcnet) {
         var psPLC = psDec.sPLC;
         var sLTP = psDec.scratchPlcSLTP;
         var sLTP_Q14 = psDec.scratchPlcSLTP_Q14;
         var A_Q12 = psDec.scratchPlcA_Q12;
-        var prevGain_Q10 = new int[]{psPLC.prevGain_Q16[0] >> 6, psPLC.prevGain_Q16[1] >> 6};
+        var prevGain_Q10 = psDec.scratchPlcPrevGain_Q10;
+        prevGain_Q10[0] = psPLC.prevGain_Q16[0] >> 6;
+        prevGain_Q10[1] = psPLC.prevGain_Q16[1] >> 6;
         if (psDec.first_frame_after_reset != 0) {
             Arrays.fill(psPLC.prevLPC_Q12, (short) 0);
         }
         var energies = plcEnergy(psDec.scratchPlcExcBuf16, psDec.exc_Q14, prevGain_Q10, psDec.subfr_length,
-                psDec.nb_subfr);
+                psDec.nb_subfr, psDec.scratchPlcEnergies);
         var energy1 = SumSqrShift.energy(energies[0]);
         var shift1 = SumSqrShift.shift(energies[0]);
         var energy2 = SumSqrShift.energy(energies[1]);
@@ -326,6 +343,21 @@ public final class Plc {
             sLTP_Q14[base] = addSat32(sLTP_Q14[base], lshiftSat32(LPC_pred_Q10, 4));
             frame[frameOff + i] = (short) sat16(sat16(rshiftRound(smulww(sLTP_Q14[base], prevGain_Q10[1]), 8)));
         }
+        if (lpcnet != null && psDec.sPLC.fs_kHz == 16) {
+            if (psDec.sPLC.enable_deep_plc || lpcnet.fec_fill_pos != 0) {
+                for (var k = 0; k < psDec.nb_subfr; k += 2) {
+                    lpcnet.conceal(frame, frameOff + k * psDec.subfr_length);
+                }
+                for (var i = 0; i < psDec.frame_length; i++) {
+                    sLTP_Q14[sLPC_Q14_ptr + MAX_LPC_ORDER + i] = (int) StrictMath.floor(
+                            .5 + frame[frameOff + i] * (float) (1 << 24) / prevGain_Q10[1]);
+                }
+            } else {
+                for (var k = 0; k < psDec.nb_subfr; k += 2) {
+                    lpcnet.update(frame, frameOff + k * psDec.subfr_length);
+                }
+            }
+        }
         System.arraycopy(sLTP_Q14, sLPC_Q14_ptr + psDec.frame_length, psDec.sLPC_Q14_buf, 0, MAX_LPC_ORDER);
         psPLC.rand_seed = rand_seed;
         psPLC.randScale_Q14 = rand_scale_Q14;
@@ -369,11 +401,13 @@ public final class Plc {
                     var gain_Q16 = sqrtApprox(frac_Q24) << 4;
                     var slope_Q16 = ((1 << 16) - gain_Q16) / length;
                     slope_Q16 = slope_Q16 << 2;
-                    for (var i = 0; i < length; i++) {
-                        frame[frameOff + i] = (short) smulwb(gain_Q16, frame[frameOff + i]);
-                        gain_Q16 += slope_Q16;
-                        if (gain_Q16 > 1 << 16) {
-                            break;
+                    if (!psDec.dnn || psDec.sPLC.fs_kHz != 16) {
+                        for (var i = 0; i < length; i++) {
+                            frame[frameOff + i] = (short) smulwb(gain_Q16, frame[frameOff + i]);
+                            gain_Q16 += slope_Q16;
+                            if (gain_Q16 > 1 << 16) {
+                                break;
+                            }
                         }
                     }
                 }

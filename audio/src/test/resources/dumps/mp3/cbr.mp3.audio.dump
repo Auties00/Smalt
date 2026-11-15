@@ -1,0 +1,39 @@
+# audio decode dump of mp3/cbr.mp3; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_AUDIO
+duration 2040000
+seekable true
+track 0 MP3 rate=48000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=5fdcad29
+1 frames=4096 crc16=b0a2416b
+2 frames=4096 crc16=e4963c09
+3 frames=4096 crc16=7771d321
+4 frames=4096 crc16=7489ab8e
+5 frames=4096 crc16=c06b7a5d
+6 frames=4096 crc16=827ebec5
+7 frames=4096 crc16=9102d84d
+8 frames=4096 crc16=97f67114
+9 frames=4096 crc16=c52fd2cf
+10 frames=4096 crc16=3bdca387
+11 frames=4096 crc16=d0ba6079
+12 frames=4096 crc16=e3311118
+13 frames=4096 crc16=a7b176f6
+14 frames=4096 crc16=2d89ef3c
+15 frames=4096 crc16=2f308407
+16 frames=4096 crc16=1eab4989
+17 frames=4096 crc16=0ec3d12e
+18 frames=4096 crc16=3435ff37
+19 frames=4096 crc16=4ba46041
+20 frames=4096 crc16=7c065496
+21 frames=4096 crc16=95ae2be1
+22 frames=4096 crc16=c966817d
+23 frames=3712 crc16=791437b2
+seek 0: @sample 0
+seek 680000: @sample 32640
+seek 1360000: @sample 65280
+seek 2040000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_AUDIO
+  duration 2040000
+  seekable false
+  track 0 MP3 rate=48000 layout=[FRONT_CENTER]

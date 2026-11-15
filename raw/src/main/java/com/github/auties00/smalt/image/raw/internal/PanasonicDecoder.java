@@ -11,10 +11,10 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Decodes the sensor data of Panasonic RW2 files, raw format versions 4, 5 and 6 (tag
+ * Decodes the sensor data of Panasonic RW2 files, raw format versions 4 to 8 (tag
  * {@code 0x002D}).
  *
- * <p>The three versions pack photosites row by row into 16-byte blocks, read as 128-bit
+ * <p>Versions 4 to 7 pack photosites row by row into 16-byte blocks, read as 128-bit
  * little-endian integers:
  * <ul>
  * <li>Version 4 (12-bit data) stores 14 photosites per block, read from the most significant bit
@@ -36,10 +36,15 @@ import java.util.List;
  * gives the absolute value {@code f << 4}; otherwise, with the shift {@code c} and {@code p} the
  * value of the photosite two to the left, the value is {@code f << c} when {@code p} is below
  * {@code 512 << c} and {@code p + ((f - 512) << c)} otherwise. Every value is then lowered by 15,
- * so the black level of tag {@code 0x001C} applies unchanged.</li>
+ * so the black level of tag {@code 0x001C} applies unchanged. Its 12-bit data (tag {@code 0x000A}
+ * of 12) stores fourteen photosites per block in the same order: two 12-bit values, then four
+ * groups of a 2-bit code and three 8-bit fields, decoded by the rules of version 4 (without its
+ * missing-photosite markers), and lowered by 15 too.</li>
+ * <li>Version 7 (14-bit data) stores nine 14-bit photosites per block as version 5 does, the
+ * first in the least significant bits, with no chunk reordering.</li>
  * </ul>
  *
- * <p>Version 8 (12, 14 or 16-bit data, the 2022 and later models) codes vertical tiles, each a
+ * <p>Version 8 (12, 14 or 16-bit data, the 2022 and later models) codes tiles, each a
  * Huffman-coded stream ({@link #version8}).
  *
  * <p>Photosites the camera stores as zero are defective: each is replaced by the mean, rounded to
@@ -48,9 +53,11 @@ import java.util.List;
  *
  * @implNote This implementation's layouts were checked against Adobe DNG Converter, run as a black
  * box on CC0 sample files, whose stored values it reproduces exactly; the treatment of
- * zero photosites is the converter's. Version 5's packing, version 6's layout, its
- * absolute-value rule and its offset of 15, and version 8's bit order, unit order and
- * prediction were worked out from the converter's values. Version 4's chunk layout, block
+ * zero photosites is the converter's. Version 5's packing, version 6's layouts, its
+ * absolute-value rule and its offset of 15, version 7's packing, and version 8's bit order, unit
+ * order and prediction were worked out from the converter's values; the version 8 parameters no
+ * sample file sets (the ceiling, the origins and the shifts) were worked out from the values the
+ * converter stores for copies of a CC0 file with those tags changed. Version 4's chunk layout, block
  * layout, code rules and missing-photosite markers were derived the same way, without
  * reference to any other decoder (the raw module's test-scope
  * {@code PanasonicDerivation} records and re-runs the derivation, chunk layout included). The
@@ -89,21 +96,21 @@ final class PanasonicDecoder {
      * @return whether {@link #decode} reads it
      */
     static boolean supports(int version) {
-        return version >= 4 && version <= 6;
+        return version >= 4 && version <= 7;
     }
 
     /**
-     * Returns how many photosites of a row the stored rows hold for a version: the photosites of
-     * the version's groups.
+     * Returns how many photosites of a row each 16-byte block holds for a version.
      *
-     * @param version the raw format version
-     * @return the photosites of a group
+     * @param version the raw format version, 4 to 7
+     * @param bits the bits per sample of tag {@code 0x000A}
+     * @return the photosites of a block
      */
-    static int group(int version) {
+    static int group(int version, int bits) {
         return switch (version) {
             case 4 -> 14;
-            case 5 -> 9;
-            default -> 11;
+            case 5, 7 -> 9;
+            default -> bits == 12 ? 14 : 11;
         };
     }
 
@@ -111,17 +118,20 @@ final class PanasonicDecoder {
      * Decodes the sensor data into a plane and repairs its zero photosites.
      *
      * @param data the data, from the first byte of the sensor data to the end of the file
-     * @param version the raw format version, 4, 5 or 6
+     * @param version the raw format version, 4 to 7
+     * @param bits the bits per sample of tag {@code 0x000A}
      * @param plane the plane to fill
      * @param cfa the color filter array, to find the neighbors of zero photosites
      */
-    static void decode(byte[] data, int version, SensorPlane plane, CfaPattern cfa) {
+    static void decode(byte[] data, int version, int bits, SensorPlane plane, CfaPattern cfa) {
         if (version == 4) {
             version4(reorder(data), plane);
         } else if (version == 5) {
             version5(reorder(data), plane);
+        } else if (version == 7) {
+            version5(data, plane);
         } else {
-            version6(reverseBlocks(data), plane);
+            version6(reverseBlocks(data), bits == 12, plane);
         }
         repairZeros(plane, cfa, version == 6 ? PEDESTAL : 0);
     }
@@ -266,9 +276,9 @@ final class PanasonicDecoder {
     }
 
     /**
-     * Decodes version 5 data.
+     * Decodes version 5 and 7 data.
      *
-     * @param stream the stream, chunks reordered
+     * @param stream the stream, chunks reordered for version 5
      * @param plane the plane to fill
      */
     private static void version5(byte[] stream, SensorPlane plane) {
@@ -286,39 +296,49 @@ final class PanasonicDecoder {
      * Decodes version 6 data.
      *
      * @param stream the stream, blocks reversed
+     * @param twelve whether the data is 12-bit, fourteen photosites per block
      * @param plane the plane to fill
      */
-    private static void version6(byte[] stream, SensorPlane plane) {
-        var blocks = plane.width / 11;
+    private static void version6(byte[] stream, boolean twelve, SensorPlane plane) {
+        var perBlock = twelve ? 14 : 11;
+        var valueBits = twelve ? 12 : 14;
+        var fieldBits = twelve ? 8 : 10;
+        var groups = twelve ? 4 : 3;
+        var middle = 1 << (fieldBits - 1);
+        var blocks = plane.width / perBlock;
         var bits = new MsbBits(stream, 0, stream.length);
         var out = plane.integers;
         var previous = new int[2];
         for (var row = 0; row < plane.height; row++) {
             for (var block = 0; block < blocks; block++) {
-                var at = row * plane.width + block * 11;
-                previous[0] = bits.read(14);
-                previous[1] = bits.read(14);
+                var at = row * plane.width + block * perBlock;
+                previous[0] = bits.read(valueBits);
+                previous[1] = bits.read(valueBits);
                 out[at] = (short) previous[0];
                 out[at + 1] = (short) previous[1];
-                for (var group = 0; group < 3; group++) {
+                for (var group = 0; group < groups; group++) {
                     var code = bits.read(2);
                     for (var k = 0; k < 3; k++) {
                         var index = 2 + group * 3 + k;
-                        var field = bits.read(10);
+                        var field = bits.read(fieldBits);
                         var prior = previous[index & 1];
                         int value;
-                        if (code == 3) {
+                        if (twelve) {
+                            value = step(field, code, prior);
+                        } else if (code == 3) {
                             value = field << 4;
-                        } else if (prior < 512 << code) {
+                        } else if (prior < middle << code) {
                             value = field << code;
                         } else {
-                            value = prior + ((field - 512) << code);
+                            value = prior + ((field - middle) << code);
                         }
                         previous[index & 1] = value;
                         out[at + index] = (short) Math.clamp(value, 0, 0xFFFF);
                     }
                 }
-                bits.read(4);
+                if (!twelve) {
+                    bits.read(4);
+                }
             }
         }
     }
@@ -328,31 +348,50 @@ final class PanasonicDecoder {
      *
      * @param offset the absolute offset of the tile's stream
      * @param left the column of the tile's first photosite
+     * @param top the row of the tile's first photosite
      * @param width the tile width
      * @param height the tile height
      */
-    record Tile(long offset, int left, int width, int height) {
+    record Tile(long offset, int left, int top, int width, int height) {
     }
 
     /**
-     * Decodes version 8 data: tiles side by side, each its own stream.
+     * Decodes version 8 data: tiles side by side, or in a grid of rows of tiles, each its own stream.
      *
      * <p>Each byte of a stream is read from its least significant bit up, and each code or field
      * is assembled most significant bit first. The tile is coded two rows at a time, in units of
      * 2x2 photosites from left to right, each unit's photosites in the order upper-left,
      * lower-left, upper-right, lower-right. A photosite is a Huffman code of the table of tag
-     * {@code 0x0040} giving the bit length {@code c} of its difference, then {@code c} bits
-     * extended as in a JPEG DC table; the difference adds to the prediction, the photosite two
-     * columns to the left in the tile, or for the first unit of a row pair the photosite two rows
-     * above, and zero for the first unit of the tile.
+     * {@code 0x0040} giving the bit length {@code c} of its difference, then the difference's
+     * stored bits. With {@code s} the shift of the code ({@code 0x0041}), {@code max(c - s, 0)}
+     * bits are stored and {@code v} is them shifted left by {@code s}. The difference is negative
+     * when {@code c > 0} and the next bit of the stream is 0 (the first stored bit, or with no
+     * stored bit the bit after the code, which is not consumed): {@code v - (1 << c) + h}, and
+     * otherwise {@code v + h'}, where {@code h'} is {@code 1 << (s - 1)} for a shift and 0
+     * without, and {@code h} is {@code h'} or 1 without a shift (without shifts, the extension of
+     * a JPEG DC table). The difference adds to the prediction, the photosite two columns to the left in the
+     * tile, or for the first unit of a row pair the photosite two rows above, and for the first
+     * unit of the tile the origin of the photosite's cell; the sum is clamped to the range 0 to the
+     * ceiling before it predicts others.
+     *
+     * {@snippet :
+     * negative = c > 0 && peek(1) == 0
+     * v = read(max(c - s, 0)) << s
+     * d = negative ? v - (1 << c) + (s > 0 ? 1 << (s - 1) : 1)
+     *              : v + (s > 0 ? 1 << (s - 1) : 0)
+     * }
      *
      * @param source the raw file
-     * @param tiles the tiles, left to right
+     * @param tiles the tiles, in any order, each its own stream
      * @param lookup the Huffman table, from {@link #prefixTable}
+     * @param shifts the shift of each Huffman value, from 0 to 16, 17 entries
+     * @param origins the prediction of the first unit of a tile for the photosites of the 2x2
+     *                cells, row by row
+     * @param ceiling the largest value a photosite takes
      * @param plane the plane to fill
      * @param limits the resource bounds
      */
-    static void version8(MediaSource source, List<Tile> tiles, int[] lookup,
+    static void version8(MediaSource source, List<Tile> tiles, int[] lookup, int[] shifts, int[] origins, int ceiling,
                          SensorPlane plane, MediaLimits limits) {
         var out = plane.integers;
         var width = plane.width;
@@ -378,12 +417,17 @@ final class PanasonicDecoder {
                         var entry = lookup[bits.peek(16)];
                         bits.skip(entry & 0xFF);
                         var size = entry >>> 8;
-                        var difference = bits.read(size);
-                        if (size > 0 && difference < 1 << (size - 1)) {
-                            difference -= (1 << size) - 1;
+                        var shift = shifts[size];
+                        var negative = size > 0 && bits.peek(1) == 0;
+                        var difference = bits.read(Math.max(size - shift, 0)) << shift;
+                        var half = shift > 0 ? 1 << (shift - 1) : 0;
+                        if (size > 0 && negative) {
+                            difference -= (1 << size) - Math.max(half, 1);
+                        } else {
+                            difference += half;
                         }
                         var x = tile.left() + column + (k >> 1);
-                        var y = row + (k & 1);
+                        var y = tile.top() + row + (k & 1);
                         if (x >= width || y >= plane.height) {
                             continue;
                         }
@@ -393,9 +437,9 @@ final class PanasonicDecoder {
                         } else if (row >= 2) {
                             prediction = out[(y - 2) * width + x] & 0xFFFF;
                         } else {
-                            prediction = 0;
+                            prediction = origins[(k & 1) * 2 + (k >> 1)];
                         }
-                        out[y * width + x] = (short) Math.clamp(prediction + difference, 0, 0xFFFF);
+                        out[y * width + x] = (short) Math.clamp(prediction + difference, 0, ceiling);
                     }
                 }
             }
@@ -440,6 +484,27 @@ final class PanasonicDecoder {
             throw new MediaException.Malformed("incomplete Huffman code");
         }
         return lookup;
+    }
+
+    /**
+     * Brings the values of uncompressed data down by a shift (the 12-bit photosites the oldest
+     * files store in the high bits of 16-bit words) and repairs its zero photosites.
+     *
+     * @param plane the read plane, modified in place
+     * @param cfa the color filter array
+     * @param shift the right shift of every value
+     * @param zeros whether zero photosites are defects to repair
+     */
+    static void repair(SensorPlane plane, CfaPattern cfa, int shift, boolean zeros) {
+        if (shift != 0) {
+            var samples = plane.integers;
+            for (var index = 0; index < samples.length; index++) {
+                samples[index] = (short) ((samples[index] & 0xFFFF) >>> shift);
+            }
+        }
+        if (zeros) {
+            repairZeros(plane, cfa, 0);
+        }
     }
 
     /**

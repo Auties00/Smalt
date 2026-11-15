@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-fujifilm-finepix-s5000-4-3.raf; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=2120, height=2816, hasAlpha=false, animated=false, frameCount=1, orientation=TRANSPOSE]
+decode
+picture 2120x2816 rgba8 alpha=false crc=84ca60ef
+  format=RAW orientation=TRANSPOSE source=2120x2816
+  icc=520:86132914 exif=782:2aeb2799 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 2120x1408 channels=1 cfa=RGBG/BGRG neutral=[0.49079754601226994, 1.0, 0.64] crc=79447546

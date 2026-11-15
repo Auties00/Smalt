@@ -154,7 +154,7 @@ public final class LabTables {
         var values = new float[RANGE + 1];
         var gamma = 1.0 / 2.4F;
         for (var i = 0; i <= RANGE; i++) {
-            values[i] = WHITE_VALUE * (float) Math.pow((double) i / RANGE, gamma);
+            values[i] = WHITE_VALUE * (float) StrictMath.pow((double) i / RANGE, gamma);
         }
         return values;
     }

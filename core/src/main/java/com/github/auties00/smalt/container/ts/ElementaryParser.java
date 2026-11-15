@@ -89,10 +89,44 @@ abstract class ElementaryParser {
     }
 
     /**
-     * {@return the PID of the stream, which is also the track identifier}
+     * {@return the identifier of the track, which also keys the stream on the timeline}
      */
-    final int pid() {
-        return entry.pid();
+    final int trackId() {
+        return entry.trackId();
+    }
+
+    /**
+     * Returns whether the stream is carried in sections rather than PES packets.
+     *
+     * @return {@code true} for a section-carried stream, which receives {@link #section} calls
+     */
+    boolean sectionCarried() {
+        return false;
+    }
+
+    /**
+     * Parses one complete section of a section-carried stream.
+     *
+     * <p>The default implementation ignores the section.
+     *
+     * @param section the section, its {@code CRC_32} verified
+     * @param fileOffset the offset of the transport packet in which the section started
+     * @param clock the timeline
+     * @param sink receives the packets completed by the section
+     */
+    void section(byte[] section, long fileOffset, TsClock clock, UnitSink sink) {
+    }
+
+    /**
+     * Lets a section-carried parser release what it held back until the timeline had a time, after a
+     * transport packet of a PES stream was processed.
+     *
+     * <p>The default implementation does nothing.
+     *
+     * @param clock the timeline
+     * @param sink receives the released packets
+     */
+    void tick(TsClock clock, UnitSink sink) {
     }
 
     /**

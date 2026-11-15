@@ -29,9 +29,11 @@ public final class StreamInspector {
      * @param locations   the transient pre-noise location of each channel, -1 without data
      * @param lengths     the transient pre-noise processing length of each channel
      * @param shortBlocks the number of channel blocks with short transforms
+     * @param enhancedCoupling the number of blocks that use enhanced coupling
+     * @param substreamId the substream identification
      */
     public record Frame(int streamType, int channelMap, int acmod, int blocks, int spxBegin, int spxEnd, int hybrid,
-                        int[] locations, int[] lengths, int shortBlocks) {
+                        int[] locations, int[] lengths, int shortBlocks, int enhancedCoupling, int substreamId) {
     }
 
     private static Object field(Object owner, String name) throws ReflectiveOperationException {
@@ -72,15 +74,18 @@ public final class StreamInspector {
                 var locations = ((int[]) field(decoder, "transientLocation")).clone();
                 var lengths = ((int[]) field(decoder, "transientLength")).clone();
                 var shortBlocks = 0;
+                var enhancedCoupling = 0;
                 var states = (BlockState[]) field(decoder, "blocks");
                 for (var b = 0; b < parsed.blocks; b++) {
                     for (var ch = 0; ch < parsed.channels; ch++) {
                         shortBlocks += states[b].shortBlocks[ch] ? 1 : 0;
                     }
+                    enhancedCoupling += states[b].enhancedCoupling ? 1 : 0;
                 }
                 frames.add(new Frame(parsed.streamType, parsed.channelMap, parsed.acmod, parsed.blocks,
                         spx ? 25 + 12 * (int) field(decoder, "spxBegin") : -1,
-                        spx ? 25 + 12 * (int) field(decoder, "spxEnd") : -1, hybrid, locations, lengths, shortBlocks));
+                        spx ? 25 + 12 * (int) field(decoder, "spxEnd") : -1, hybrid, locations, lengths, shortBlocks,
+                        enhancedCoupling, parsed.substreamId));
                 position += header.frameBytes;
             }
         } catch (ReflectiveOperationException exception) {

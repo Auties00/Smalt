@@ -1,0 +1,25 @@
+# demux dump of wav/atrac9.at9; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 241667
+seekable true
+track 0 AUDIO ATRAC9 timebase=1/24000 duration=5800 config=4:ec3c281a
+  audio rate=24000 bits=0 skip=128 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 12
+0 t0 pts=0 dts=0 dur=512 flags=KEY size=640 crc=45a8f111
+1 t0 pts=512 dts=512 dur=512 flags=KEY size=640 crc=3795b4a2
+2 t0 pts=1024 dts=1024 dur=512 flags=KEY size=640 crc=36608fdf
+3 t0 pts=1536 dts=1536 dur=512 flags=KEY size=640 crc=eb6b97c5
+4 t0 pts=2048 dts=2048 dur=512 flags=KEY size=640 crc=469dfef3
+5 t0 pts=2560 dts=2560 dur=512 flags=KEY size=640 crc=43287e78
+6 t0 pts=3072 dts=3072 dur=512 flags=KEY size=640 crc=d5cbad40
+7 t0 pts=3584 dts=3584 dur=512 flags=KEY size=640 crc=e1cd3834
+8 t0 pts=4096 dts=4096 dur=512 flags=KEY size=640 crc=f6b9ae02
+9 t0 pts=4608 dts=4608 dur=512 flags=KEY size=640 crc=1812e401
+10 t0 pts=5120 dts=5120 dur=512 flags=KEY size=640 crc=79631e18
+11 t0 pts=5632 dts=5632 dur=512 flags=KEY size=640 crc=7b1e805f
+seek 0: t0@0
+seek 80555: t0@3
+seek 161111: t0@7
+seek 256000: end
+seek 241667: t0@11
+seek -1000000: t0@0

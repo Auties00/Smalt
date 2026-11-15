@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.ops;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.IntVector;
@@ -10,9 +11,11 @@ import jdk.incubator.vector.VectorSpecies;
 /**
  * Implements {@link WarpKernel} with the Vector API; the output equals {@link ScalarWarpKernel} sample for sample.
  *
- * @implNote This implementation follows the kernel rules of {@link com.github.auties00.smalt.internal.simd.Simd}; it
- * gives each lane one output pixel, gathers its taps from the packed source and keeps the sums in arrays between calls,
- * so the taps of a pixel are spread over calls of small kernels.
+ * @implNote This implementation follows the kernel rules of {@link Simd}; it gives each lane one output pixel, loads
+ * its taps from the arrays the caller gathered and keeps the sums in arrays between calls, so the taps of a pixel are
+ * spread over calls of small kernels. It runs no Vector API gather: C2 keeps a gather's index vector boxed for the
+ * bounds check's exception path once it stops pruning untaken branches in a method, which it does when the uncommon
+ * traps recorded for the method and for everything it inlines pass a limit, as they do in a JVM running many kernels.
  */
 final class VectorWarpKernel implements WarpKernel {
     /**
@@ -111,7 +114,7 @@ final class VectorWarpKernel implements WarpKernel {
     }
 
     @Override
-    public void accumulate2(int[] src, int offset, int[] base, float[] w0, float[] w1, float[] wy, float[] red,
+    public void accumulate2(int[] taps0, int[] taps1, float[] w0, float[] w1, float[] wy, float[] red,
                             float[] green, float[] blue, float[] alpha, int count) {
         var i = 0;
         for (; i + L <= count; i += L) {
@@ -120,7 +123,7 @@ final class VectorWarpKernel implements WarpKernel {
             var g = FLOAT_VECTOR.cast(FloatVector.fromArray(F, green, i));
             var b = FLOAT_VECTOR.cast(FloatVector.fromArray(F, blue, i));
             var s = FLOAT_VECTOR.cast(FloatVector.fromArray(F, alpha, i));
-            var p = INT_VECTOR.cast(IntVector.fromArray(I, src, offset, base, i));
+            var p = INT_VECTOR.cast(IntVector.fromArray(I, taps0, i));
             var a = FLOAT_VECTOR.cast(FloatVector.fromArray(F, w0, i)).lanewise(VectorOperators.MUL, row)
                     .lanewise(VectorOperators.MUL, FLOAT_VECTOR.cast(INT_VECTOR.cast(p).lanewise(VectorOperators.LSHR, 24)
                             .convertShape(VectorOperators.I2F, F, 0)));
@@ -131,7 +134,7 @@ final class VectorWarpKernel implements WarpKernel {
             b = b.lanewise(VectorOperators.ADD, a.lanewise(VectorOperators.MUL, FLOAT_VECTOR.cast(INT_VECTOR.cast(p)
                     .lanewise(VectorOperators.LSHR, 16).lanewise(VectorOperators.AND, LOW_BYTE).convertShape(VectorOperators.I2F, F, 0))));
             s = s.lanewise(VectorOperators.ADD, a);
-            var q = INT_VECTOR.cast(IntVector.fromArray(I, src, offset + 1, base, i));
+            var q = INT_VECTOR.cast(IntVector.fromArray(I, taps1, i));
             var c = FLOAT_VECTOR.cast(FloatVector.fromArray(F, w1, i)).lanewise(VectorOperators.MUL, row)
                     .lanewise(VectorOperators.MUL, FLOAT_VECTOR.cast(INT_VECTOR.cast(q).lanewise(VectorOperators.LSHR, 24)
                             .convertShape(VectorOperators.I2F, F, 0)));
@@ -147,14 +150,15 @@ final class VectorWarpKernel implements WarpKernel {
             FLOAT_VECTOR.cast(b).intoArray(blue, i);
             FLOAT_VECTOR.cast(s).intoArray(alpha, i);
         }
-        scalar.accumulate2Range(src, offset, base, w0, w1, wy, red, green, blue, alpha, i, count);
+        scalar.accumulate2Range(taps0, taps1, w0, w1, wy, red, green, blue, alpha, i, count);
     }
 
     @Override
-    public void accumulate4(int[] src, int offset, int[] base, float[] w0, float[] w1, float[] w2, float[] w3,
-                            float[] wy, float[] red, float[] green, float[] blue, float[] alpha, int count) {
-        accumulate2(src, offset, base, w0, w1, wy, red, green, blue, alpha, count);
-        accumulate2(src, offset + 2, base, w2, w3, wy, red, green, blue, alpha, count);
+    public void accumulate4(int[] taps0, int[] taps1, int[] taps2, int[] taps3, float[] w0, float[] w1, float[] w2,
+                            float[] w3, float[] wy, float[] red, float[] green, float[] blue, float[] alpha,
+                            int count) {
+        accumulate2(taps0, taps1, w0, w1, wy, red, green, blue, alpha, count);
+        accumulate2(taps2, taps3, w2, w3, wy, red, green, blue, alpha, count);
     }
 
     @Override

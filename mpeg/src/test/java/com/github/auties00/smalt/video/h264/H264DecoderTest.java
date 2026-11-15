@@ -356,12 +356,49 @@ class H264DecoderTest {
             assertThrows(MediaException.Malformed.class, () -> H264StreamInfo.probe(new byte[0]));
         }
 
+        @ParameterizedTest(name = "{0} {1}")
+        @CsvSource({"yuv444p, '', false", "yuv444p, -qp:0, true", "yuv420p, -qp:0, true", "yuv422p10le, -qp:0, true"})
+        @DisplayName("reports 4:4:4 and lossless streams as supported by the decoder")
+        void chroma444AndLossless(String pixelFormat, String option, boolean bypass) {
+            var options = option.isEmpty() ? List.<String>of() : List.of(option.split(":", 2));
+            var info = H264StreamInfo.probe(Fixtures.read(encode("64x64", 1, pixelFormat, options)));
+            assertEquals(pixelFormat.startsWith("yuv444") ? ChromaFormat.YUV444 : pixelFormat.startsWith("yuv422")
+                    ? ChromaFormat.YUV422 : ChromaFormat.YUV420, info.chromaFormat());
+            assertEquals(bypass, info.transformBypass());
+            assertFalse(info.separateColorPlanes());
+            assertTrue(info.decoderSupported());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"yuv422p, 122, 8", "yuv422p10le, 122, 10"})
+        @DisplayName("reports 4:2:2 streams as supported by the decoder")
+        void chroma422(String pixelFormat, int profile, int depth) {
+            var info = H264StreamInfo.probe(Fixtures.read(encode("64x64", 1, pixelFormat, List.of())));
+            assertEquals(ChromaFormat.YUV422, info.chromaFormat());
+            assertEquals(profile, info.profileIdc());
+            assertEquals(depth, info.bitDepthLuma());
+            assertEquals(depth, info.bitDepthChroma());
+            assertTrue(info.decoderSupported());
+        }
+
         @Test
-        @DisplayName("reports 4:4:4 streams as unsupported by the decoder")
-        void unsupported() {
-            var info = H264StreamInfo.probe(Fixtures.read(encode("64x64", 1, "yuv444p", List.of())));
-            assertEquals(ChromaFormat.YUV444, info.chromaFormat());
-            assertFalse(info.decoderSupported());
+        @DisplayName("reports 10-bit streams as supported by the decoder")
+        void highBitDepth() {
+            var info = H264StreamInfo.probe(Fixtures.read(encode("64x64", 1, "yuv420p10le", List.of())));
+            assertEquals(110, info.profileIdc());
+            assertEquals(10, info.bitDepthLuma());
+            assertEquals(10, info.bitDepthChroma());
+            assertTrue(info.decoderSupported());
+        }
+
+        @Test
+        @DisplayName("reports interlaced streams as supported by the decoder")
+        void interlaced() {
+            var info = H264StreamInfo.probe(Fixtures.read(encode("64x64", 1, "yuv420p",
+                    List.of("-x264-params", "interlaced=1:tff=1"))));
+            assertFalse(info.frameMbsOnly());
+            assertTrue(info.mbAdaptiveFrameField());
+            assertTrue(info.decoderSupported());
         }
 
         /** A 32x32 SPS with picture order count type 2 and no VUI, for any non-High profile. */
@@ -372,9 +409,9 @@ class H264DecoderTest {
         }
 
         @ParameterizedTest(name = "profile {0}, constraint flags {1}: {2}")
-        @CsvSource({"66, 0x00, true", "77, 0x00, true", "88, 0x00, false", "88, 0x10, false", "88, 0x80, true",
+        @CsvSource({"66, 0x00, true", "77, 0x00, true", "88, 0x00, true", "88, 0x10, true", "88, 0x80, true",
                 "88, 0x40, true", "88, 0xC0, true"})
-        @DisplayName("reports Extended profile streams as supported only when they meet Baseline or Main")
+        @DisplayName("reports Baseline, Main and Extended profile streams as supported")
         void extended(int profile, String flags, boolean supported) {
             var info = H264StreamInfo.probe(sps(profile, Integer.decode(flags), 30));
             assertEquals(supported, info.decoderSupported());
@@ -395,22 +432,24 @@ class H264DecoderTest {
     @Nested
     @DisplayName("unsupported and oversized streams")
     class Rejections {
-        @ParameterizedTest(name = "{0}")
-        @CsvSource({
-                "yuv444p, '', h264 4:4:4",
-                "yuv422p, '', h264 4:2:2",
-                "yuv420p10le, '', h264 high bit depth",
-                "yuv420p, -qp:0, h264 lossless",
-                "yuv420p, -flags:+ildct+ilme, h264 interlaced",
-                "yuv420p, -x264-params:interlaced=1:bff=1, h264 interlaced"
-        })
-        @DisplayName("raises Unsupported with the documented feature name")
-        void unsupported(String pixelFormat, String option, String feature) {
-            var options = option.isEmpty() ? List.<String>of() : List.of(option.split(":", 2));
-            var stream = encode("64x64", 4, pixelFormat, options);
-            var failure = assertThrows(MediaException.Unsupported.class,
-                    () -> H264TestStreams.decode(ANNEX_B, accessUnits(stream), 1));
-            assertEquals(feature, failure.format());
+        /** A 32x32 Extended profile SPS with picture order count type 2 and no VUI. */
+        private static byte[] extendedSps() {
+            var rbsp = new H264BitWriter().bits(88, 8).bits(0, 8).bits(30, 8).ue(0).ue(0).ue(2).ue(1).bit(0).ue(1)
+                    .ue(1).bit(1).bit(1).bit(0).bit(0).trailing();
+            return H264BitWriter.nal(3, 7, rbsp);
+        }
+
+        @Test
+        @DisplayName("raises Unsupported naming CABAC data partitioning for a slice data partition of a CABAC picture "
+                + "parameter set")
+        void cabacDataPartitioning() {
+            var pps = H264BitWriter.nal(3, 8, new H264BitWriter().ue(0).ue(0).bit(1).bit(0).ue(0).ue(0).ue(0).bit(0)
+                    .bits(0, 2).se(0).se(0).se(0).bit(1).bit(0).bit(0).trailing());
+            var partition = H264BitWriter.nal(2, 2, new H264BitWriter().ue(0).ue(2).ue(0).ue(0).bits(0, 7).trailing());
+            var stream = H264TestStreams.annexB(List.of(extendedSps(), pps, partition));
+            var failure = assertThrows(MediaException.Unsupported.class, () -> H264TestStreams.decode(ANNEX_B,
+                    List.of(new Packet(1, stream, 0, Packet.NO_TIMESTAMP, 0, true)), 1));
+            assertEquals("h264 cabac data partitioning", failure.format());
         }
 
         @Test

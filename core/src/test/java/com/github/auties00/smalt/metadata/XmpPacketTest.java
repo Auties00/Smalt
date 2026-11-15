@@ -183,6 +183,33 @@ class XmpPacketTest {
         }
 
         @Test
+        @DisplayName("drops control characters, so a namespace holding one is the one written back")
+        void controlCharacters() {
+            var xml = "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+                    + "<rdf:Description xmlns:dc=\"http://purl.org\u0001\u0000/dc/elements/1.1/\">"
+                    + "<dc:title rdf:parseType=\"Resource\"><dc:x>a\u0002b</dc:x></dc:title>"
+                    + "<dc:source><![CDATA[c\u0003d]]></dc:source><dc:format>e\tf</dc:format>"
+                    + "</rdf:Description></rdf:RDF>";
+            var packet = XmpPacket.parse(xml);
+            assertInstanceOf(XmpValue.Struct.class, packet.get(XmpPacket.DC, "title").orElseThrow());
+            assertEquals("cd", packet.text(XmpPacket.DC, "source").orElseThrow());
+            assertEquals("e\tf", packet.text(XmpPacket.DC, "format").orElseThrow());
+            var edited = XmpPacket.parse(packet.with(XmpPacket.DC, "title", "fuzz").toBytes());
+            assertEquals("fuzz", edited.text(XmpPacket.DC, "title").orElseThrow());
+            assertEquals(packet, XmpPacket.parse(packet.toXml()));
+        }
+
+        @ParameterizedTest(name = "[{index}] {0}")
+        @ValueSource(strings = {"&#1;", "&#x1F;", "&#0;", "&#xD800;", "&#xFFFE;", "&#xFFFF;"})
+        @DisplayName("rejects character references to characters XML cannot hold")
+        void illegalReferences(String reference) {
+            var xml = "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+                    + "<rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:source>" + reference
+                    + "</dc:source></rdf:Description></rdf:RDF>";
+            assertThrows(MediaException.Malformed.class, () -> XmpPacket.parse(xml));
+        }
+
+        @Test
         @DisplayName("rejects nesting deeper than the bound instead of overflowing the stack")
         void deep() {
             var xml = "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">" + "<a>".repeat(100_000);

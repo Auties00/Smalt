@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-sony-dslr-a450-12bit-12bit-compressed-3-2.arw; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=4592, height=3056, hasAlpha=false, animated=false, frameCount=1, orientation=ROTATE_90]
+decode
+picture 4592x3056 rgba8 alpha=false crc=8898bcd5
+  format=RAW orientation=ROTATE_90 source=4592x3056
+  icc=520:86132914 exif=772:44f2c00b xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 4592x3056 channels=1 cfa=RGGB neutral=[0.4082934609250399, 1.0, 0.6772486772486772] crc=71206ff8

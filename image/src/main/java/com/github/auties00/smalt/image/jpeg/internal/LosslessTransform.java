@@ -1,9 +1,14 @@
+/* Ports libjpeg-turbo (transupp.c). Copyright (C) 1997-2019, Thomas G. Lane, Guido Vollbeding; Copyright (C)
+   2010-2024, D. R. Commander; IJG License. Modified for Smalt. */
 package com.github.auties00.smalt.image.jpeg.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.jpeg.JpegFill;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+
+import java.util.Arrays;
 
 /**
  * Rotates, flips and crops the DCT coefficients of a JPEG frame without decoding them.
@@ -13,27 +18,34 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
  * move as the image does, MCU by MCU, so only an image whose size is a multiple of the MCU size
  * transforms perfectly: the partial MCUs at the right and bottom edges cannot move to the other
  * edge, and are left in place (transposed but not mirrored) unless trimmed away. Cropping keeps a
- * region whose top-left corner is moved up and left to the nearest MCU boundary.
+ * region whose top-left corner is moved up and left to the nearest MCU boundary; without a transform, a
+ * crop region larger than the image extends it, filling the added blocks with gray, flat DC or
+ * reflections.
  *
  * <p>Construct a plan with the source geometry and the requested operation, which fixes the output
  * size, then call {@link #execute} with the source coefficients.
  *
  * @implNote This implementation is a port of libjpeg-turbo's transupp.c
  * ({@code jtransform_request_workspace}, {@code jtransform_execute_transform} and the
- * {@code do_*} routines it calls, for the rotations, flips, transpose, transverse and plain
- * cropping), so its coefficients match {@code jpegtran}'s exactly, including the untouched edge
- * blocks of an imperfect transform.
+ * {@code do_*} routines it calls, for the rotations, flips, transpose, transverse, plain cropping
+ * and crop extension), so its coefficients match {@code jpegtran}'s exactly, including the untouched
+ * edge blocks of an imperfect transform.
  */
 final class LosslessTransform {
     /**
+     * The largest width or height a JPEG frame header can record.
+     */
+    private static final int MAX_DIMENSION = 0xFFFF;
+
+    /**
      * Copies a block.
      */
-    private static final int COPY = 0;
+    static final int COPY = 0;
 
     /**
      * Mirrors a block horizontally: negates its odd columns.
      */
-    private static final int MIRROR_COLUMNS = 1;
+    static final int MIRROR_COLUMNS = 1;
 
     /**
      * Mirrors a block vertically: negates its odd rows.
@@ -138,6 +150,11 @@ final class LosslessTransform {
     private final int cropY;
 
     /**
+     * How a crop extension fills the blocks it adds.
+     */
+    private final JpegFill fill;
+
+    /**
      * Whether the output needs coefficient arrays separate from the source.
      */
     private final boolean workspace;
@@ -153,16 +170,24 @@ final class LosslessTransform {
      * @param components   the number of output components: all of the source's, or 1 to keep
      *                     only the first
      * @param crop         the crop region as {@code x, y, width, height} in output coordinates,
-     *                     or {@code null}
+     *                     or {@code null}; a width or height beyond the image's extends it, the
+     *                     offset then placing the image in the output
+     * @param exactWidth   whether a crop that keeps the image width yields exactly its width
+     * @param exactHeight  whether a crop that keeps the image height yields exactly its height
+     * @param fill         how a crop extension fills the blocks left and right of the image
      * @param perfect      whether to reject a transform that would leave edge blocks in place
      * @param trim         whether to drop the edge blocks that cannot be transformed
      * @throws MediaException.Unsupported if {@code perfect} is set and the transform is not
      *                                    perfect for this image
-     * @throws IllegalArgumentException   if the crop region is empty or lies outside the image
+     * @throws IllegalArgumentException   if the crop region is empty, lies outside the image, or
+     *                                    extends it under a transform, past the image or beyond
+     *                                    65535 pixels per side
      */
     LosslessTransform(Orientation transform, int sourceWidth, int sourceHeight, int[] samplingX, int[] samplingY,
-                      int components, int[] crop, boolean perfect, boolean trim) {
+                      int components, int[] crop, boolean exactWidth, boolean exactHeight, JpegFill fill,
+                      boolean perfect, boolean trim) {
         this.transform = transform;
+        this.fill = fill;
         this.sourceWidth = sourceWidth;
         this.sourceHeight = sourceHeight;
         this.components = components;
@@ -220,13 +245,26 @@ final class LosslessTransform {
             var y = crop[1];
             var width = crop[2];
             var height = crop[3];
-            if (x < 0 || y < 0 || width <= 0 || height <= 0 || x >= outputWidth || y >= outputHeight
-                    || width > outputWidth - x || height > outputHeight - y) {
+            var extendX = width > outputWidth;
+            var extendY = height > outputHeight;
+            if ((extendX || extendY) && transform != Orientation.NORMAL) {
+                throw new IllegalArgumentException("crop region " + width + "x" + height + "+" + x + "+" + y
+                        + " extends the " + outputWidth + "x" + outputHeight + " image, which " + transform
+                        + " cannot do");
+            }
+            if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+                throw new IllegalArgumentException("crop region " + width + "x" + height + "+" + x + "+" + y
+                        + " extends the image past the " + MAX_DIMENSION + " pixels per side of a JPEG frame");
+            }
+            var badX = extendX ? x >= width || x > width - outputWidth : x >= outputWidth || x > outputWidth - width;
+            var badY = extendY ? y >= height || y > height - outputHeight
+                    : y >= outputHeight || y > outputHeight - height;
+            if (x < 0 || y < 0 || width <= 0 || height <= 0 || badX || badY) {
                 throw new IllegalArgumentException("crop region " + width + "x" + height + "+" + x + "+" + y
                         + " does not fit the " + outputWidth + "x" + outputHeight + " image");
             }
-            outputWidth = width + x % mcuWidth;
-            outputHeight = height + y % mcuHeight;
+            outputWidth = exactWidth || extendX ? width : width + x % mcuWidth;
+            outputHeight = exactHeight || extendY ? height : height + y % mcuHeight;
             cropX = x / mcuWidth;
             cropY = y / mcuHeight;
         } else {
@@ -234,7 +272,7 @@ final class LosslessTransform {
             cropY = 0;
         }
         this.workspace = switch (transform) {
-            case NORMAL -> cropX != 0 || cropY != 0;
+            case NORMAL -> cropX != 0 || cropY != 0 || outputWidth > sourceWidth || outputHeight > sourceHeight;
             case FLIP_HORIZONTAL -> {
                 if (trim) {
                     trimRight(sourceWidth);
@@ -339,6 +377,44 @@ final class LosslessTransform {
     }
 
     /**
+     * Returns the width in pixels of one output iMCU, the unit of crop, wipe and drop offsets.
+     *
+     * @return 8 for a single output component, else 8 times the largest horizontal sampling factor
+     */
+    int mcuWidth() {
+        return mcuWidth;
+    }
+
+    /**
+     * Returns the height in pixels of one output iMCU.
+     *
+     * @return 8 for a single output component, else 8 times the largest vertical sampling factor
+     */
+    int mcuHeight() {
+        return mcuHeight;
+    }
+
+    /**
+     * Returns the horizontal sampling factor of an output component.
+     *
+     * @param component the output component index
+     * @return the factor, 1 when only one component is output
+     */
+    int samplingX(int component) {
+        return samplingX[component];
+    }
+
+    /**
+     * Returns the vertical sampling factor of an output component.
+     *
+     * @param component the output component index
+     * @return the factor, 1 when only one component is output
+     */
+    int samplingY(int component) {
+        return samplingY[component];
+    }
+
+    /**
      * Returns the number of block columns an output component covers.
      *
      * @param component the output component index
@@ -391,7 +467,13 @@ final class LosslessTransform {
             output[i] = new CoefficientPlane(mcusWide * samplingX[i], mcusHigh * samplingY[i]);
         }
         switch (transform) {
-            case NORMAL -> crop(source, output);
+            case NORMAL -> {
+                if (outputWidth > sourceWidth || outputHeight > sourceHeight) {
+                    extend(source, output, outputWidth > sourceWidth ? fill : JpegFill.GRAY);
+                } else {
+                    crop(source, output);
+                }
+            }
             case FLIP_HORIZONTAL -> flipHorizontal(source, output);
             case FLIP_VERTICAL -> flipVertical(source, output);
             case TRANSPOSE -> transpose(source, output);
@@ -425,6 +507,146 @@ final class LosslessTransform {
                 }
             }
         }
+    }
+
+    /**
+     * Places the image in a larger output, then fills the blocks left and right of it; the blocks
+     * above and below it, and the partial MCUs at the image's right and bottom edges along an
+     * extended dimension, stay zero.
+     *
+     * @implNote This implementation ports {@code do_crop_ext_zero}, {@code do_crop_ext_flat} and
+     * {@code do_crop_ext_reflect}; for an image less than one MCU wide, a reflection, which those
+     * loop on forever, leaves the added blocks zero, and a flat fill, which those read before the
+     * block row for, repeats the DC coefficient of the image's first block on both sides.
+     * @param source the source planes
+     * @param output the output planes, zeroed
+     * @param fill how the blocks left and right of the image are filled, {@link JpegFill#GRAY} when
+     * only the height is extended
+     */
+    private void extend(CoefficientPlane[] source, CoefficientPlane[] output, JpegFill fill) {
+        var mcuColumns = sourceWidth / mcuWidth;
+        var mcuRows = sourceHeight / mcuHeight;
+        var wider = outputWidth > sourceWidth;
+        var taller = outputHeight > sourceHeight;
+        for (var c = 0; c < components; c++) {
+            var h = samplingX[c];
+            var v = samplingY[c];
+            var imageColumns = mcuColumns * h;
+            var imageRows = mcuRows * v;
+            var cropColumns = cropX * h;
+            var cropRows = cropY * v;
+            var wide = blocksWide(c);
+            var high = blocksHigh(c);
+            var in = source[c];
+            var out = output[c];
+            for (var y = 0; y < high; y += v) {
+                int sourceRow;
+                if (taller) {
+                    if (y < cropRows || y >= cropRows + imageRows) {
+                        continue;
+                    }
+                    sourceRow = y - cropRows;
+                } else {
+                    sourceRow = y + cropRows;
+                }
+                for (var oy = 0; oy < v; oy++) {
+                    var row = y + oy;
+                    var from = sourceRow + oy;
+                    if (!wider) {
+                        for (var x = 0; x < wide; x++) {
+                            block(in, x + cropColumns, from, out, x, row, COPY);
+                        }
+                        continue;
+                    }
+                    for (var x = 0; x < imageColumns; x++) {
+                        block(in, x, from, out, x + cropColumns, row, COPY);
+                    }
+                    switch (fill) {
+                        case GRAY -> {
+                        }
+                        case FLAT -> {
+                            if (cropColumns > 0) {
+                                var dc = (short) in.dc(0, from);
+                                for (var x = 0; x < cropColumns; x++) {
+                                    setDc(out, x, row, dc);
+                                }
+                            }
+                            if (wide > cropColumns + imageColumns) {
+                                var dc = (short) in.dc(Math.max(imageColumns - 1, 0), from);
+                                for (var x = cropColumns + imageColumns; x < wide; x++) {
+                                    setDc(out, x, row, dc);
+                                }
+                            }
+                        }
+                        case REFLECT -> {
+                            if (imageColumns > 0) {
+                                reflectLeft(out, row, cropColumns, cropColumns, imageColumns);
+                                reflectRight(out, row, cropColumns + imageColumns, wide - cropColumns - imageColumns,
+                                        imageColumns);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Fills blocks leftward from an axis with repeated mirror images of the blocks right of it,
+     * reflecting the reflections when they run out.
+     *
+     * @param plane the plane, modified
+     * @param row the block row
+     * @param axis the first block column right of the filled run
+     * @param count the number of blocks to fill
+     * @param period the number of blocks each reflection copies, positive
+     */
+    static void reflectLeft(CoefficientPlane plane, int row, int axis, int count, int period) {
+        var target = axis;
+        while (count > 0) {
+            var from = target;
+            for (var s = period; s > 0 && count > 0; s--, count--) {
+                block(plane, from++, row, plane, --target, row, MIRROR_COLUMNS);
+            }
+        }
+    }
+
+    /**
+     * Fills blocks rightward from an axis with repeated mirror images of the blocks left of it,
+     * reflecting the reflections when they run out.
+     *
+     * @param plane the plane, modified
+     * @param row the block row
+     * @param axis the first filled block column
+     * @param count the number of blocks to fill
+     * @param period the number of blocks each reflection copies, positive
+     */
+    static void reflectRight(CoefficientPlane plane, int row, int axis, int count, int period) {
+        var target = axis;
+        while (count > 0) {
+            var from = target;
+            for (var s = period; s > 0 && count > 0; s--, count--) {
+                block(plane, --from, row, plane, target++, row, MIRROR_COLUMNS);
+            }
+        }
+    }
+
+    /**
+     * Makes a block flat: zeroes its AC coefficients and sets its DC coefficient; a block outside
+     * the grid is skipped.
+     *
+     * @param plane the plane, modified
+     * @param column the block column
+     * @param row the block row
+     * @param dc the DC coefficient
+     */
+    static void setDc(CoefficientPlane plane, int column, int row, short dc) {
+        if (!plane.contains(column, row)) {
+            return;
+        }
+        var offset = plane.offset(column, row);
+        Arrays.fill(plane.data, offset, offset + 64, (short) 0);
+        plane.data[offset] = dc;
     }
 
     /**
@@ -716,7 +938,8 @@ final class LosslessTransform {
 
     /**
      * Writes one transformed block; a source block outside its grid reads as zeros and an output
-     * block outside its grid is skipped.
+     * block outside its grid is skipped. The source and output may be the same plane when the blocks
+     * differ.
      *
      * @param source       the source plane
      * @param sourceColumn the source block column
@@ -726,7 +949,7 @@ final class LosslessTransform {
      * @param row          the output block row
      * @param operation    the block operation
      */
-    private static void block(CoefficientPlane source, int sourceColumn, int sourceRow, CoefficientPlane output,
+    static void block(CoefficientPlane source, int sourceColumn, int sourceRow, CoefficientPlane output,
                               int column, int row, int operation) {
         if (!output.contains(column, row)) {
             return;
@@ -734,7 +957,7 @@ final class LosslessTransform {
         var to = output.offset(column, row);
         var out = output.data;
         if (!source.contains(sourceColumn, sourceRow)) {
-            java.util.Arrays.fill(out, to, to + 64, (short) 0);
+            Arrays.fill(out, to, to + 64, (short) 0);
             return;
         }
         var from = source.offset(sourceColumn, sourceRow);

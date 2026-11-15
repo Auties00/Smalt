@@ -228,7 +228,7 @@ public final class SgiLog {
         if (le == 0) {
             return 0.0;
         }
-        var y = Math.exp(LN2 / 256.0 * (le + 0.5) - LN2 * 64.0);
+        var y = StrictMath.exp(LN2 / 256.0 * (le + 0.5) - LN2 * 64.0);
         return (p16 & 0x8000) == 0 ? y : -y;
     }
 
@@ -242,7 +242,7 @@ public final class SgiLog {
         if (p10 == 0) {
             return 0.0;
         }
-        return Math.exp(LN2 / 64.0 * (p10 + 0.5) - LN2 * 12.0);
+        return StrictMath.exp(LN2 / 64.0 * (p10 + 0.5) - LN2 * 12.0);
     }
 
     /**

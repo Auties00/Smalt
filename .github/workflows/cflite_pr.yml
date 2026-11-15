@@ -1,0 +1,44 @@
+# Pull requests: a short ClusterFuzzLite run of every fuzz target (tools/fuzz/README.md), starting from the
+# corpus the nightly batch run keeps. A crash fails the check and is uploaded as an artifact with its
+# reproducer. Every build also replays the committed seeds and saved findings as plain tests (FuzzRegressionTest).
+name: ClusterFuzzLite PR fuzzing
+
+on:
+  pull_request:
+    paths:
+      - '**/src/main/**'
+      - '**/src/test/**/fuzz/**'
+      - '**/src/test/resources/fuzz-regressions/**'
+      - '**/pom.xml'
+      - '.clusterfuzzlite/**'
+      - 'tools/fuzz/**'
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Build the fuzz targets
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: jvm
+          sanitizer: address
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The seconds are shared by the targets, which run one after the other.
+      - name: Fuzz
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          mode: code-change
+          sanitizer: address
+          fuzz-seconds: 1800
+          output-sarif: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}

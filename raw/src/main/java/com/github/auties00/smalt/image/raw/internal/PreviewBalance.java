@@ -13,8 +13,9 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
  * preview shows as neutral gray recorded the camera neutral. The preview and the sensor image are
  * both reduced to a coarse grid of cells over the same field of view; the cells that are neutral
  * and well exposed in the preview, and unclipped in the sensor image, are averaged in camera space,
- * and their mean is the camera neutral. Without enough such cells the mean of every unclipped
- * cell is used (a gray world estimate), and without a preview the neutral is left unknown.
+ * and their mean is the camera neutral. Without a preview or enough such cells the mean of every
+ * unclipped cell is used (a gray world estimate). A four-color sensor gets a neutral of its four
+ * colors, largest component 1.
  *
  * @implNote This implementation uses a 48x32 grid, a preview decoded at its smallest DCT scale of
  * at least 256x170, cells whose preview saturation is below 0.08 (relaxed to 0.16 when fewer
@@ -48,7 +49,7 @@ final class PreviewBalance {
      */
     static void apply(RawFile file, LinearImage image, int[] window) {
         if (file.sensor == null || !file.sensor.estimateBalance || file.color.asShotNeutral != null || image.cfa == null
-                || image.colors != 3) {
+                || image.samplesPerPixel != 1) {
             return;
         }
         var neutral = estimate(file, image, window);
@@ -63,11 +64,63 @@ final class PreviewBalance {
      * @param file the parsed file holding the previews
      * @param image the linear image
      * @param window the area the preview shows
-     * @return the neutral, or {@code null} when nothing can be estimated
+     * @return the neutral, green 1 for a three-color camera and largest component 1 for a four-color
+     * one, or {@code null} when nothing can be estimated
      */
     private static double[] estimate(RawFile file, LinearImage image, int[] window) {
-        var raw = new double[ROWS * COLUMNS * 3];
-        var counts = new int[ROWS * COLUMNS * 3];
+        var cells = cells(file, image, window);
+        var colors = cells.colors();
+        double[] sums = null;
+        if (cells.preview() != null) {
+            sums = select(cells, 0.08);
+            if (sums == null) {
+                sums = select(cells, 0.16);
+            }
+        }
+        if (sums == null) {
+            sums = new double[colors];
+            for (var cell = 0; cell < ROWS * COLUMNS; cell++) {
+                if (cells.clipped()[cell]) {
+                    continue;
+                }
+                for (var plane = 0; plane < colors; plane++) {
+                    var mean = cells.means()[cell * colors + plane];
+                    if (!Double.isNaN(mean)) {
+                        sums[plane] += mean;
+                    }
+                }
+            }
+        }
+        var largest = 0.0;
+        for (var sum : sums) {
+            if (!(sum > 0)) {
+                return null;
+            }
+            largest = Math.max(largest, sum);
+        }
+        if (colors == 3) {
+            return new double[]{sums[0] / sums[1], 1, sums[2] / sums[1]};
+        }
+        var neutral = new double[colors];
+        for (var plane = 0; plane < colors; plane++) {
+            neutral[plane] = sums[plane] / largest;
+        }
+        return neutral;
+    }
+
+    /**
+     * Reduces the sensor image and the largest preview to the grid: the mean of each color plane
+     * of each cell, whether a cell holds a clipped photosite, and the cell's linear preview color.
+     *
+     * @param file the parsed file holding the previews
+     * @param image the linear image, of one sample per photosite and a color filter array
+     * @param window the left, top, width and height of the area the preview shows
+     * @return the grid
+     */
+    static Cells cells(RawFile file, LinearImage image, int[] window) {
+        var colors = image.colors;
+        var raw = new double[ROWS * COLUMNS * colors];
+        var counts = new int[ROWS * COLUMNS * colors];
         var clipped = new boolean[ROWS * COLUMNS];
         var width = window[2];
         var height = window[3];
@@ -90,7 +143,7 @@ final class PreviewBalance {
                 for (var x = 0; x < width; x++) {
                     var cell = cellRow + cellOfColumn[x];
                     var value = image.data[line + x];
-                    var slot = cell * 3 + image.planes[phases + phaseOfColumn[x]];
+                    var slot = cell * colors + image.planes[phases + phaseOfColumn[x]];
                     raw[slot] += value;
                     counts[slot]++;
                     if (value > 0.95f) {
@@ -99,33 +152,10 @@ final class PreviewBalance {
                 }
             }
         });
-        var preview = preview(file);
-        double[] sums;
-        if (preview != null) {
-            sums = select(raw, counts, clipped, preview, 0.08);
-            if (sums == null) {
-                sums = select(raw, counts, clipped, preview, 0.16);
-            }
-        } else {
-            sums = null;
+        for (var slot = 0; slot < raw.length; slot++) {
+            raw[slot] = counts[slot] > 0 ? raw[slot] / counts[slot] : Double.NaN;
         }
-        if (sums == null) {
-            sums = new double[3];
-            for (var cell = 0; cell < ROWS * COLUMNS; cell++) {
-                if (clipped[cell]) {
-                    continue;
-                }
-                for (var plane = 0; plane < 3; plane++) {
-                    if (counts[cell * 3 + plane] > 0) {
-                        sums[plane] += raw[cell * 3 + plane] / counts[cell * 3 + plane];
-                    }
-                }
-            }
-        }
-        if (!(sums[0] > 0) || !(sums[1] > 0) || !(sums[2] > 0)) {
-            return null;
-        }
-        return new double[]{sums[0] / sums[1], 1, sums[2] / sums[1]};
+        return new Cells(colors, raw, clipped, preview(file));
     }
 
     /**
@@ -141,18 +171,18 @@ final class PreviewBalance {
     /**
      * Sums the camera means of the cells the preview shows as neutral.
      *
-     * @param raw the per-cell, per-plane sums of the sensor image
-     * @param counts the per-cell, per-plane photosite counts
-     * @param clipped whether each cell has a clipped photosite
-     * @param preview the per-cell linear preview colors
+     * @param cells the grid, with a preview
      * @param saturation the largest preview saturation of a neutral cell
      * @return the sums of the selected cells' means, or {@code null} when fewer than 12 qualify
      */
-    private static double[] select(double[] raw, int[] counts, boolean[] clipped, float[] preview, double saturation) {
-        var sums = new double[3];
+    private static double[] select(Cells cells, double saturation) {
+        var colors = cells.colors();
+        var means = cells.means();
+        var preview = cells.preview();
+        var sums = new double[colors];
         var selected = 0;
         for (var cell = 0; cell < ROWS * COLUMNS; cell++) {
-            if (clipped[cell] || counts[cell * 3] == 0 || counts[cell * 3 + 1] == 0 || counts[cell * 3 + 2] == 0) {
+            if (cells.clipped()[cell] || !cells.complete(cell)) {
                 continue;
             }
             var r = preview[cell * 3];
@@ -164,8 +194,8 @@ final class PreviewBalance {
             if (luminance < 0.03 || luminance > 0.8 || (max - min) / max > saturation) {
                 continue;
             }
-            for (var plane = 0; plane < 3; plane++) {
-                sums[plane] += raw[cell * 3 + plane] / counts[cell * 3 + plane];
+            for (var plane = 0; plane < colors; plane++) {
+                sums[plane] += means[cell * colors + plane];
             }
             selected++;
         }
@@ -195,7 +225,7 @@ final class PreviewBalance {
             var linear = new float[256];
             for (var index = 0; index < 256; index++) {
                 var v = index / 255.0;
-                linear[index] = (float) (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+                linear[index] = (float) (v <= 0.04045 ? v / 12.92 : StrictMath.pow((v + 0.055) / 1.055, 2.4));
             }
             var sums = new float[ROWS * COLUMNS * 3];
             var counts = new int[ROWS * COLUMNS];
@@ -219,8 +249,38 @@ final class PreviewBalance {
                 }
             }
             return sums;
+        } catch (MediaException.Io exception) {
+            throw exception;
         } catch (MediaException exception) {
             return null;
+        }
+    }
+
+    /**
+     * Holds a file's sensor image and preview reduced to the grid of {@link #COLUMNS} by
+     * {@link #ROWS} cells, row by row.
+     *
+     * @param colors the color planes of the sensor image, 3 or 4
+     * @param means the mean linear value of each color plane of each cell, {@code colors} per cell,
+     * or {@link Double#NaN} where a cell holds no photosite of a plane (a mean may be negative, since
+     * noise below black stays negative)
+     * @param clipped whether each cell holds a photosite above 0.95 of white
+     * @param preview the linear red, green and blue of each cell of the largest preview, or
+     * {@code null} when the file has no decodable preview
+     */
+    record Cells(int colors, double[] means, boolean[] clipped, float[] preview) {
+        /**
+         * {@return whether a cell holds photosites of every color plane}
+         *
+         * @param cell the cell, row by row
+         */
+        boolean complete(int cell) {
+            for (var plane = 0; plane < colors; plane++) {
+                if (Double.isNaN(means[cell * colors + plane])) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 }

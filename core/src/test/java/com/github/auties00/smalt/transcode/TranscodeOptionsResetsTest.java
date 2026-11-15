@@ -5,8 +5,13 @@ import com.github.auties00.smalt.audio.loudness.LoudnessNormalization;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ImageFormat;
+import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.ops.WatermarkOptions;
+import com.github.auties00.smalt.subtitle.SubtitleFont;
+import com.github.auties00.smalt.subtitle.SubtitleStyle;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.video.FieldOrder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -144,6 +149,60 @@ class TranscodeOptionsResetsTest {
             assertEquals(Optional.empty(), reset.chromaFormat());
             assertEquals(Optional.empty(), reset.color());
             assertEquals(VideoTranscodeOptions.builder().threads(2).build(), reset);
+        }
+
+        @Test
+        @DisplayName("resets the depth, deinterlacing, field order, burn-in and watermark, and checks the depth")
+        void processingResets() throws java.io.IOException {
+            byte[] font;
+            try (var stream = TranscodeOptionsResetsTest.class.getResourceAsStream(
+                    "/com/github/auties00/smalt/subtitle/smalt-test.ttf")) {
+                font = stream.readAllBytes();
+            }
+            var burnIn = SubtitleBurnIn.of(SubtitleStyle.of(SubtitleFont.of(font)));
+            var mark = RgbaPicture.allocate(4, 4, true);
+            var set = VideoTranscodeOptions.builder()
+                    .bitDepth(12)
+                    .deinterlacer(Deinterlacer.ELA)
+                    .fieldRate(true)
+                    .fieldOrder(FieldOrder.BOTTOM_FIRST)
+                    .frameRateConversion(FrameRateConversion.BLEND)
+                    .pulldown(Pulldown.INVERSE_TELECINE)
+                    .subtitleBurnIn(burnIn)
+                    .watermark(mark, WatermarkOptions.builder().opacity(0.5).build())
+                    .threads(2)
+                    .build();
+            assertEquals(set, set.toBuilder().build());
+            assertEquals(OptionalInt.of(12), set.bitDepth());
+            assertEquals(Optional.of(Deinterlacer.ELA), set.deinterlacer());
+            assertEquals(Optional.of(FieldOrder.BOTTOM_FIRST), set.fieldOrder());
+            assertEquals(Optional.of(burnIn), set.subtitleBurnIn());
+            // the options hold a copy of the mark, and hand out copies
+            mark.pixels()[0] = 1;
+            assertEquals(0, ((RgbaPicture) set.watermark().orElseThrow()).pixels()[0]);
+            var reset = set.toBuilder()
+                    .automaticBitDepth()
+                    .noDeinterlacer()
+                    .trackFieldOrder()
+                    .noSubtitleBurnIn()
+                    .noWatermark()
+                    .fieldRate(false)
+                    .frameRateConversion(FrameRateConversion.DROP_REPEAT)
+                    .pulldown(Pulldown.NONE)
+                    .build();
+            assertEquals(OptionalInt.empty(), reset.bitDepth());
+            assertEquals(Optional.empty(), reset.deinterlacer());
+            assertEquals(Optional.empty(), reset.fieldOrder());
+            assertEquals(Optional.empty(), reset.subtitleBurnIn());
+            assertEquals(Optional.empty(), reset.watermark());
+            assertEquals(WatermarkOptions.defaults(), reset.watermarkOptions());
+            assertEquals(VideoTranscodeOptions.builder().threads(2).build(), reset);
+            assertThrows(IllegalArgumentException.class, () -> VideoTranscodeOptions.builder().bitDepth(7).build());
+            assertThrows(IllegalArgumentException.class, () -> VideoTranscodeOptions.builder().bitDepth(17).build());
+            assertThrows(NullPointerException.class, () -> VideoTranscodeOptions.builder().deinterlacer(null));
+            assertThrows(IllegalArgumentException.class, () -> SubtitleBurnIn.builder(burnIn.style()).trackId(-2).build());
+            assertEquals(OptionalInt.empty(), SubtitleBurnIn.builder(burnIn.style()).trackId(4).firstTrack().build()
+                    .trackId());
         }
     }
 

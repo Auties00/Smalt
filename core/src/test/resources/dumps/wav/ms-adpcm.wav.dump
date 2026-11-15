@@ -1,0 +1,21 @@
+# demux dump of wav/ms-adpcm.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 500000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 0 AUDIO ADPCM_MS timebase=1/8000 duration=4000 config=32:0a90c968
+  audio rate=8000 bits=4 skip=0 layout=[FRONT_CENTER]
+packets 8
+0 t0 pts=0 dts=0 dur=500 flags=KEY size=256 crc=28c66109
+1 t0 pts=500 dts=500 dur=500 flags=KEY size=256 crc=75c93dfa
+2 t0 pts=1000 dts=1000 dur=500 flags=KEY size=256 crc=f54cea9d
+3 t0 pts=1500 dts=1500 dur=500 flags=KEY size=256 crc=a6ac797b
+4 t0 pts=2000 dts=2000 dur=500 flags=KEY size=256 crc=d5eeadaf
+5 t0 pts=2500 dts=2500 dur=500 flags=KEY size=256 crc=96eba65f
+6 t0 pts=3000 dts=3000 dur=500 flags=KEY size=256 crc=dd0a02e1
+7 t0 pts=3500 dts=3500 dur=500 flags=KEY size=256 crc=cc42c6da
+seek 0: t0@0
+seek 166666: t0@2
+seek 333333: t0@5
+seek 500000: end
+seek -1000000: t0@0

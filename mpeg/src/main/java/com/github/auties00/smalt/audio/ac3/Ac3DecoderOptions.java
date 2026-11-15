@@ -43,6 +43,8 @@ public final class Ac3DecoderOptions {
 
     private final boolean crcCheck;
 
+    private final boolean preNoiseHoldback;
+
     private Ac3DecoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.downmix = builder.downmix;
@@ -53,6 +55,7 @@ public final class Ac3DecoderOptions {
         this.program = builder.program;
         this.channelExtensions = builder.channelExtensions;
         this.crcCheck = builder.crcCheck;
+        this.preNoiseHoldback = builder.preNoiseHoldback;
     }
 
     /**
@@ -175,6 +178,21 @@ public final class Ac3DecoderOptions {
         return crcCheck;
     }
 
+    /**
+     * {@return whether the decoder of an E-AC-3 track holds its output back so that the transient
+     * pre-noise processing corrects every sample its data covers; {@code false} by default}
+     *
+     * <p>The data of an E-AC-3 frame may correct samples decoded before the frame that completes the
+     * audio its correction copies, up to 511 samples before that frame. A decoder that holds its
+     * output back emits every sample {@link Ac3Decoder#delay() 512 samples} later and corrects all of
+     * them; one that does not emits each access unit as it decodes it and leaves the samples decoded
+     * before that frame as they are. The samples output are otherwise the same. AC-3 tracks are never
+     * held back.
+     */
+    public boolean preNoiseHoldback() {
+        return preNoiseHoldback;
+    }
+
     @Override
     public boolean equals(Object object) {
         return object instanceof Ac3DecoderOptions that
@@ -186,13 +204,14 @@ public final class Ac3DecoderOptions {
                 && dialogueNormalization == that.dialogueNormalization
                 && program == that.program
                 && channelExtensions == that.channelExtensions
-                && crcCheck == that.crcCheck;
+                && crcCheck == that.crcCheck
+                && preNoiseHoldback == that.preNoiseHoldback;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(limits, downmix, compression, cutScale, boostScale, dialogueNormalization, program,
-                channelExtensions, crcCheck);
+                channelExtensions, crcCheck, preNoiseHoldback);
     }
 
     @Override
@@ -200,7 +219,7 @@ public final class Ac3DecoderOptions {
         return "Ac3DecoderOptions[limits=" + limits + ", downmix=" + downmix + ", compression=" + compression
                 + ", cutScale=" + cutScale + ", boostScale=" + boostScale + ", dialogueNormalization="
                 + dialogueNormalization + ", program=" + program + ", channelExtensions=" + channelExtensions
-                + ", crcCheck=" + crcCheck + "]";
+                + ", crcCheck=" + crcCheck + ", preNoiseHoldback=" + preNoiseHoldback + "]";
     }
 
     /**
@@ -228,6 +247,8 @@ public final class Ac3DecoderOptions {
 
         private boolean crcCheck;
 
+        private boolean preNoiseHoldback;
+
         private Builder() {
             this.limits = MediaLimits.DEFAULT;
             this.downmix = Ac3Downmix.NONE;
@@ -238,6 +259,7 @@ public final class Ac3DecoderOptions {
             this.program = 0;
             this.channelExtensions = true;
             this.crcCheck = true;
+            this.preNoiseHoldback = false;
         }
 
         private Builder(Ac3DecoderOptions options) {
@@ -250,6 +272,7 @@ public final class Ac3DecoderOptions {
             this.program = options.program;
             this.channelExtensions = options.channelExtensions;
             this.crcCheck = options.crcCheck;
+            this.preNoiseHoldback = options.preNoiseHoldback;
         }
 
         /**
@@ -352,6 +375,19 @@ public final class Ac3DecoderOptions {
          */
         public Builder crcCheck(boolean crcCheck) {
             this.crcCheck = crcCheck;
+            return this;
+        }
+
+        /**
+         * Sets whether an E-AC-3 decoder holds its output back for the transient pre-noise processing,
+         * adding 512 samples of latency for corrections that reach every sample their data covers; see
+         * {@link Ac3DecoderOptions#preNoiseHoldback()}.
+         *
+         * @param preNoiseHoldback the value
+         * @return this builder
+         */
+        public Builder preNoiseHoldback(boolean preNoiseHoldback) {
+            this.preNoiseHoldback = preNoiseHoldback;
             return this;
         }
 

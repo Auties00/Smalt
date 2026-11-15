@@ -852,9 +852,6 @@ public final class CeltEncoder {
         return rng;
     }
 
-    // TODO: multistream (surround) encoder; until then only the CELT tests drive the LFE and
-    // surround-mask paths below.
-
     /**
      * Marks the encoder as coding an LFE channel ({@code OPUS_SET_LFE}).
      *
@@ -1070,8 +1067,8 @@ public final class CeltEncoder {
      * @param memIdx   the channel whose memory is used
      * @param clip     nonzero to clip the input
      */
-    private static void celtPreemphasis(float[] pcm, int pcmOff, float[] inp, int inpOff, int N, int CC,
-                                        int upsample, float[] coef, float[] mem, int memIdx, int clip) {
+    static void celtPreemphasis(float[] pcm, int pcmOff, float[] inp, int inpOff, int N, int CC,
+                                int upsample, float[] coef, float[] mem, int memIdx, int clip) {
         int i;
         var coef0 = coef[0];
         var m = mem[memIdx];

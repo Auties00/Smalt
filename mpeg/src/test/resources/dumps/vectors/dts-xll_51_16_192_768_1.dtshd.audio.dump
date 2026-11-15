@@ -1,0 +1,13 @@
+# audio decode dump of vectors/dts-xll_51_16_192_768_1.dtshd; regenerate with -Dsmalt.test.updateDumps=true
+format DTS
+duration 64000
+seekable true
+track 0 DTS rate=192000 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER, LOW_FREQUENCY, SIDE_LEFT, SIDE_RIGHT]
+0 frames=4096 crc16=16d13407
+1 frames=4096 crc16=d7b815e6
+2 frames=4096 crc16=f4658121
+seek 0: @sample 0
+seek 21333: @sample 4096
+seek 42666: @sample 8192
+seek 64000: end
+seek -1000000: @sample 0

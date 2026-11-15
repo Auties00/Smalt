@@ -31,10 +31,10 @@ import com.github.auties00.smalt.internal.simd.Simd;
  */
 public abstract class IpredDsp {
     /**
-     * The implementation used by the codec: {@link VectorIpredDsp} when {@link Simd#ENABLED},
-     * {@link ScalarIpredDsp} otherwise.
+     * The implementation used by the codec: {@link VectorIpredDsp}, written for 256-bit vectors, when
+     * {@link Simd#WIDE}, {@link ScalarIpredDsp} otherwise.
      */
-    public static final IpredDsp INSTANCE = Simd.ENABLED ? new VectorIpredDsp() : new ScalarIpredDsp();
+    public static final IpredDsp INSTANCE = Simd.WIDE ? new VectorIpredDsp() : new ScalarIpredDsp();
 
     /**
      * The DC predictor (average of the top and left edges).

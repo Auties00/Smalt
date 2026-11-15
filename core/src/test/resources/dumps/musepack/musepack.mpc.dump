@@ -1,0 +1,23 @@
+# demux dump of musepack/musepack.mpc; regenerate with -Dsmalt.test.updateDumps=true
+format MUSEPACK
+duration 600000
+seekable true
+metadata title="Behavior"
+track 0 AUDIO MUSEPACK8 timebase=1/44100 duration=26460 config=11:133bfa24
+  audio rate=44100 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 1
+0 t0 pts=-481 dts=-481 dur=73728 flags=KEY size=8313 crc=29659ec3
+seek 0: t0@0
+seek 200000: t0@0
+seek 400000: t0@0
+seek 1660930: end
+seek 600000: t0@0
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MUSEPACK
+  duration 600000
+  seekable false
+  track 0 AUDIO MUSEPACK8 timebase=1/44100 duration=26460 config=11:133bfa24
+    audio rate=44100 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

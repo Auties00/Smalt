@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.video.av1.internal.encoder;
 
+import com.github.auties00.smalt.video.av1.internal.FilmGrainData;
+
 /**
  * Holds the coding decisions of one frame that the rate control and the reference structure make
  * before the frame is encoded.
@@ -11,6 +13,11 @@ final class FrameParams {
      * Whether the frame is a key frame.
      */
     boolean key;
+
+    /**
+     * The timestamp of the frame, in time base units, for the decoder model times of its header.
+     */
+    long pts;
 
     /**
      * Whether an inter frame is coded in error resilient mode, independent of earlier CDFs.
@@ -190,6 +197,24 @@ final class FrameParams {
      * {@link CdefSearch}; used with {@link #goodSpeed}.
      */
     int cdefSearch;
+
+    /**
+     * The film grain the frame signals, in the decoder's model with the fields the sequence does
+     * not code cleared, or {@code null} for none; the seed is the encoder's running seed, not this
+     * model's. Ignored unless the sequence signals film grain.
+     */
+    FilmGrainData grain;
+
+    /**
+     * Whether the frame enables the screen content tools (palette prediction, and whole-sample
+     * motion with {@link #integerMv}). Ignored unless the sequence lets frames choose them.
+     */
+    boolean screenContent;
+
+    /**
+     * Whether the motion vectors of an inter frame with {@link #screenContent} are whole samples.
+     */
+    boolean integerMv;
 
     /**
      * Creates parameters with every field at its default.

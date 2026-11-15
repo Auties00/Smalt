@@ -1,0 +1,23 @@
+# image dump of gainmap/libavif-seine_sdr_gainmap_srgb.avif; regenerate with -Dsmalt.test.updateDumps=true
+format AVIF
+info ImageInfo[format=AVIF, width=400, height=300, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 400x300 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=50f80ab2 u=34d85e70 v=e3ae954d
+  format=AVIF orientation=NORMAL source=400x300
+  icc=none exif=15691:b2e55efb xmp=42292:95cfe0fb
+  profile=none
+scaled 100x75
+picture 400x300 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=50f80ab2 u=34d85e70 v=e3ae954d
+  format=AVIF orientation=NORMAL source=400x300
+  icc=none exif=15691:b2e55efb xmp=42292:95cfe0fb
+  profile=none
+pages 1
+page 0 ImageInfo[format=AVIF, width=400, height=300, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 400x300 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=50f80ab2 u=34d85e70 v=e3ae954d
+  format=AVIF orientation=NORMAL source=400x300
+  icc=none exif=15691:b2e55efb xmp=42292:95cfe0fb
+  profile=none
+decoder gain map
+picture 400x300 yuv8 YUV444 color=BT601/FULL/UNSPECIFIED/UNSPECIFIED y=bf7096fe u=0ba969e4 v=35216a84
+decoder auxiliary images
+[AuxiliaryImage[index=0, type=GAIN_MAP, identifier=tmap, width=400, height=300]]
