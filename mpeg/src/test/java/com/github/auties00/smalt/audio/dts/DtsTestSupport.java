@@ -4,17 +4,26 @@ import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.container.dts.DtsDemuxer;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Decoding drivers and ffmpeg black-box decodes shared by the DTS tests. ffmpeg decodes with {@code -cpuflags 0}:
@@ -49,6 +58,71 @@ final class DtsTestSupport {
             }
             return interleave(buffers);
         }
+    }
+
+    /**
+     * Reads the access units of a file through {@link DtsDemuxer}.
+     */
+    static List<byte[]> units(Path file) {
+        try (var source = MediaSource.of(file); var demuxer = new DtsDemuxer(source)) {
+            demuxer.tracks();
+            var units = new ArrayList<byte[]>();
+            Packet packet;
+            while ((packet = demuxer.read()) != null) {
+                units.add(packet.data());
+            }
+            return units;
+        }
+    }
+
+    /**
+     * Writes access units back to back as a raw DTS stream in the test's scratch directory.
+     */
+    static Path write(String name, List<byte[]> units) {
+        var stream = new ByteArrayOutputStream();
+        units.forEach(stream::writeBytes);
+        var file = Scratch.directory("dts-units").resolve(name + "-" + Thread.currentThread().threadId() + ".dts");
+        try {
+            Files.write(file, stream.toByteArray());
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+        return file;
+    }
+
+    /**
+     * Asserts that a lossless stream decodes as ffmpeg decodes it, sample for sample. ffmpeg outputs the fixed-point
+     * core without the residuals for the first frame of a stream with several channel sets, which it decodes in full
+     * after a frame with the extension: for such a stream the comparison starts at the second frame, and the stream
+     * with its first unit repeated is compared from its second frame on.
+     *
+     * @param name the name of the stream in failure messages
+     * @param file the stream
+     * @param firstFrameIsCore whether ffmpeg outputs the core for the first frame of the stream
+     * @return the decoded stream
+     */
+    static Decoded assertLosslessLikeFfmpeg(String name, Path file, boolean firstFrameIsCore) {
+        var decoded = decodeFile(file, DtsDecoderOptions.defaults());
+        var reference = ffmpegIntegers(file);
+        var actual = toInt32(decoded.samples());
+        assertEquals(reference.length, actual.length, name + " sample count");
+        var units = units(file);
+        var frame = actual.length / units.size();
+        var from = firstFrameIsCore ? frame : 0;
+        Tolerance.exact().assertWithin(name, Arrays.copyOfRange(reference, from, reference.length),
+                Arrays.copyOfRange(actual, from, actual.length));
+        if (firstFrameIsCore) {
+            var primed = new ArrayList<byte[]>();
+            primed.add(units.getFirst());
+            primed.addAll(units);
+            var primedReference = ffmpegIntegers(write(name, primed));
+            var primedActual = toInt32(decodeUnits(primed, DtsDecoderOptions.defaults()).samples());
+            assertEquals(primedReference.length, primedActual.length, name + " repeated sample count");
+            Tolerance.exact().assertWithin(name + " with its first unit repeated",
+                    Arrays.copyOfRange(primedReference, frame, primedReference.length),
+                    Arrays.copyOfRange(primedActual, frame, primedActual.length));
+        }
+        return decoded;
     }
 
     /**

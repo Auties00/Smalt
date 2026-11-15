@@ -40,11 +40,15 @@ import java.util.function.Consumer;
  * substream of a frame with a core needs what the decoder does not implement (channels coded against a core with a
  * 128 times interpolated LFE channel, a peak bit rate smoothing buffer), the core is output; a stream without core
  * that needs it (XLL with four frequency bands or above 192 kHz, a peak bit rate smoothing buffer) and termination
- * frames with a partial subsubframe raise {@link MediaException.Unsupported}. DTS Express (LBR) streams of 8 to
- * 48 kHz decode their tonal components, the residual of every channel, coded alone or in pairs, and the LFE channel,
- * full band or band limited (to 2/3, 1/2, 1/3, 1/4 or 1/8 of the band, synthesized at the header's rate); a stream
- * with an embedded stereo downmix decodes to the two channels of the downmix. Embedded multichannel downmixes raise
- * {@link MediaException.Unsupported}.
+ * frames with a partial subsubframe raise {@link MediaException.Unsupported}. A frame output from its core inside a
+ * stream whose lossless channels have twice or four times the rate of the core comes out at that rate, so that a track
+ * keeps one rate: the core is synthesized through the 64-band filter bank of X96 with its upper subbands silent, then,
+ * for four times the rate, joined with a silent upper band as the two frequency bands of XLL are. The rate of the
+ * stream is the rate of the last lossless frame, and before the first one the track's declared rate when that is above
+ * 48 kHz, a rate no core frame has. DTS Express (LBR) streams of 8 to 48 kHz decode their tonal components, the
+ * residual of every channel, coded alone or in pairs, and the LFE channel, full band or band limited (to 2/3, 1/2,
+ * 1/3, 1/4 or 1/8 of the band, synthesized at the header's rate); a stream with an embedded stereo downmix decodes to
+ * the two channels of the downmix. Embedded multichannel downmixes raise {@link MediaException.Unsupported}.
  * {@link #layout()} and {@link #sampleRate()} report the track's declared format until the first access unit is
  * decoded and that unit's output format afterwards; every buffer carries its own layout, its channels in the order
  * of {@link Speaker}. Samples are scaled so that 24-bit full scale maps to 1.0.
@@ -52,6 +56,11 @@ import java.util.function.Consumer;
  * <p>Instances are not thread-safe.
  */
 public final class DtsDecoder implements AudioDecoder {
+    /**
+     * The highest sample rate of a core frame in Hz.
+     */
+    private static final int MAX_CORE_RATE = 48000;
+
     /**
      * The options the decoder was created with.
      */
@@ -81,6 +90,13 @@ public final class DtsDecoder implements AudioDecoder {
      * The sample rate of the last decoded unit.
      */
     private int sampleRate;
+
+    /**
+     * The rate the frames output from their core are synthesized at when it is twice or four times the core rate: the
+     * rate of the last frame the extension substream output, else the rate the track declares when above
+     * {@value #MAX_CORE_RATE} Hz, else 0.
+     */
+    private int streamRate;
 
     /**
      * The layout of the last decoded unit.
@@ -123,6 +139,7 @@ public final class DtsDecoder implements AudioDecoder {
             throw new IllegalArgumentException(track.codec().displayName() + " is not DTS");
         }
         this.sampleRate = track.sampleRate() > 0 ? track.sampleRate() : 48000;
+        this.streamRate = track.sampleRate() > MAX_CORE_RATE ? track.sampleRate() : 0;
         this.layout = track.layout().orElse(ChannelLayout.SURROUND_5_1);
     }
 
@@ -277,10 +294,14 @@ public final class DtsDecoder implements AudioDecoder {
      * Synthesizes the decoded core frame and passes it on.
      */
     private void emit(Consumer<AudioBuffer> output) {
-        var samples = core.outputSamples();
         var channels = core.channels() + (core.hasLfe() ? 1 : 0);
         LimitChecks.checkChannels(options.limits(), channels);
-        core.synthesize();
+        if (options.extensions()) {
+            core.synthesizeAt(streamRate);
+        } else {
+            core.synthesize();
+        }
+        var samples = core.outputSamples();
         if (coreMasks.length != channels) {
             coreMasks = new int[channels];
         }
@@ -314,6 +335,7 @@ public final class DtsDecoder implements AudioDecoder {
         LimitChecks.checkChannels(options.limits(), channels);
         var mapping = mapping(masks);
         sampleRate = substream.outputRate();
+        streamRate = sampleRate;
         var buffer = mapping.buffer(sampleRate, samples);
         var scale = gain(substream.dialogueNormalization());
         for (var ch = 0; ch < channels; ch++) {
@@ -397,7 +419,8 @@ public final class DtsDecoder implements AudioDecoder {
     }
 
     /**
-     * Clears the decoder state, as at the start of a stream, for example after a seek.
+     * Clears the decoder state, as at the start of a stream, for example after a seek. The rate of the stream the
+     * frames output from their core are synthesized at is kept, as the stream after a seek keeps its rate.
      *
      * @throws IllegalStateException if the decoder is closed
      */

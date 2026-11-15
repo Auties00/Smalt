@@ -1937,15 +1937,24 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
   packed in data arrays it never defines, are rejected. XLL channels coded against a core add to a fixed-point
   reconstruction of that core, which the specification does not define; Smalt's, at the rate of the core and at twice
   it, was measured from ffmpeg's lossless output and matches it bit for bit (ffmpeg refuses 88.2 kHz channels over a
-  44.1 kHz core, which use the same reconstruction), with two exceptions: ffmpeg outputs the core alone for the first
-  frame with several channel sets after a frame without XLL, where Smalt decodes the frame (the FATE streams show its
-  output is the lossless one), and ffmpeg leaves sum/difference decoding out of that reconstruction, where Smalt
-  applies it as the specification asks (no known lossless stream sets those flags). That reconstruction leaves the X96
-  extension out, adds XBR in integers and keeps the downmixes of XCh and XXCH, all measured the same way; the DTS-HD
-  MA samples of samples.ffmpeg.org match too. ffmpeg refuses a core with a 128 times interpolated LFE channel in its
-  lossless mode, so nothing shows what channels coded against it add to; such a stream outputs its core with the other
-  extensions, unless all its channels are coded alone. Channel sets of different widths and parallel (not
-  hierarchical) downmixes follow the specification, but ffmpeg decodes neither, so nothing compares them. A peak bit
+  44.1 kHz core, which use the same reconstruction), with two exceptions: ffmpeg outputs the fixed-point core without
+  the residuals for the first frame with several channel sets after a frame without XLL, where Smalt decodes the frame
+  in full (ffmpeg decodes the same frame after a frame with XLL as Smalt does), and ffmpeg leaves sum/difference
+  decoding out of that reconstruction, where Smalt applies it as the specification asks (no known lossless stream sets
+  those flags; Smalt's channels are the sum and difference of ffmpeg's within the rounding of the fixed-point
+  synthesis). That reconstruction leaves the X96 extension out, adds XBR in integers and keeps the downmixes of XCh and
+  XXCH, all measured the same way; the DTS-HD MA samples of samples.ffmpeg.org (`DtsMasterAudioCorpusTest`, in the
+  full test data tier) match too, every frame but the last, cut, one. A frame without XLL inside a lossless stream at
+  twice or four times the core rate comes out at the rate of the stream, so that the track keeps one rate: the core is
+  synthesized through the 64-band filter bank of X96, as ffmpeg synthesizes a core with an X96 extension that codes no
+  upper subband, and joined with a silent upper band for four times the rate, where ffmpeg's decoder outputs the core
+  at its own rate (its full-band channels agree with ffmpeg's X96 synthesis to about 115 dB, its LFE channel, whose
+  interpolation starts from another history after lossless frames, to about 35 dB). Before the first lossless frame
+  such a frame takes the rate the track declares when that is above 48 kHz. ffmpeg refuses a core with a 128 times interpolated LFE channel in its lossless mode, so nothing
+  shows what channels coded against it add to; such a stream outputs its core with the other extensions, unless all
+  its channels are coded alone. ffmpeg refuses channel sets of different widths or resolutions and parallel (not
+  hierarchical) downmixes, which follow the specification and are checked to decode as the 24-bit and hierarchical
+  streams ffmpeg decodes that code the same samples. A peak bit
   rate smoothing buffer (a nonzero `nuPeakBRCntrlBuffSzkB` or `nuExSSXLLSyncOffset`), which no stream known uses, is
   not implemented: a stream with a core then outputs the core, one without raises `MediaException.Unsupported`. X96
   fills the subbands without bits with noise from a generator the specification leaves unstated, so its output agrees

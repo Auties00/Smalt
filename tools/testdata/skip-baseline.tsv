@@ -137,6 +137,7 @@ linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Eac3CoreAudioT
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Eac3MediaFoundationTest	opt-in:mf-decode	27
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.internal.DolbyStreamsTest	data:vector	3
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.celp.CelpConformanceTest	data:vector	73
+linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.dts.DtsMasterAudioCorpusTest	data:vector	8
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.hvxc.HvxcConformanceTest	data:vector	133
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqConformanceTest	data:vector	46
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqDecoderTest	data:vector	1
@@ -342,6 +343,7 @@ linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Eac3CoreAudioTes
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Eac3MediaFoundationTest	opt-in:mf-decode	27
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.ac3.internal.DolbyStreamsTest	data:vector	3
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.celp.CelpConformanceTest	data:vector	73
+linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.dts.DtsMasterAudioCorpusTest	data:vector	8
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.hvxc.HvxcConformanceTest	data:vector	133
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqConformanceTest	data:vector	46
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqDecoderTest	data:vector	1
@@ -593,6 +595,7 @@ linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Eac3CoreAudioTes
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Eac3MediaFoundationTest	opt-in:mf-decode	27
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.internal.DolbyStreamsTest	data:vector	3
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.celp.CelpConformanceTest	data:vector	73
+linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.dts.DtsMasterAudioCorpusTest	data:vector	8
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.hvxc.HvxcConformanceTest	data:vector	133
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqConformanceTest	data:vector	46
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqDecoderTest	data:vector	1
@@ -807,6 +810,7 @@ macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Ac3DecoderTest
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Eac3MediaFoundationTest	opt-in:mf-decode	27
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.internal.DolbyStreamsTest	data:vector	3
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.celp.CelpConformanceTest	data:vector	73
+macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.dts.DtsMasterAudioCorpusTest	data:vector	8
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.hvxc.HvxcConformanceTest	data:vector	133
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqConformanceTest	data:vector	46
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqDecoderTest	data:vector	1
@@ -1036,6 +1040,7 @@ windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Eac3CoreAudioT
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.Eac3MediaFoundationTest	opt-in:mf-decode	27
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.ac3.internal.DolbyStreamsTest	data:vector	3
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.celp.CelpConformanceTest	data:vector	73
+windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.dts.DtsMasterAudioCorpusTest	data:vector	8
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.hvxc.HvxcConformanceTest	data:vector	133
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqConformanceTest	data:vector	46
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.audio.twinvq.TwinVqDecoderTest	data:vector	1

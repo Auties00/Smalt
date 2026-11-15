@@ -7798,6 +7798,16 @@ smoke	dts-xbr_xxch_71_24_48_3840.f32	98304	e9690b6cfc141ea7e2099f6d4037bc36f87b0
 smoke	dts-xch_61_24_48_768-dmix_6.f32	73728	688a442230c99b6c8b5f3bba9e913780707e754d2962bddb83ce21de7c18c164	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xch_61_24_48_768-dmix_6.f32
 smoke	dts-xch_61_24_48_768.f32	86016	21a9dd66642f5cff10bc943a9aa49627e7515d7eae7fc045469791a8a6f73574	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xch_61_24_48_768.f32
 smoke	dts-xxch_71_24_48_2046.f32	98304	370527a062928e55bfdd3c707c23084f52985e93de56bf31d35888e42b7cded1	https://fate-suite.ffmpeg.org/dts/dcadec-suite/xxch_71_24_48_2046.f32
+# The DTS-HD Master Audio samples of samples.ffmpeg.org (no licence stated, fetched for testing only): cut Blu-ray
+# streams of 2.0 to 7.1 channels at 16 and 24 bits and 96 kHz, and a Blu-ray M2TS, for DtsMasterAudioCorpusTest.
+full	dts-ma-2.0-16bit.dts	26114649	34845219924fedc4c633a97c614f464f25011857d11b6ad1919e0c02f1abb3ce	https://samples.ffmpeg.org/A-codecs/DTS/dts/Master%20Audio%202.0%2016bit.dts
+full	dts-ma-5.0-96khz.dts	5242880	3702d95a38cba3414968724e7bacb13440b81e79c6be753dc53c2a35813cdb39	https://samples.ffmpeg.org/A-codecs/DTS/dts/Master%20Audio%205.0%2096khz.dts
+full	dts-ma-5.1-16bit.dts	21265332	70418af672befaa22b192798f54b864eb74eb5621fdf2a71ca358cffb114e1b0	https://samples.ffmpeg.org/A-codecs/DTS/dts/Master%20Audio%205.1%2016bit.dts
+full	dts-ma-5.1-24bit.dts	17777167	9cb603bf09a0b2f77688e9615c94d9ed560704e93d56b16b323fef39f6bc220c	https://samples.ffmpeg.org/A-codecs/DTS/dts/Master%20Audio%205.1%2024bit.dts
+full	dts-ma-6.1-24bit.dts	55918995	8981f3ff01601d8865fb846afaa889548dfd1b31bdb7328ea161a03d9011f094	https://samples.ffmpeg.org/A-codecs/DTS/dts/Master%20Audio%206.1%2024bit.dts
+full	dts-ma-7.1.dts	5242880	08b6289cceedadfd2e9e7be833e60bb8afd751564cf5e6543fecbc6a3a22f8d9	https://samples.ffmpeg.org/A-codecs/DTS/dts/Master%20Audio%207.1.dts
+full	dts-ma-7.1-24bit.dts	50000001	0da506ccc59fdef1744bdbe178637199cad05207601e96fbf8d163694fe39c7e	https://samples.ffmpeg.org/A-codecs/DTS/dts/Master%20Audio%207.1%2024bit.dts
+full	dts-ma-bond.m2ts	10485760	501d78c2ba7caec269e2d1981f1bab3138202dcb90b63e84614ee0408ffeaf27	https://samples.ffmpeg.org/A-codecs/DTS/bond_sample_dtshdma.m2ts
 smoke	vc1-fate-SA00040.vc1	24097	898035e63cfe0ddb1cc2c8749d7dafdfcc1b12fe5dac7e5b65941e6c4e41c860	https://fate-suite.ffmpeg.org/vc1/SA00040.vc1
 smoke	vc1-fate-SA00050.vc1	124823	29cf8bebc87be73a1b7a6169aff4c1c36d8891a20c200da7676560fefe3e461c	https://fate-suite.ffmpeg.org/vc1/SA00050.vc1
 smoke	vc1-fate-SA10091.vc1	437691	c60a0da89873b40d7e436f1c29757c6cc71f3c51f2ac2ea8c6bd023762c94b6c	https://fate-suite.ffmpeg.org/vc1/SA10091.vc1

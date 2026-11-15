@@ -46,6 +46,12 @@ public final class CoreDecoder {
     private static final float OUTPUT_SCALE = 1.0f / (1 << 23);
 
     /**
+     * The magnitude the 24-bit samples joined with a silent upper band are clamped to, 16 times full scale, which
+     * keeps an overloaded core within the int range of the band synthesis.
+     */
+    private static final int JOIN_LIMIT = 1 << 27;
+
+    /**
      * The output scale of the subband synthesis: the 24-bit full scale to 1.0 times the gain of the synthesis
      * output stage ({@code rScale} of C.3.6, which the specification leaves unstated), 2^7.5, as measured against
      * the deployed decoders.
@@ -224,6 +230,43 @@ public final class CoreDecoder {
     private boolean previousX96;
 
     /**
+     * Whether the frame was synthesized at twice the rate of its subband synthesis, its two halves joined as the two
+     * frequency bands of XLL with a silent upper band.
+     */
+    private boolean joined;
+
+    /**
+     * Whether the previous frame was synthesized with {@link #joined}, whose band history continues.
+     */
+    private boolean previousJoined;
+
+    /**
+     * The samples of the frame at twice the rate of its subband synthesis by channel, the LFE channel last, allocated
+     * by the first frame synthesized so.
+     */
+    private float[][] joinedPcm;
+
+    /**
+     * The band joining history by channel, the LFE channel last.
+     */
+    private final int[][] joinHistory = new int[SubbandBuffer.MAX_CHANNELS + 1][XllBandSynthesis.HISTORY];
+
+    /**
+     * The 24-bit samples of the lower band being joined.
+     */
+    private int[] joinLow;
+
+    /**
+     * The silent upper band being joined.
+     */
+    private int[] joinHigh;
+
+    /**
+     * The 24-bit joined samples.
+     */
+    private int[] joinOut;
+
+    /**
      * The ratio of the rate of the lossless channels to the rate of the core for the fixed-point reconstruction the
      * lossless extension codes its residuals against, 1 or 2, or 0 for the floating-point one.
      */
@@ -327,6 +370,7 @@ public final class CoreDecoder {
         operations = 0;
         synthesized = false;
         x96Present = false;
+        joined = false;
         var position = 0;
         lfeSamples = 0;
         for (var subframe = 0; subframe < subframes; subframe++) {
@@ -704,6 +748,31 @@ public final class CoreDecoder {
     }
 
     /**
+     * Synthesizes every channel into {@link #output(int)} at a sample rate above the rate of the frame, the embedded
+     * downmixes of the channel extensions undone, for a frame without the lossless extension inside a stream whose
+     * lossless channels have that rate.
+     *
+     * <p>A frame without X96 is synthesized at twice the core rate through the 64-band filter bank of X96, its upper
+     * 32 subbands silent, as the lossless channels of a band at twice the core rate code their residuals against the
+     * core. Four times the core rate then joins that output and a silent upper band as the two frequency bands of the
+     * lossless extension are joined.
+     *
+     * @param rate the output rate: {@link #outputRate()}, or twice or four times the rate of the core frame
+     *             ({@link CoreHeader#sampleRate}) when that is not below {@link #outputRate()}; any other rate
+     *             synthesizes at {@link #outputRate()}
+     */
+    public void synthesizeAt(int rate) {
+        if (!synthesized) {
+            var base = header.sampleRate;
+            if ((rate == 2 * base || rate == 4 * base) && rate >= outputRate()) {
+                x96Present = true;
+                joined = rate == 4 * base;
+            }
+        }
+        synthesize(true);
+    }
+
+    /**
      * Synthesizes every channel into {@link #output(int)}.
      *
      * @param undo whether to undo the downmixes the channel extensions embedded in the core channels; without, the
@@ -716,6 +785,12 @@ public final class CoreDecoder {
         synthesized = true;
         if (undo) {
             undoDownmixes();
+        }
+        if (joined != previousJoined) {
+            for (var history : joinHistory) {
+                Arrays.fill(history, 0);
+            }
+            previousJoined = joined;
         }
         var out = pcm;
         var fixed = undo ? 0 : fixedPoint;
@@ -751,6 +826,35 @@ public final class CoreDecoder {
                 X96Decoder.interpolateLfe(lfeX96, lfeSamples * factor, target, lfeHistory);
             } else {
                 lfeInterpolator.interpolate(lfeDecimated, lfeSamples, factor, target, 0, OUTPUT_SCALE);
+            }
+        }
+        if (joined) {
+            joinBands();
+        }
+    }
+
+    /**
+     * Joins the synthesized samples of every channel and a silent upper band into {@link #joinedPcm}, at twice their
+     * rate, through the band synthesis of the lossless extension on 24-bit samples.
+     */
+    private void joinBands() {
+        var count = samples * 64;
+        if (joinedPcm == null) {
+            joinedPcm = new float[SubbandBuffer.MAX_CHANNELS + 1][2 * 8192];
+            joinLow = new int[8192];
+            joinHigh = new int[8192];
+            joinOut = new int[2 * 8192];
+        }
+        var total = channels + (header.lfe > 0 ? 1 : 0);
+        for (var ch = 0; ch < total; ch++) {
+            var source = pcm[ch];
+            for (var n = 0; n < count; n++) {
+                joinLow[n] = Math.clamp(Math.round(source[n] * (1 << 23)), -JOIN_LIMIT, JOIN_LIMIT);
+            }
+            XllBandSynthesis.synthesize(joinLow, joinHigh, joinHistory[ch], joinOut, count);
+            var target = joinedPcm[ch];
+            for (var n = 0; n < 2 * count; n++) {
+                target[n] = joinOut[n] * OUTPUT_SCALE;
             }
         }
     }
@@ -838,7 +942,7 @@ public final class CoreDecoder {
      * @param ch the channel, indexed like {@link #mask(int)}; {@link #channels()} is the LFE channel
      */
     public float[] output(int ch) {
-        return pcm[ch];
+        return joined ? joinedPcm[ch] : pcm[ch];
     }
 
     /**
@@ -920,14 +1024,14 @@ public final class CoreDecoder {
      * {@return the number of PCM samples per channel the last decoded frame synthesizes}
      */
     public int outputSamples() {
-        return samples * (x96Present ? 64 : 32);
+        return samples * (x96Present ? 64 : 32) * (joined ? 2 : 1);
     }
 
     /**
      * {@return the output sample rate of the last decoded frame}
      */
     public int outputRate() {
-        return header.sampleRate * (x96Present ? 2 : 1);
+        return header.sampleRate * (x96Present ? 2 : 1) * (joined ? 2 : 1);
     }
 
     /**
@@ -1052,6 +1156,10 @@ public final class CoreDecoder {
         }
         lfeInterpolator.reset();
         fixedLfeInterpolator.reset();
+        for (var history : joinHistory) {
+            Arrays.fill(history, 0);
+        }
+        previousJoined = false;
         buffer.clearHistory();
         buffer.clearSaved();
         Arrays.fill(masks, 0);

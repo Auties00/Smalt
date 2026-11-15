@@ -13,7 +13,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -95,23 +94,24 @@ final class DtsDecoderDifferentialTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @CsvSource({"xll_51_24_48_768, 0", "xll_xch_61_24_48_768, 512", "xll_71_24_48_768_0, 512",
-                "xll_71_24_48_768_1, 512", "xll_71_24_96_768, 1024", "xll_x96_51_24_96_1509, 0"})
-        @DisplayName("lossless streams over a core match ffmpeg sample for sample")
-        void losslessOverCore(String name, int from) {
-            // ffmpeg outputs the core alone for the first frame of a stream with several channel sets: its LFE channel
-            // holds 40 or 56 where the same source coded in one channel set (xll_51_24_48_768) holds 0, as Smalt does
+        @CsvSource({"xll_51_24_48_768, false", "xll_xch_61_24_48_768, true", "xll_71_24_48_768_0, true",
+                "xll_71_24_48_768_1, true", "xll_71_24_96_768, true", "xll_x96_51_24_96_1509, false"})
+        @DisplayName("lossless streams over a core match ffmpeg sample for sample, every frame")
+        void losslessOverCore(String name, boolean firstFrameIsCore) {
+            // ffmpeg outputs the fixed-point core without the residuals for the first frame of the streams with several
+            // channel sets (DtsFixedCoreDifferentialTest.fateFirstFrame pins it), so that frame is compared where it
+            // follows a frame with the extension
             Oracle.assume(Oracle.Tool.FFMPEG);
             var file = vector(name);
-            var decoded = DtsTestSupport.decodeFile(file, DtsDecoderOptions.defaults());
-            var reference = DtsTestSupport.ffmpegIntegers(file);
-            var actual = DtsTestSupport.toInt32(decoded.samples());
-            assertEquals(reference.length, actual.length, "sample count");
-            var start = from * decoded.channels();
-            Tolerance.exact().assertWithin(name, Arrays.copyOfRange(reference, start, reference.length),
-                    Arrays.copyOfRange(actual, start, actual.length));
-            for (var i = 0; i < start; i++) {
-                assertEquals(0, actual[i], "first frame sample " + i);
+            var decoded = DtsTestSupport.assertLosslessLikeFfmpeg(name, file, firstFrameIsCore);
+            if (firstFrameIsCore) {
+                // the streams start with the source's silence, which the same source in one channel set
+                // (xll_51_24_48_768) decodes to in ffmpeg from its first frame, where ffmpeg's first frame of these
+                // holds the LFE of the core
+                var first = decoded.samples().length / DtsTestSupport.units(file).size();
+                for (var i = 0; i < first; i++) {
+                    assertEquals(0.0f, decoded.samples()[i], "first frame sample " + i);
+                }
             }
         }
     }
@@ -120,21 +120,12 @@ final class DtsDecoderDifferentialTest {
     @DisplayName("lossless streams above 96 kHz")
     final class Above96 {
         @ParameterizedTest(name = "{0}")
-        @CsvSource({"xll_51_16_192_768_0, 0", "xll_51_16_192_768_1, 2048"})
-        @DisplayName("match ffmpeg sample for sample")
-        void lossless(String name, int from) {
-            // as for the 7.1 streams over a core, ffmpeg outputs the core alone for the first frame of a stream with
-            // several channel sets
+        @ValueSource(strings = {"xll_51_16_192_768_0", "xll_51_16_192_768_1"})
+        @DisplayName("match ffmpeg sample for sample, every frame")
+        void lossless(String name) {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var file = vector(name);
-            var decoded = DtsTestSupport.decodeFile(file, DtsDecoderOptions.defaults());
-            var reference = DtsTestSupport.ffmpegIntegers(file);
-            var actual = DtsTestSupport.toInt32(decoded.samples());
+            var decoded = DtsTestSupport.assertLosslessLikeFfmpeg(name, vector(name), false);
             assertEquals(192000, decoded.sampleRate());
-            assertEquals(reference.length, actual.length, "sample count");
-            var start = from * decoded.channels();
-            Tolerance.exact().assertWithin(name, Arrays.copyOfRange(reference, start, reference.length),
-                    Arrays.copyOfRange(actual, start, actual.length));
         }
 
         @ParameterizedTest(name = "{0}")
