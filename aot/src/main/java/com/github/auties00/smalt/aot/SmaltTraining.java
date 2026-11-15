@@ -124,7 +124,7 @@ public final class SmaltTraining {
      * application's in the order given, and waits for the JIT compiler to be idle. The run ends
      * after a cycle, at least the third, in which no further method of a class in
      * {@link TrainingOptions#trackedPackages()} was compiled at the highest tier, or once
-     * {@link TrainingOptions#maxDuration()} has passed since the setup ended; without the Flight
+     * {@link TrainingOptions#maxDuration()} has passed since the cycles began, after the setup; without the Flight
      * Recorder, which reports the compilations, it ends after the eighth cycle. A workload whose round
      * throws is reported as skipped and not run again; the run goes on. A name that two workloads
      * share is reported with a {@code #2}, {@code #3}, ... suffix for the later ones.
@@ -169,13 +169,14 @@ public final class SmaltTraining {
         var names = uniqueNames(workloads);
         var rounds = new int[workloads.size()];
         var failed = new boolean[workloads.size()];
-        var deadline = setupEnd + options.maxDuration().toNanos();
         CompilationWatch watch;
         try {
             watch = CompilationWatch.start(options.trackedPackages());
         } catch (RuntimeException | LinkageError exception) {
             watch = null;
         }
+        // the limit counts from the first cycle: starting the recording can itself take longer than a short limit
+        var deadline = System.nanoTime() + options.maxDuration().toNanos();
         var cycles = 0;
         var converged = false;
         try {
