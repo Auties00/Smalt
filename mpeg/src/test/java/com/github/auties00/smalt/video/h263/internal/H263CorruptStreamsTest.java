@@ -380,6 +380,46 @@ class H263CorruptStreamsTest {
         assertMacroblockRefused(picture(data, 0), bits);
     }
 
+    @Test
+    @DisplayName("refuses the ERPS mode with the arithmetic code, which U.1 forbids")
+    void arithmeticCodeWithErps() {
+        // OPPTYPE after the source format: the custom picture clock, then UMV, SAC, AP, AIC, DF, SS, RPS, ISD, AIV,
+        // MQ, a one and ERPS
+        var data = H263AnnexStreamsTest.resource("smalt-erps-noumv.263");
+        var intra = picture(data, 0);
+        assertEquals(1, field(intra, UFEP, 3));
+        assertEquals(0, field(intra, SOURCE_FORMAT + 5, 1), "SAC");
+        assertEquals(1, field(intra, SOURCE_FORMAT + 15, 1), "ERPS");
+        H263PlusStream.Sink sink = (picture, time, keyframe, layer, subBitstream) -> { };
+        new H263PlusStream(MediaLimits.defaults()).decode(intra, 0, intra.length, sink);
+        setField(intra, SOURCE_FORMAT + 5, 1, 1);
+        var stream = new H263PlusStream(MediaLimits.defaults());
+        var exception = org.junit.jupiter.api.Assertions.assertThrows(MediaException.Malformed.class,
+                () -> stream.decode(intra, 0, intra.length, sink));
+        assertEquals("H.263 ERPS mode with arithmetic coding", exception.getMessage());
+    }
+
+    @Test
+    @DisplayName("refuses the Unrestricted Motion Vector mode with the arithmetic code and PLUSPTYPE, which 5.1.4.6 forbids")
+    void arithmeticCodeWithPlusUnrestrictedVectors() {
+        var data = H263AnnexStreamsTest.resource("smalt-sac-plus.263");
+        var intra = picture(data, 0);
+        assertEquals(1, field(intra, UFEP, 3));
+        assertEquals(0, field(intra, SOURCE_FORMAT + 4, 1), "UMV");
+        assertEquals(1, field(intra, SOURCE_FORMAT + 5, 1), "SAC");
+        H263PlusStream.Sink sink = (picture, time, keyframe, layer, subBitstream) -> { };
+        new H263PlusStream(MediaLimits.defaults()).decode(intra, 0, intra.length, sink);
+        // turning UMV on adds UUI, "1" for vectors limited as in D.2, after CPM
+        setField(intra, SOURCE_FORMAT + 4, 1, 1);
+        var bits = new Bits().copy(intra, 0, UUI).code("1").copy(intra, UUI, intra.length * 8L);
+        var umv = bits.bytes();
+        var stream = new H263PlusStream(MediaLimits.defaults());
+        var exception = org.junit.jupiter.api.Assertions.assertThrows(MediaException.Malformed.class,
+                () -> stream.decode(umv, 0, umv.length, sink));
+        assertEquals("H.263 Unrestricted Motion Vector mode with arithmetic coding and PLUSPTYPE",
+                exception.getMessage());
+    }
+
     private static byte[] pictureOfType(byte[] data, int type) {
         var starts = H263AnnexStreamsTest.pictureStarts(data);
         for (var k = 0; k < starts.size(); k++) {

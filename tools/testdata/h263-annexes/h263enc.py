@@ -2480,9 +2480,11 @@ def encode_b_picture(enc, index, opts, forward_refs, backward_refs, trb, trd):
             direct_f.append((fx, fy))
             direct_b.append((bx_, by_))
         candidates = []
-        pd = average(predict_mb(fwd[0], mbx, mby, size, direct_f, rounding, clip_l, clip_c, True),
-                     predict_mb(backward_refs[0], mbx, mby, size, direct_b, rounding, clip_l, clip_c, True))
-        candidates.append((sad(src, pd, mbx, mby, size) - 200, 'direct', pd, None, None, 0, 0))
+        if fwd:
+            # a segment whose ERPS layer takes every reference backward has no forward one, and so no direct mode
+            pd = average(predict_mb(fwd[0], mbx, mby, size, direct_f, rounding, clip_l, clip_c, True),
+                         predict_mb(backward_refs[0], mbx, mby, size, direct_b, rounding, clip_l, clip_c, True))
+            candidates.append((sad(src, pd, mbx, mby, size) - 200, 'direct', pd, None, None, 0, 0))
         best_f = None
         for r, ref in enumerate(fwd[:(len(fwd) if multiple else 1)]):
             for v in opts.get('search', SEARCH):
@@ -2494,6 +2496,8 @@ def encode_b_picture(enc, index, opts, forward_refs, backward_refs, trb, trd):
                     best_f = (s, p, v, r)
         best_b = None
         for r, ref in enumerate(backward_refs[:(2 if two else 1)]):
+            if r != opts.get('backward_ref', {}).get(mb, r):
+                continue
             for v in opts.get('search', SEARCH):
                 if rru and ((v[0] % 2 == 0 and v[0]) or (v[1] % 2 == 0 and v[1])):
                     continue
@@ -2501,11 +2505,13 @@ def encode_b_picture(enc, index, opts, forward_refs, backward_refs, trb, trd):
                 s = sad(src, p, mbx, mby, size) + 64 * r
                 if best_b is None or s < best_b[0]:
                     best_b = (s, p, v, r)
-        candidates.append((best_f[0], 'forward', best_f[1], best_f[2], None, best_f[3], 0))
+        if best_f is not None:
+            candidates.append((best_f[0], 'forward', best_f[1], best_f[2], None, best_f[3], 0))
         candidates.append((best_b[0], 'backward', best_b[1], None, best_b[2], 0, best_b[3]))
-        pbi = average(best_f[1], best_b[1])
-        candidates.append((sad(src, pbi, mbx, mby, size) + 50, 'bidir', pbi, best_f[2], best_b[2], best_f[3],
-                           best_b[3]))
+        if best_f is not None:
+            pbi = average(best_f[1], best_b[1])
+            candidates.append((sad(src, pbi, mbx, mby, size) + 50, 'bidir', pbi, best_f[2], best_b[2], best_f[3],
+                               best_b[3]))
         forced = opts.get('force', {}).get(mb)
         bidir = opts.get('force_bidir', {}).get(mb)
         if mb in opts.get('intra_mbs', ()):
@@ -3917,6 +3923,99 @@ def recipe_bad_refs(enc):
 
 CONFIGS.update({
     'badrefs': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV'}, 'recipe': recipe_bad_refs},
+})
+
+
+def recipe_bad_sizes(enc):
+    """A corrupt stream, for decoders to conceal: Annex U macroblocks of 176x96 and 128x96 pictures whose reference
+    index names a reference of the same width and another height (a P-picture's forward reference, a B-picture's
+    second backward reference) or of another width (a B-picture's second backward reference), after implicit size
+    changes. The reconstruction this returns is the encoder's, not what a decoder makes of the corrupt
+    macroblocks."""
+    out = Bits()
+    display = {}
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    buf = ErpsBuffer()
+    mmco0 = [('buffer', 10, 9, 4, 1)]
+    bw, i0 = encode_picture(enc, stream, 0, 0, 8, [], {'tr': 0, 'pn': 0,
+                                                       'erps': erps_writer(0, sliding=False, mmco=mmco0)})
+    append(out, bw)
+    buf.store(i0, 0, False, mmco0)
+    display[0] = i0
+    short = {'width': 176, 'height': 96, 'format': 6}
+    narrow = {'width': 128, 'height': 96, 'format': 1}
+    # P1 resamples I0 to its size; P2 names I0, of 176x144, as the reference of macroblock 7
+    for pn, tr, extra in ((1, 2, {}), (2, 4, {'bad_refs': {7: 1}})):
+        refs = buf.order((), pn)
+        opts = {'tr': tr, 'pn': pn, 'search': SEARCH, 'mrpa': True, 'max_refs': 1,
+                'erps': erps_writer(1, multiple=True), **short, **extra}
+        bw, pic = encode_picture(enc, stream, tr, 1, 8, refs, opts)
+        append(out, bw)
+        buf.store(pic, pn, True, ())
+        display[tr] = pic
+    # B3 re-maps P2 and I0 to its two backward references and predicts macroblock 20 from I0
+    remaps = [('neg', 1), ('neg', 2)]
+    order = buf.order(remaps, 3)
+    opts = {'tr': 3, 'pn': 3, 'mrpa': True, 'two_backward': True, 'remaps': remaps, 'search': SEARCH,
+            'force': {20: 'backward'}, 'backward_ref': {20: 1}, **short}
+    bw, b3 = encode_b_picture(enc, 3, opts, order[2:], order[:2], 3 - order[2].tr, order[0].tr - order[2].tr)
+    append(out, bw)
+    display[3] = b3
+    # P4 resamples P2 to 128x96; B5 predicts macroblock 9 from its second backward reference, P2, of 176x96
+    refs = buf.order((), 3)
+    bw, p4 = encode_picture(enc, stream, 6, 1, 8, refs, {'tr': 6, 'pn': 3, 'search': SEARCH, 'max_refs': 1,
+                                                         'erps': erps_writer(1), **narrow})
+    append(out, bw)
+    buf.store(p4, 3, True, ())
+    display[6] = p4
+    order = buf.order((), 4)
+    opts = {'tr': 5, 'pn': 4, 'mrpa': True, 'two_backward': True, 'search': SEARCH,
+            'force': {9: 'backward'}, 'backward_ref': {9: 1}, **narrow}
+    bw, b5 = encode_b_picture(enc, 5, opts, order[2:], order[:2], 5 - order[2].tr, order[0].tr - order[2].tr)
+    append(out, bw)
+    display[5] = b5
+    return out, [display[k] for k in sorted(display)]
+
+
+def recipe_erps_b_rpr(enc):
+    """A B-picture with Reference Picture Resampling (P.1) and the Enhanced Reference Picture Selection mode whose
+    group of blocks ERPS layers re-map its references: one segment takes both pictures of the buffer as its two
+    backward references, leaving it no forward reference and so no use of the warped one, and the next one names
+    the pictures again in their picture-layer order, whose forward reference is the warped one again."""
+    out = Bits()
+    stream = Stream(enc.cfg, enc.source, enc.sw, enc.sh)
+    buf = ErpsBuffer()
+    display = {}
+    mmco0 = [('buffer', 10, 9, 4, 1)]
+    bw, i0 = encode_picture(enc, stream, 0, 0, 8, [], {'tr': 0, 'pn': 0,
+                                                       'erps': erps_writer(0, sliding=False, mmco=mmco0)})
+    append(out, bw)
+    buf.store(i0, 0, False, mmco0)
+    display[0] = i0
+    refs = buf.order((), 1)
+    bw, p2 = encode_picture(enc, stream, 2, 1, 8, refs, {'tr': 2, 'pn': 1, 'search': SEARCH,
+                                                         'erps': erps_writer(1), 'rounding': 1})
+    append(out, bw)
+    buf.store(p2, 1, True, ())
+    display[2] = p2
+    order = buf.order((), 2)
+    segs = gob_segments(11, 9, [3, 6])
+    opts = {'tr': 1, 'pn': 2, 'mrpa': False, 'search': SEARCH, 'segments': segs,
+            'warp': {'w': [2, -1, 3, 1, -2, 2, 1, 0], 'accuracy': 16, 'fill': 2},
+            'segment_erps': {1: erps_b_writer(True, two=True), 2: erps_b_writer(False)},
+            'segment_forward': {1: []}, 'segment_backward': {1: order[:2]},
+            'segment_mrpa': {1: True}, 'segment_two': {1: True},
+            'force': {**{mb: 'backward' for mb in range(33, 66)}, 0: 'forward', 1: 'bidir', 70: 'forward'},
+            'backward_ref': {34: 1, 40: 1, 41: 0}}
+    bw, b1 = encode_b_picture(enc, 1, opts, order[1:], order[:1], 1, 2)
+    append(out, bw)
+    display[1] = b1
+    return out, [display[k] for k in sorted(display)]
+
+
+CONFIGS.update({
+    'badsizes': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV'}, 'recipe': recipe_bad_sizes},
+    'erpsbrpr': {'width': 176, 'height': 144, 'modes': {'ERPS', 'UMV'}, 'recipe': recipe_erps_b_rpr},
 })
 
 

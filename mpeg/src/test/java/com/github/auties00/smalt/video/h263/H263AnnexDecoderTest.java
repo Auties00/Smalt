@@ -59,7 +59,7 @@ class H263AnnexDecoderTest {
             "smalt-erps-b-pr0", "smalt-snr-rpr", "smalt-dps-four", "smalt-erps-b-slices",
             "smalt-sac", "smalt-sac-plus", "smalt-snr-gob", "smalt-snr-gob-erps", "smalt-dps-ipb-slices",
             "smalt-erps-four", "smalt-rps-rpr", "smalt-erps-rpr", "smalt-spatial",
-            "smalt-spatial-rpr", "smalt-ipb-sac"
+            "smalt-spatial-rpr", "smalt-ipb-sac", "smalt-erps-b-rpr"
     })
     @DisplayName("hands out the annex engine's pictures in display order")
     void matchesAnnexEngine(String name) {

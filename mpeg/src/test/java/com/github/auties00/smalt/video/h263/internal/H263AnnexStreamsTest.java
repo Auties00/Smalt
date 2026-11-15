@@ -75,7 +75,7 @@ class H263AnnexStreamsTest {
                     Arrays.stream(fields[3].split(",")).mapToInt(Integer::parseInt).toArray(), fields[4].split(","),
                     fields[5].split(",")));
         }
-        assertEquals(80, vectors.size(), "vectors in golden.tsv");
+        assertEquals(81, vectors.size(), "vectors in golden.tsv");
         return vectors;
     }
 

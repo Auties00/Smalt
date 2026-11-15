@@ -550,6 +550,16 @@ final class PictureHeader {
             throw new MediaException.Malformed("H.263 data partitioned slices without the slice structured mode, or "
                     + "with arithmetic coding or enhanced reference picture selection");
         }
+        if ((state.modes & LayerState.SAC) != 0 && (state.modes & LayerState.ERPS) != 0) {
+            // U.1: the reference indexes of the ERPS mode have no arithmetic code
+            throw new MediaException.Malformed("H.263 ERPS mode with arithmetic coding");
+        }
+        if ((state.modes & LayerState.SAC) != 0 && (state.modes & LayerState.UMV) != 0) {
+            // 5.1.4.6: with PLUSPTYPE the vectors of the UMV mode take the reversible code of Table D.3, which has no
+            // arithmetic code
+            throw new MediaException.Malformed("H.263 Unrestricted Motion Vector mode with arithmetic coding and "
+                    + "PLUSPTYPE");
+        }
         if ((modes & LayerState.RPS) != 0 && (modes & LayerState.ERPS) != 0) {
             throw new MediaException.Malformed("H.263 RPS and ERPS modes together");
         }

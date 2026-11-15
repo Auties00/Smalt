@@ -1190,7 +1190,7 @@ the Recommendation for the modes the TMN encoder lacks (Annexes C, K with rectan
 and B-pictures, Improved PB-frames, SNR and spatial scalability, the arithmetic code of Annex E, the per-block vector
 predictors of F.2 and Annexes I, S and T combined with them). `golden.tsv` holds the MD5 of the reconstruction each
 stream implies with the double precision reference inverse DCT, which the annex decoder reproduces sample for sample
-with that transform; `smalt-bad-refs` is corrupt on purpose and has no row. The script also decodes the `smalt-ist`,
+with that transform; `smalt-bad-refs` and `smalt-bad-sizes` are corrupt on purpose and have no row. The script also decodes the `smalt-ist`,
 `smalt-b-ist`, `smalt-ipb-ist`, `smalt-v1-umv` and `smalt-sac` streams, and the enhancement layers of `smalt-snr-gob`
 and `smalt-spatial`, with the TMN 3.2 decoder `tmndec -r` and fails unless it reproduces the encoder's reconstruction;
 Improved PB-frames with the arithmetic code (`smalt-ipb-sac`) have no outside check, since the TMN 3.2 encoder and

@@ -54,8 +54,11 @@ sample:
   and the one-bit warping parameter refinements of P.2.2, over lower layer pictures with and without resampling
   (smalt-spatial-rpr), and Improved PB-frames with the arithmetic code (smalt-ipb-sac; the TMN 3.2 encoder's
   streams of that combination are not used: its decoder decodes them otherwise than its encoder reconstructs, and
-  neither agrees with the models of E.7 and Table M.1). smalt-bad-refs is corrupt on purpose (reference indexes past the references, or naming a
-  reference of another size) and has no golden.tsv row. With --own the script
+  neither agrees with the models of E.7 and Table M.1), and a B-picture with Annex P whose group of blocks ERPS
+  layers take both pictures of the buffer backward, leaving a segment no forward reference (smalt-erps-b-rpr).
+  smalt-bad-refs and smalt-bad-sizes are corrupt on purpose (reference indexes past the references, or naming a
+  reference of another size: another width, or the same width and another height, as forward and as second
+  backward references) and have no golden.tsv row. With --own the script
   regenerates only the named smalt-* streams, which needs no TMN binary except tmndec for the streams it must
   reproduce (passed with --tmndec), and replaces or adds their rows of golden.tsv.
 - the smalt-encoder-* streams are coded by Smalt's H.263 encoder in the Advanced Prediction mode (Annex F, with
@@ -121,9 +124,10 @@ OWN = [
     ('smalt-snr-gob-erps', 'snrgob'), ('smalt-dps-ipb-slices', 'dpsipbslices'),
     ('smalt-erps-four', 'erpsfour'), ('smalt-rps-rpr', 'rpsrpr'), ('smalt-erps-rpr', 'erpsrpr'),
     ('smalt-spatial', 'spatialplain'), ('smalt-spatial-rpr', 'spatial'), ('smalt-ipb-sac', 'ipbsac'),
+    ('smalt-erps-b-rpr', 'erpsbrpr'),
 ]
 # corrupt streams, written without a golden.tsv row: their tests check the concealment
-CORRUPT = [('smalt-bad-refs', 'badrefs')]
+CORRUPT = [('smalt-bad-refs', 'badrefs'), ('smalt-bad-sizes', 'badsizes')]
 # streams tmndec -r must reproduce, and streams that must reconstruct the same as another
 TMNDEC_CHECKED = {'smalt-ist', 'smalt-b-ist', 'smalt-ipb-ist', 'smalt-v1-umv', 'smalt-sac', 'smalt-snr-gob',
                   'smalt-spatial'}

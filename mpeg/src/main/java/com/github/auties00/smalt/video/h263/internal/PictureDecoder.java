@@ -1563,7 +1563,8 @@ final class PictureDecoder {
     }
 
     /**
-     * Reconstructs a macroblock of a B-picture (O.4, O.5).
+     * Reconstructs a macroblock of a B-picture (O.4, O.5). The parser gives the macroblocks of a B-picture the
+     * direct, forward, backward, bidirectional or INTRA kind only.
      *
      * @param mb the macroblock
      */
@@ -1593,8 +1594,7 @@ final class PictureDecoder {
                 backwardY[block] = scaleBackward(vy);
             }
         }
-        var useForward = direct || mb.kind == Macroblock.FORWARD || mb.kind == Macroblock.BIDIRECTIONAL
-                || mb.kind == Macroblock.INTER || mb.kind == Macroblock.SKIPPED;
+        var useForward = mb.kind != Macroblock.BACKWARD;
         var useBackward = direct || mb.kind == Macroblock.BACKWARD || mb.kind == Macroblock.BIDIRECTIONAL;
         var forwardReference = useForward ? reference(mb.forwardReference[0]) : null;
         var backwardReference = useBackward ? backwardPicture(mb.backwardReference) : null;

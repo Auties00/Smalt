@@ -1874,12 +1874,15 @@ final class MacroblockParser {
     }
 
     /**
-     * Returns whether parsing ran past the data: past its end, or for arithmetic coded data past the 16 bits the
-     * decoder reads ahead with a margin.
+     * Returns whether parsing ran past the end of the data. Arithmetic coded data never overruns: the arithmetic
+     * decoder reads ahead of its symbols and stops at the zero run that follows the end of the data, and every
+     * other field of a picture with the arithmetic code is arithmetic coded, since neither the ERPS mode, whose
+     * reference indexes are not, nor the Unrestricted Motion Vector mode with PLUSPTYPE, whose vectors take the
+     * reversible code, can be used with it.
      *
      * @return whether the reader overran
      */
     private boolean overrun() {
-        return sac ? reader.position() > reader.limit() + 64 : reader.overrun();
+        return !sac && reader.overrun();
     }
 }

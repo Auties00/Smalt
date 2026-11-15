@@ -120,6 +120,35 @@ class H263PlusStreamRoutingTest {
     }
 
     @Test
+    @DisplayName("conceals macroblocks whose forward or second backward reference has the same width and another height, or another width")
+    void corruptReferenceSizes() throws Exception {
+        var data = H263AnnexStreamsTest.resource("smalt-bad-sizes.263");
+        assertEquals("3084f2bab6f8addf92d7c14b3bbccdc30830ceac00c87ac7c1a71d7519849bd7",
+                java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(data)));
+        var starts = H263AnnexStreamsTest.pictureStarts(data);
+        assertEquals(6, starts.size());
+        var stream = new H263PlusStream(MediaLimits.defaults());
+        var sizes = new java.util.ArrayList<String>();
+        H263PlusStream.Sink sink = (picture, time, keyframe, layer, subBitstream) -> sizes.add(picture.width() + "x"
+                + picture.height());
+        var failed = new java.util.ArrayList<Integer>();
+        for (var k = 0; k < starts.size(); k++) {
+            var end = k + 1 < starts.size() ? starts.get(k + 1) : data.length;
+            try {
+                stream.decode(data, starts.get(k), end - starts.get(k), sink);
+            } catch (MediaException.Malformed expected) {
+                failed.add(k);
+            }
+        }
+        stream.flush(sink);
+        // the third picture, of 176x96, names the first one, of 176x144, as a forward reference; the fourth, a
+        // B-picture of 176x96, names it as its second backward reference; the sixth, a B-picture of 128x96, names
+        // the third, of 176x96, as its second backward reference. The others decode cleanly.
+        assertEquals(List.of(2, 3, 5), failed);
+        assertEquals(List.of("176x144", "176x96", "176x96", "176x96", "128x96", "128x96"), sizes);
+    }
+
+    @Test
     @DisplayName("drops a repeated RPS picture, but decodes an ERPS picture of a repeated reference and a new number")
     void redundantPictures() {
         var rps = H263AnnexStreamsTest.resource("smalt-rps.263");
