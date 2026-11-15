@@ -15,7 +15,8 @@ import java.util.Set;
 /**
  * Checks one method of a class that uses the Vector API against the per-method rules: {@link Rule#VECTOR_HELPER},
  * {@link Rule#VECTOR_OPERATOR}, {@link Rule#VECTOR_SHIFT_COUNT}, {@link Rule#VECTOR_SCALAR_OPERAND},
- * {@link Rule#KERNEL_SIZE}, {@link Rule#EXACT_RECEIVER} and {@link Rule#CARRIED_RECEIVER}.
+ * {@link Rule#KERNEL_SIZE}, {@link Rule#EXACT_RECEIVER}, {@link Rule#CARRIED_RECEIVER} and
+ * {@link Rule#LOOP_RECEIVER}.
  */
 final class MethodRules {
     /** The shift and rotate operators, the only ones that may take a scalar operand (an int count). */
@@ -65,6 +66,9 @@ final class MethodRules {
         if (bytes > KernelLint.MAX_KERNEL_BYTES) {
             findings.add(new Finding(Rule.KERNEL_SIZE, name, method.name, owner.sourceFile, firstLine,
                     "(" + bytes + " bytes, at most " + KernelLint.MAX_KERNEL_BYTES + ")"));
+        }
+        if (!initializer) {
+            findings.addAll(ReceiverLiveness.check(name, owner.sourceFile, method));
         }
         var frames = Exactness.analyze(owner.name, method);
         var line = -1;

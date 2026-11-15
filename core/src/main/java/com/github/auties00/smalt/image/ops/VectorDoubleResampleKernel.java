@@ -34,14 +34,16 @@ final class VectorDoubleResampleKernel implements DoubleResampleKernel {
 
     /**
      * The scalar kernel handling the values the vector loops do not cover.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarDoubleResampleKernel scalar;
+    private static final ScalarDoubleResampleKernel SCALAR = new ScalarDoubleResampleKernel();
 
     /**
      * Constructs the kernel.
      */
     private VectorDoubleResampleKernel() {
-        this.scalar = new ScalarDoubleResampleKernel();
     }
 
     /**
@@ -109,7 +111,7 @@ final class VectorDoubleResampleKernel implements DoubleResampleKernel {
             }
             DOUBLE_VECTOR.cast(a0).intoArray(dst, x);
         }
-        scalar.verticalRange(src, offsets, weights, wOff, taps, dst, x, length);
+        SCALAR.verticalRange(src, offsets, weights, wOff, taps, dst, x, length);
     }
 
     @Override

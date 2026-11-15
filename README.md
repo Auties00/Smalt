@@ -227,10 +227,17 @@ fallback, many times slower, so the tests alone do not show it; three checks do:
 - The kernel lint (`kernel-lint`, run in the `it` module's `verify`) reads the kernels' bytecode and fails
   on what keeps C2 from compiling a Vector API operation (calls on vectors of unknown class, vectors in
   and out of methods, operators that are not constants, oversized kernels, wide species outside
-  `Simd.WIDE`), printing `File.java:line` and a rule id; `internal.simd.KernelLintSuppress` with a reason,
-  or a row of the shrink-only `tools/lint/kernel-baseline.tsv`, accepts a finding. forbidden-apis bans the
-  Vector API's convenience methods, `jdk.incubator.vector` outside the `Vector*` classes and the
-  transcendental `java.lang.Math` methods, whose results may depend on the CPU (`StrictMath` does not).
+  `Simd.WIDE`) and on a kernel reading its own reference after a vector loop (the exposure to the
+  Windows AVX-512 defect described under [JVM flags](#jvm-flags)), printing `File.java:line` and a rule
+  id; `internal.simd.KernelLintSuppress` with a reason, or a row of the shrink-only
+  `tools/lint/kernel-baseline.tsv`, accepts a finding. forbidden-apis bans the Vector API's convenience
+  methods, `jdk.incubator.vector` outside the `Vector*` classes and the transcendental `java.lang.Math`
+  methods, whose results may depend on the CPU (`StrictMath` does not).
+- On Windows CI every test JVM installs the test kit's `NativeCrashDumps` (through
+  `SMALT_TEST_NATIVE_CRASH_DUMPS`): an unhandled exception filter that writes a minidump of a crash on a
+  thread the JVM did not create, which the JVM reports nowhere, and a vectored handler that records every
+  exception into a file-mapped ring that outlives the process, for a crash no handler receives;
+  `.github/scripts/windows-crash-dumps.ps1` prints both when a job fails.
 - Nightly, the bit-exact suites run with C1 only (`-XX:TieredStopAtLevel=1`, on the scalar twins: C1
   leaves every Vector API operation on its fallback) and with C2 only (on the Vector API kernels), and
   `JitStressTest` runs mixed codec workloads in fresh JVMs and fails on any allocation C2 code makes in
@@ -1250,6 +1257,12 @@ channels, or two tracks, at 32 kHz in 12 bits. A DV source is copied when no for
 |---|---|---|---|
 | Cameras, screens and windows | `smalt-capture` | `capture` | Windows: Media Foundation (camera controls through the source's `IAMCameraControl` and `IAMVideoProcAmp`), DXGI desktop duplication or GDI (screens), Windows Graphics Capture or `PrintWindow` (windows), configuration manager notifications of cameras and monitors. macOS: AVFoundation (focus, exposure and white balance modes, zoom), ScreenCaptureKit (screens and windows; `CGDisplayCreateImage` screens before 12.3). Linux: V4L2 single-planar and multi-planar cameras (with their controls; `/dev` watched for cameras) in every field order (interlaced, sequential and alternating fields woven, single fields line-doubled) and in planar, semi-planar and packed 4:2:0, 4:2:2 and 4:4:4 Y'CbCr, 16-, 24- and 32-bit R'G'B', 8- to 16-bit luma and Motion-JPEG; in a Wayland session, screens (the compositor's outputs) through the `xdg-desktop-portal` screen cast portal and PipeWire, in shared memory or linear DMA-BUFs, the pointer embedded by the compositor or drawn from the stream's metadata; X11 with MIT-SHM, Composite and XFixes (screens and windows of TrueColor visuals of 16, 24 or 32 bits per pixel, pointer). Screen and window regions, the pointer drawn or left out (`ScreenCaptureOptions`), exposure, focus, zoom, white balance, power-line frequency and the picture controls of a camera (`CameraControls`), and a listener of cameras and screens plugged in, removed or rearranged (`VideoDevices.addListener`). Called with FFM, so it needs `--enable-native-access=com.github.auties00.smalt.capture`. |
 | Microphones and speakers | `smalt-capture` | `capture.audio` | Windows: WASAPI (shared mode with the engine's PCM converter and `IAudioClient3` short periods, exclusive mode, loopback of an output, endpoint notifications). macOS: CoreAudio HAL output unit (shared mode, exclusive mode through the device's hog mode, loopback of an output through a process tap from macOS 14.2). Linux: ALSA, whose `default` device reaches PulseAudio or PipeWire (shared mode; exclusive mode opens a device without software resampling), plus the sinks and sources of a PulseAudio or PipeWire (`pipewire-pulse`) sound server, whose defaults are then the default devices; loopback of an output through the monitor source of the sink it plays to; changes reported as they happen through the server's subscription and `/dev/snd`. Float or 16-bit samples, any rate and channel count in the shared mode, capture and playback delays for echo cancellation. Run on the CI runners of all three systems against loopback devices. |
+
+On Windows, the first capture call that joins COM's multithreaded apartment keeps that apartment, and the
+libraries it loaded, until the process exits (`CoIncrementMTAUsage`): audio engine and capture libraries keep
+worker threads running after a stream is released, and unloading them under those threads would crash the
+process. A thread of the application that never initialized COM then belongs to the implicit multithreaded
+apartment.
 
 ### Known limits
 
@@ -2677,6 +2690,12 @@ implementation 'com.github.auties00:smalt-image'
   you which one you got.
 - `--enable-native-access=com.github.auties00.smalt.capture` (or `ALL-UNNAMED` on the class path) is
   needed only by `smalt-capture`.
+- On Windows x64 with AVX-512, HotSpot 26 can lose a value C2 keeps in one of the registers `xmm16` to
+  `xmm31` across a safepoint, which crashes the JVM, or corrupts the result, in a vector kernel (a JDK
+  defect, seen on GitHub's Windows runners; Linux and AVX2 machines are not affected). Smalt's kernels keep
+  no reference to themselves live across a vector loop, which removes the instances seen so far, but
+  the arrays a loop works on stay exposed; `-XX:UseAVX=2` avoids it fully, at the cost of the 512-bit
+  instructions.
 - `-XX:AOTCache=app.aot` starts with an ahead-of-time cache recorded from a training run; see
   [Start fast with an AOT cache](#start-fast-with-an-aot-cache).
 

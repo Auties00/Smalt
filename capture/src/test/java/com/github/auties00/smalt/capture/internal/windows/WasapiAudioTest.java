@@ -19,10 +19,12 @@ import org.junit.jupiter.api.condition.OS;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -514,8 +516,14 @@ class WasapiAudioTest {
                 var click = new float[frames];
                 click[0] = 0.9f;
                 var expectedPlay = new long[5];
+                var playDelays = new long[5];
+                var captureDelays = new long[5];
                 var captured = new long[5];
                 var found = new AtomicInteger();
+                // the cable keeps the last audio a previous session played and replays it to a new capture
+                // stream, so a spike captured before the first click was handed over is not a click
+                var firstClickWritten = new AtomicLong(Long.MAX_VALUE);
+                var stale = new AtomicInteger();
                 var failure = new AtomicReference<Throwable>();
                 var listener = Thread.ofPlatform().start(() -> {
                     var chunk = new float[recorder.periodFrames()];
@@ -524,10 +532,17 @@ class WasapiAudioTest {
                             if (recorder.read(chunk, 0, chunk.length) < chunk.length) {
                                 return;
                             }
-                            var firstFrameNanos = System.nanoTime() - recorder.delayMicros() * 1_000;
+                            var captureDelay = recorder.delayMicros();
+                            var firstFrameNanos = System.nanoTime() - captureDelay * 1_000;
                             for (var i = 0; i < chunk.length; i++) {
                                 if (Math.abs(chunk[i]) > 0.3f) {
-                                    captured[found.getAndIncrement()] = firstFrameNanos + i * 1_000_000_000L / recorder.sampleRate();
+                                    var at = firstFrameNanos + i * 1_000_000_000L / recorder.sampleRate();
+                                    if (at < firstClickWritten.get()) {
+                                        stale.incrementAndGet();
+                                        break;
+                                    }
+                                    captureDelays[found.get()] = captureDelay;
+                                    captured[found.getAndIncrement()] = at;
                                     break;
                                 }
                             }
@@ -543,7 +558,12 @@ class WasapiAudioTest {
                     for (var i = 0; i < 30; i++) {
                         player.write(silence, 0, frames);
                     }
-                    expectedPlay[n] = System.nanoTime() + player.delayMicros() * 1_000;
+                    playDelays[n] = player.delayMicros();
+                    var now = System.nanoTime();
+                    expectedPlay[n] = now + playDelays[n] * 1_000;
+                    if (n == 0) {
+                        firstClickWritten.set(now);
+                    }
                     player.write(click, 0, frames);
                 }
                 for (var i = 0; i < 50 && found.get() < captured.length; i++) {
@@ -557,7 +577,11 @@ class WasapiAudioTest {
                     errors.add((captured[n] - expectedPlay[n]) / 1_000);
                 }
                 System.out.println("click round trip: capture time minus predicted play time (us) " + errors
-                                   + "; includes the cable's own latency");
+                                   + "; includes the cable's own latency; playback delays (us) "
+                                   + Arrays.toString(playDelays) + ", capture delays (us) "
+                                   + Arrays.toString(captureDelays) + ", player buffer "
+                                   + player.latencyMicros() + " us, recorder buffer " + recorder.latencyMicros()
+                                   + " us; spikes captured before the first click (the cable's stale audio): " + stale.get());
                 for (var error : errors) {
                     assertTrue(Math.abs(error) < 300_000, "prediction off by " + error + " us");
                 }

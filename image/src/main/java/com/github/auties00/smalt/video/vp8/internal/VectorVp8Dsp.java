@@ -365,8 +365,11 @@ public final class VectorVp8Dsp extends Vp8Dsp {
 
     /**
      * The scalar kernels used where vectors do not pay off.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarVp8Dsp scalar = new ScalarVp8Dsp();
+    private static final ScalarVp8Dsp SCALAR = new ScalarVp8Dsp();
 
     /**
      * Creates the vector implementation.
@@ -489,7 +492,7 @@ public final class VectorVp8Dsp extends Vp8Dsp {
             return;
         }
         if (width == 4) {
-            scalar.sixtap(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
+            SCALAR.sixtap(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
             return;
         }
         if (my == 0) {
@@ -730,7 +733,7 @@ public final class VectorVp8Dsp extends Vp8Dsp {
             return;
         }
         if (width == 4) {
-            scalar.bilinear(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
+            SCALAR.bilinear(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
             return;
         }
         if (my == 0) {
@@ -1280,7 +1283,7 @@ public final class VectorVp8Dsp extends Vp8Dsp {
             return;
         }
         if ((edges & (EDGE_LEFT | EDGE_INNER)) == EDGE_INNER) {
-            scalar.filterNormal(y, yOff, yStride, u, v, uvOff, uvStride, mbLimit, subLimit, interiorLimit, hevThreshold,
+            SCALAR.filterNormal(y, yOff, yStride, u, v, uvOff, uvStride, mbLimit, subLimit, interiorLimit, hevThreshold,
                     edges, scratch);
             return;
         }

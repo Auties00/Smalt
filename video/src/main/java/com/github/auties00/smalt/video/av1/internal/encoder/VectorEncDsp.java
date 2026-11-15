@@ -208,7 +208,9 @@ final class VectorEncDsp extends EncDsp {
                     kept.compare(VectorOperators.NE, INTS_8.cast(zero))));
         }
         if (INTS_8.cast(big).reduceLanes(VectorOperators.OR) >= HUGE_MAGNITUDE) {
-            return scalar.quantizeDz(coeff, n, iscan, qcoeff, zbinDc, zbinAc, roundDc, roundAc, quantDc, quantAc,
+            // the static kernel, so that no reference to this kernel is live across the loop's safepoint poll
+            // (see the JVM flags section of the README)
+            return EncDsp.SCALAR.quantizeDz(coeff, n, iscan, qcoeff, zbinDc, zbinAc, roundDc, roundAc, quantDc, quantAc,
                     shiftDc, shiftAc, limit);
         }
         return INTS_8.cast(eobs).reduceLanes(VectorOperators.MAX);

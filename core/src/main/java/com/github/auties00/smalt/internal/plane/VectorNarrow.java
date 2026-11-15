@@ -56,14 +56,16 @@ final class VectorNarrow extends Narrow {
 
     /**
      * The kernels of the row ends.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarNarrow scalar;
+    private static final ScalarNarrow SCALAR = new ScalarNarrow();
 
     /**
      * Constructs the kernels.
      */
     private VectorNarrow() {
-        this.scalar = new ScalarNarrow();
     }
 
     /**
@@ -96,7 +98,7 @@ final class VectorNarrow extends Narrow {
             round(src, srcOffset, srcStride, dst, dstOffset, dstStride, full, height, shift);
         }
         if (full < width) {
-            scalar.narrow(src, srcOffset + full, srcStride, dst, dstOffset + full, dstStride, width - full, height,
+            SCALAR.narrow(src, srcOffset + full, srcStride, dst, dstOffset + full, dstStride, width - full, height,
                     shift);
         }
     }

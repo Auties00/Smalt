@@ -25,14 +25,16 @@ final class VectorBitReverser implements BitReverser {
 
     /**
      * Reverses the tail shorter than one vector.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarBitReverser tail;
+    private static final ScalarBitReverser TAIL = new ScalarBitReverser();
 
     /**
      * Constructs the kernel.
      */
     private VectorBitReverser() {
-        this.tail = new ScalarBitReverser();
     }
 
     /**
@@ -53,6 +55,6 @@ final class VectorBitReverser implements BitReverser {
                     .lanewise(VectorOperators.REVERSE)
                     .intoArray(target, targetOffset + index);
         }
-        tail.reverse(source, sourceOffset + index, target, targetOffset + index, length - index);
+        TAIL.reverse(source, sourceOffset + index, target, targetOffset + index, length - index);
     }
 }

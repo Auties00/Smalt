@@ -75,7 +75,13 @@
         -->
         <smalt.test.forks>1</smalt.test.forks>
         <smalt.test.heap></smalt.test.heap>
-        <smalt.test.argLine>${smalt.test.agent} --add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -XX:+EnableDynamicAgentLoading -Dsmalt.simd=${smalt.test.simd} ${smalt.test.heap} ${smalt.test.jvmArgs}</smalt.test.argLine>
+        <!--
+            Where a crashing test JVM leaves its evidence: the hs_err file in the module's target directory (relative
+            to the fork's working directory, the module, so that a path with spaces cannot split the argument line)
+            and a core dump or, on Windows, a minidump in the module directory. CI uploads both.
+        -->
+        <smalt.test.crashArgs>-XX:ErrorFile=target/hs_err_pid%p.log -XX:+CreateCoredumpOnCrash</smalt.test.crashArgs>
+        <smalt.test.argLine>${smalt.test.agent} --add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -XX:+EnableDynamicAgentLoading ${smalt.test.crashArgs} -Dsmalt.simd=${smalt.test.simd} ${smalt.test.heap} ${smalt.test.jvmArgs}</smalt.test.argLine>
         <!--
             The forbidden-apis check of the Vector API bans (tools/lint/forbidden-vector.txt) runs in verify only when
             the Maven JVM has the incubator module, which this repository's .mvn/jvm.config adds and .mvn/maven.config

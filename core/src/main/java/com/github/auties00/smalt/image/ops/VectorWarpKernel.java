@@ -81,14 +81,16 @@ final class VectorWarpKernel implements WarpKernel {
 
     /**
      * The scalar kernel handling the ends of runs.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarWarpKernel scalar;
+    private static final ScalarWarpKernel SCALAR = new ScalarWarpKernel();
 
     /**
      * Constructs the kernel.
      */
     private VectorWarpKernel() {
-        this.scalar = new ScalarWarpKernel();
     }
 
     /**
@@ -150,7 +152,7 @@ final class VectorWarpKernel implements WarpKernel {
             FLOAT_VECTOR.cast(b).intoArray(blue, i);
             FLOAT_VECTOR.cast(s).intoArray(alpha, i);
         }
-        scalar.accumulate2Range(taps0, taps1, w0, w1, wy, red, green, blue, alpha, i, count);
+        SCALAR.accumulate2Range(taps0, taps1, w0, w1, wy, red, green, blue, alpha, i, count);
     }
 
     @Override
@@ -189,6 +191,6 @@ final class VectorWarpKernel implements WarpKernel {
             var pixels = INT_ZERO.blend(packed, visible);
             PIXEL_VECTOR.cast(INT_VECTOR.cast(pixels).reinterpretShape(BP, 0)).intoArray(dst, dstOffset + 4 * i);
         }
-        scalar.resolveRange(red, green, blue, alpha, dst, dstOffset, i, count);
+        SCALAR.resolveRange(red, green, blue, alpha, dst, dstOffset, i, count);
     }
 }

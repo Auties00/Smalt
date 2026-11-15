@@ -55,6 +55,10 @@ final class VectorSynthesisKernel implements SynthesisKernel {
 
     /**
      * The scalar kernel that handles the two leftover time slots of each granule.
+     *
+     * <p>It holds scratch arrays, so it cannot be shared; the methods run it before their vector
+     * loops, so that no reference to this kernel is live across a loop's safepoint poll (see the
+     * JVM flags section of the README).
      */
     private final ScalarSynthesisKernel tail = new ScalarSynthesisKernel();
 
@@ -144,8 +148,11 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     public void dct(float[] grbuf, int base, int slots) {
         var sec = Mp3Tables.DCT_SECANTS;
         var t = rows;
-        var k = 0;
-        for (; k + 4 <= slots; k += 4) {
+        var vectorSlots = slots & ~3;
+        if (vectorSlots < slots) {
+            tail.dct(grbuf, base + vectorSlots, slots - vectorSlots);
+        }
+        for (var k = 0; k < vectorSlots; k += 4) {
             var y = base + k;
             for (var i = 0; i < 8; i++) {
                 var x0 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + i * 18));
@@ -216,18 +223,18 @@ final class VectorSynthesisKernel implements SynthesisKernel {
             FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (8 + 7) * 4)).intoArray(grbuf, y + 36);
             FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (24 + 7) * 4)).intoArray(grbuf, y + 54);
         }
-        if (k < slots) {
-            tail.dct(grbuf, base + k, slots - k);
-        }
     }
 
     @Override
     public void imdct36(float[] grbuf, int base, float[] overlap, int ovl, float[] window, int bands) {
         var tw = Mp3Tables.TWIDDLE_36;
-        var done = 0;
-        if (Simd.WIDE && wide) {
+        var vectorBands = Simd.WIDE && wide ? bands & ~7 : 0;
+        if (vectorBands < bands) {
+            tail.imdct36(grbuf, base + 18 * vectorBands, overlap, ovl + 9 * vectorBands, window, bands - vectorBands);
+        }
+        if (vectorBands > 0) {
             var lanes = laneRows;
-            for (; done + 8 <= bands; done += 8, base += 8 * 18, ovl += 8 * 9) {
+            for (var done = 0; done < vectorBands; done += 8, base += 8 * 18, ovl += 8 * 9) {
                 for (var l = 0; l < 8; l++) {
                     var src = base + 18 * l;
                     for (var k = 0; k < 18; k++) {
@@ -253,9 +260,6 @@ final class VectorSynthesisKernel implements SynthesisKernel {
                     }
                 }
             }
-        }
-        if (done < bands) {
-            tail.imdct36(grbuf, base, overlap, ovl, window, bands - done);
         }
     }
 

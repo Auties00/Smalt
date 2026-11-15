@@ -88,8 +88,11 @@ final class VectorAacKernel implements AacKernel {
 
     /**
      * The scalar reference used for loop remainders.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarAacKernel scalar = new ScalarAacKernel();
+    private static final ScalarAacKernel SCALAR = new ScalarAacKernel();
 
     /**
      * Constructs the kernel.
@@ -100,7 +103,7 @@ final class VectorAacKernel implements AacKernel {
     @Override
     public void fftRadix4(float[] re, float[] im, int n, int quarter, float[] twiddles, int offset) {
         if (quarter % LANES != 0) {
-            scalar.fftRadix4(re, im, n, quarter, twiddles, offset);
+            SCALAR.fftRadix4(re, im, n, quarter, twiddles, offset);
             return;
         }
         for (var block = 0; block < n; block += 4 * quarter) {
@@ -177,7 +180,7 @@ final class VectorAacKernel implements AacKernel {
     @Override
     public void fftRadix2(float[] re, float[] im, int n, int half, float[] twiddles, int offset) {
         if (half % LANES != 0 || half < 4 * LANES) {
-            scalar.fftRadix2(re, im, n, half, twiddles, offset);
+            SCALAR.fftRadix2(re, im, n, half, twiddles, offset);
             return;
         }
         for (var block = 0; block < n; block += 2 * half) {
@@ -246,7 +249,7 @@ final class VectorAacKernel implements AacKernel {
      */
     @Override
     public void dequantize(int[] quant, float[] out, int from, int to, float gain) {
-        scalar.dequantize(quant, out, from, to, gain);
+        SCALAR.dequantize(quant, out, from, to, gain);
     }
 
     @Override
@@ -303,7 +306,7 @@ final class VectorAacKernel implements AacKernel {
      */
     @Override
     public void powerLaw(float[] x, float[] magnitude, float[] power34, int from, int to) {
-        scalar.powerLaw(x, magnitude, power34, from, to);
+        SCALAR.powerLaw(x, magnitude, power34, from, to);
     }
 
     /**
@@ -314,7 +317,7 @@ final class VectorAacKernel implements AacKernel {
      */
     @Override
     public int quantize(float[] power34, int[] quant, int from, int to, float inverseStep) {
-        return scalar.quantize(power34, quant, from, to, inverseStep);
+        return SCALAR.quantize(power34, quant, from, to, inverseStep);
     }
 
     @Override
@@ -331,7 +334,7 @@ final class VectorAacKernel implements AacKernel {
             total += distortionQuarter(magnitude, power34, i, inverseStep, step);
             i += 4;
         }
-        return total + scalar.distortion(magnitude, power34, scratch, i, to, inverseStep, step);
+        return total + SCALAR.distortion(magnitude, power34, scratch, i, to, inverseStep, step);
     }
 
     /**
@@ -426,7 +429,7 @@ final class VectorAacKernel implements AacKernel {
         if (from < bound) {
             total = energyFull(x, from, bound);
         }
-        return total + scalar.energy(x, bound, to);
+        return total + SCALAR.energy(x, bound, to);
     }
 
     /**
@@ -558,7 +561,7 @@ final class VectorAacKernel implements AacKernel {
      */
     @Override
     public void midSide(float[] left, float[] right, int from, int to) {
-        scalar.midSide(left, right, from, to);
+        SCALAR.midSide(left, right, from, to);
     }
 
     @Override
@@ -568,7 +571,7 @@ final class VectorAacKernel implements AacKernel {
         if (bound > 0) {
             total = dotFull(a, aOffset, b, bOffset, bound);
         }
-        return total + scalar.dot(a, aOffset + bound, b, bOffset + bound, length - bound);
+        return total + SCALAR.dot(a, aOffset + bound, b, bOffset + bound, length - bound);
     }
 
     /**

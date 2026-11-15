@@ -100,6 +100,12 @@ jobs:
         with:
           artifact: 'true'
 
+      # A test JVM writes a minidump of a crash on a thread it did not create there (testkit.NativeCrashDumps)
+      - name: Name the native crash dump directory (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "SMALT_TEST_NATIVE_CRASH_DUMPS=$RUNNER_TEMP/crash-dumps" >> "$GITHUB_ENV"
+
       - name: Build and test
         id: test
         shell: bash
@@ -127,6 +133,11 @@ jobs:
             oracle-versions.tsv
           retention-days: 14
 
+      - name: Show the native stacks of the crash dumps (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: ./.github/scripts/windows-crash-dumps.ps1 "$env:RUNNER_TEMP\crash-dumps"
+
       - name: Upload the test reports
         if: failure()
         uses: actions/upload-artifact@v4
@@ -139,6 +150,18 @@ jobs:
             it/target/kernel-guard-self/
             **/hs_err_pid*.log
             ~/Library/Logs/DiagnosticReports/
+          retention-days: 7
+
+      # Kept apart from the reports: the JVM's minidump holds the whole heap.
+      - name: Upload the crash dumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-dumps-${{ matrix.os }}-${{ matrix.simd }}
+          path: |
+            **/hs_err_pid*.mdmp
+            ${{ runner.temp }}/crash-dumps/
+          if-no-files-found: ignore
           retention-days: 7
 
   # A skip is acceptable only when the same test passes on another job: the scalar twin of a vector kernel, an

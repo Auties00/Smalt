@@ -302,8 +302,11 @@ public final class VectorVp8EncDsp extends Vp8EncDsp {
     /**
      * The scalar kernels used for block widths without a vector path; 4-pixel rows are too short for
      * vectors to pay off.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarVp8EncDsp scalar = new ScalarVp8EncDsp();
+    private static final ScalarVp8EncDsp SCALAR = new ScalarVp8EncDsp();
 
     /**
      * Creates the vector implementation.
@@ -436,7 +439,7 @@ public final class VectorVp8EncDsp extends Vp8EncDsp {
             }
             return ZERO_I256.lanewise(VectorOperators.ADD, acc).reduceLanes(VectorOperators.ADD);
         }
-        return scalar.sse(a, aOff, b, bOff, width, height);
+        return SCALAR.sse(a, aOff, b, bOff, width, height);
     }
 
     @Override

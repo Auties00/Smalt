@@ -63,7 +63,8 @@
             </plugin>
             <!--
                 The test jar carries the test kit (oracles, fixtures, conformance vectors, quality metrics and
-                the shared test helpers) that the other modules' tests use; core's own tests stay out of it.
+                the shared test helpers) that the other modules' tests use, and registers its launcher session
+                listener (testkit.NativeCrashDumpsListener); core's own tests stay out of it.
                 It is built in every profile, the release one included, because the other modules' tests
                 compile against it.
             -->
@@ -77,6 +78,7 @@
                             <skip>false</skip>
                             <includes>
                                 <include>com/github/auties00/smalt/testkit/**</include>
+                                <include>META-INF/services/org.junit.platform.launcher.LauncherSessionListener</include>
                             </includes>
                         </configuration>
                     </execution>

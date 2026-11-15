@@ -91,7 +91,9 @@ packages (`internal.*`) are exported only to the artifacts that need them.
   its `Rule` enum): a vector, mask or shuffle method is called only on a value of known exact class (cast
   through the shape's class constant, `INTS.cast(v)`, and again inside a loop for a value carried into it or
   merged from branches); no method takes or returns a vector, mask or shuffle (pass arrays and offsets);
-  kernels under about 2000 bytes of bytecode; operators are `VectorOperators` constants; scalar operands
+  kernels under about 2000 bytes of bytecode; no kernel reads its receiver after a vector loop (scalar tails
+  in `static final` fields; a Windows AVX-512 HotSpot defect loses references live across a loop's
+  safepoint poll); operators are `VectorOperators` constants; scalar operands
   other than shift counts are broadcast first; no shift by a vector of counts; and 256-bit or wider species,
   gathers and scatters only behind
   `Simd.WIDE` (ARM NEON has 128-bit vectors and no gathers, so prefer species that adapt to the width,

@@ -17,6 +17,16 @@
 #            System Audio Recording permission written by .github/scripts/macos-tap-permission.sh); the runner's
 #            display, which the image grants Screen Recording to (ScreenCaptureKit screens and windows); no camera
 #            can be provisioned.
+# Every test JVM writes its hs_err file under its module's target directory and, on Windows, a minidump. The JVM
+# reports no crash of a thread it did not create (a Windows test JVM then ends with 0xC0000005 and no hs_err file,
+# and Windows Error Reporting keeps no dump of it on these runners), so each Windows test JVM installs the test
+# kit's unhandled exception filter (testkit.NativeCrashDumps, through SMALT_TEST_NATIVE_CRASH_DUMPS), which writes a
+# minidump and a one-line report of such a crash at no cost before it, and its vectored handler, which records every
+# exception into a file-mapped ring that outlives the process, for a crash no handler receives (such as code of a
+# library unloaded under a running thread); a dispatch with debugger=true also runs each
+# Windows test JVM under cdb, which slows the JVM down (its first-chance exceptions go to the debugger). A failed job prints the dumps'
+# native stacks and uploads them with the hs_err files. To reproduce an intermittent failure, a dispatch can run each
+# runner's job several times side by side (attempts) and the tests several times in a row in each (repeat).
 # Nightly calls it (nightly.yml with jobs=capture runs it alone).
 name: Capture
 
@@ -30,6 +40,15 @@ on:
       tests:
         description: Optional surefire -Dtest filter of the capture tests
         default: ''
+      attempts:
+        description: JSON list naming the attempts of each runner's job, for example [1, 2, 3, 4]
+        default: '[1]'
+      repeat:
+        description: How many times each job runs the tests in a row; a crashed test JVM ends the job, a failed round does not
+        default: '1'
+      debugger:
+        description: true runs each Windows test JVM under cdb, which keeps a full dump and the native stacks of a crash on any thread
+        default: 'false'
 
 permissions:
   contents: read
@@ -39,7 +58,7 @@ env:
 
 jobs:
   capture:
-    name: capture (${{ matrix.os }})
+    name: capture (${{ matrix.os }}${{ matrix.attempt != 1 && format(', attempt {0}', matrix.attempt) || '' }})
     runs-on: ${{ matrix.os }}
     # a cold oracle cache builds ffmpeg on Windows and macOS (about an hour) before the tests
     timeout-minutes: 120
@@ -47,6 +66,10 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(inputs.os || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
+        attempt: ${{ fromJSON(inputs.attempts || '[1]') }}
+    env:
+      # the suffix of the artifact names of the attempts after the first
+      SMALT_ATTEMPT: ${{ matrix.attempt != 1 && format('-attempt-{0}', matrix.attempt) || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -303,6 +326,31 @@ jobs:
           New-ItemProperty -Force -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" -Name LetAppsAccessMicrophone -Value 1 -PropertyType DWord | Out-Null
           "SMALT_TEST_AUDIO_LOOPBACK=Speakers (VB-Audio|CABLE Output" >> $env:GITHUB_ENV
           "SMALT_CAPTURE_REQUIRE_DEVICES=screen,window,audio-loopback,audio-input,audio-output" >> $env:GITHUB_ENV
+          # a test JVM writes a minidump of a crash on a thread it did not create there (testkit.NativeCrashDumps)
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\crash-dumps" | Out-Null
+          "SMALT_TEST_NATIVE_CRASH_DUMPS=$env:RUNNER_TEMP\crash-dumps" >> $env:GITHUB_ENV
+
+      # The JVM writes no hs_err file for an access violation on a thread it did not create, and Windows Error
+      # Reporting no dump either; a debugger attached from the start sees every thread's.
+      - name: Run the test JVMs under the debugger (Windows)
+        if: runner.os == 'Windows' && inputs.debugger == 'true'
+        shell: pwsh
+        run: |
+          $cdb = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe"
+          if (-not (Test-Path $cdb)) { throw "cdb is not installed" }
+          $dumps = "$env:RUNNER_TEMP\crash-dumps"
+          $symbols = "$env:RUNNER_TEMP\symbols"
+          New-Item -ItemType Directory -Force -Path $dumps | Out-Null
+          # first-chance access violations are the JVM's own (polls, implicit null checks): ignored, as module loads
+          $second = ".echo SMALT-SECOND-CHANCE; kn 64; ~*kn 64; .dump /ma /u $dumps\java.dmp; .symfix $symbols; .reload; kn 64; ~*kn 64; q"
+          # beside java.exe, so that surefire finds the JDK's release file one directory up
+          $wrapper = Join-Path $env:JAVA_HOME "bin\java-cdb.cmd"
+          Set-Content -Encoding ascii -Path $wrapper -Value @(
+            "@echo off",
+            "`"$cdb`" -g -G -xi ld -xi av -c `"sxi -c2 \`"$second\`" av; g`" `"%JAVA_HOME%\bin\java.exe`" %*"
+          )
+          Get-Content $wrapper
+          "SMALT_TEST_JVM=-Djvm=$wrapper" >> $env:GITHUB_ENV
 
       - name: Provision the macOS devices
         if: runner.os == 'macOS'
@@ -336,10 +384,54 @@ jobs:
       - name: Capture tests
         id: test
         shell: bash
-        run: >
-          mvn -B -ntp -fae -pl capture,desktop -am verify
-          -Dtest='${{ inputs.tests || 'com/github/auties00/smalt/capture/**/*,com/github/auties00/smalt/desktop/sound/JavaSoundReadTest' }}'
-          -Dsurefire.failIfNoSpecifiedTests=false
+        run: |
+          failed=0
+          for round in $(seq 1 ${{ inputs.repeat || 1 }}); do
+            if [ "$round" != 1 ]; then echo "::notice::capture tests, round $round"; fi
+            set +e
+            mvn -B -ntp -fae -pl capture,desktop -am verify $SMALT_TEST_JVM \
+              -Dtest='${{ inputs.tests || 'com/github/auties00/smalt/capture/**/*,com/github/auties00/smalt/desktop/sound/JavaSoundReadTest' }}' \
+              -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$RUNNER_TEMP/capture-round.log"
+            status=${PIPESTATUS[0]}
+            set -e
+            if [ "$status" != 0 ]; then
+              failed=1
+              if grep -q "terminated without properly saying goodbye" "$RUNNER_TEMP/capture-round.log"; then
+                echo "::error::a test JVM crashed in round $round"
+                break
+              fi
+              echo "::warning::capture tests failed in round $round"
+            fi
+          done
+          exit $failed
+
+      # The test JVMs leave listener-<pid>.txt when they installed the native crash filter.
+      - name: Check that the test JVMs installed the native crash filter (Windows)
+        if: always() && runner.os == 'Windows' && steps.test.outcome != 'skipped'
+        shell: pwsh
+        run: |
+          $count = @(Get-ChildItem -Path "$env:RUNNER_TEMP\crash-dumps" -Filter "listener-*.txt" -File -ErrorAction SilentlyContinue).Count
+          Write-Host "test JVMs with the native crash filter: $count"
+          if ($count -eq 0) { Write-Host "::error::no test JVM installed the native crash filter"; exit 1 }
+
+      - name: Show the native stacks of the crash dumps (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: ./.github/scripts/windows-crash-dumps.ps1 "$env:RUNNER_TEMP\crash-dumps"
+
+      - name: Upload the crash files
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-crash-${{ matrix.os }}${{ env.SMALT_ATTEMPT }}
+          path: |
+            **/target/hs_err_pid*.log
+            **/hs_err_pid*.log
+            **/hs_err_pid*.mdmp
+            **/target/surefire-reports/*.dumpstream
+            ${{ runner.temp }}/crash-dumps/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Show the logs of the Wayland fixtures
         if: failure() && runner.os == 'Linux'
@@ -362,7 +454,7 @@ jobs:
         if: always() && steps.test.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
-          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}${{ env.SMALT_ATTEMPT }}
           path: target/outcomes-*.tsv
           retention-days: 14
 
@@ -380,7 +472,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: capture-reports-${{ matrix.os }}
+          name: capture-reports-${{ matrix.os }}${{ env.SMALT_ATTEMPT }}
           path: |
             **/target/surefire-reports/
             **/hs_err_pid*.log

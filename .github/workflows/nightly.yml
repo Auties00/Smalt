@@ -542,6 +542,7 @@ jobs:
           path: |
             video/target/surefire-reports/
             video/hs_err_pid*.log
+            video/target/hs_err_pid*.log
           retention-days: 14
 
   # The tests that run only when asked: the real-time VP8 quality report against libvpx (its BD-rate table is
@@ -908,6 +909,7 @@ jobs:
           path: |
             ${{ env.SHARD_MODULE }}/target/surefire-reports/
             ${{ env.SHARD_MODULE }}/hs_err_pid*.log
+            ${{ env.SHARD_MODULE }}/target/hs_err_pid*.log
             target/skips-*.tsv
           retention-days: 14
 

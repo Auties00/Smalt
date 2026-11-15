@@ -33,6 +33,14 @@ public enum Rule {
     CARRIED_RECEIVER("carried-receiver", "calls a vector method on a value carried into or around a loop, which "
             + "reaches the loop's calls through a merge typed with its abstract class",
             "cast it again inside the loop before the call"),
+    /**
+     * The receiver read after a loop that calls the Vector API, which keeps it live across the loop's safepoint poll.
+     * HotSpot 26 on Windows x64 with AVX-512 can keep such a reference in one of the registers xmm16 to xmm31 across
+     * the poll and find it null after a safepoint.
+     */
+    LOOP_RECEIVER("loop-receiver", "reads the receiver after a vector loop, so the receiver is live across the "
+            + "loop's safepoint poll, where C2 on Windows with AVX-512 may lose it",
+            "keep the scalar tail in a static final field or make the tail static"),
     /** A 256-bit or wider species, a gather or a scatter where {@code Simd.WIDE} may not hold. */
     WIDE_SPECIES("wide-species", "uses 256-bit or wider vectors, a gather or a scatter where the platform's vectors "
             + "may be narrower", "select the method or its kernel only where Simd.WIDE holds"),

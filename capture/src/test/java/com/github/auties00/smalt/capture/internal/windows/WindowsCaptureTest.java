@@ -20,6 +20,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.SymbolLookup;
+import java.lang.foreign.ValueLayout;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
@@ -78,6 +82,39 @@ class WindowsCaptureTest {
 
     private static long processCpuNanos() {
         return ProcessHandle.current().info().totalCpuDuration().orElseThrow().toNanos();
+    }
+
+    @Test
+    @DisplayName("keeps the multithreaded apartment after the last thread that joined it leaves")
+    void apartmentOutlivesItsThreads() throws Throwable {
+        var worker = Thread.ofPlatform().start(() -> {
+            if (Com.initialize()) {
+                Com.uninitialize();
+            }
+        });
+        worker.join();
+        // a thread that never initialized COM belongs to the implicit multithreaded apartment while that exists;
+        // when COM tore it down with its last thread, it would also have unloaded the libraries it loaded
+        var type = new int[]{-1, -1, -1};
+        var probe = Thread.ofPlatform().start(() -> {
+            try (var arena = Arena.ofConfined()) {
+                var ole32 = SymbolLookup.libraryLookup("ole32", arena);
+                var getType = Linker.nativeLinker().downcallHandle(ole32.findOrThrow("CoGetApartmentType"),
+                        FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS,
+                                ValueLayout.ADDRESS));
+                var slots = arena.allocate(ValueLayout.JAVA_INT, 2);
+                type[0] = (int) getType.invokeExact(slots, slots.asSlice(4));
+                type[1] = slots.get(ValueLayout.JAVA_INT, 0);
+                type[2] = slots.get(ValueLayout.JAVA_INT, 4);
+            } catch (Throwable throwable) {
+                throw new AssertionError(throwable);
+            }
+        });
+        probe.join();
+        assertEquals(0, type[0], "CoGetApartmentType: 0x" + Integer.toHexString(type[0]));
+        // APTTYPE_MTA, APTTYPEQUALIFIER_IMPLICIT_MTA
+        assertEquals(1, type[1], "apartment type");
+        assertEquals(1, type[2], "apartment qualifier");
     }
 
     @Test

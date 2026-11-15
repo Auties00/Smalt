@@ -140,14 +140,16 @@ final class VectorHevcDsp extends HevcDsp {
 
     /**
      * The kernels used for the cases this class does not vectorize.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarHevcDsp scalar;
+    private static final ScalarHevcDsp SCALAR = new ScalarHevcDsp();
 
     /**
      * Constructs the kernels.
      */
     private VectorHevcDsp() {
-        this.scalar = new ScalarHevcDsp();
     }
 
     /**
@@ -174,7 +176,7 @@ final class VectorHevcDsp extends HevcDsp {
     public boolean lumaMc(short[] src, int srcOff, int srcStride, short[] dst, int w, int h, int xFrac, int yFrac,
                           int bitDepth, short[] scratch) {
         if ((w & 3) != 0) {
-            return scalar.lumaMc(src, srcOff, srcStride, dst, w, h, xFrac, yFrac, bitDepth, scratch);
+            return SCALAR.lumaMc(src, srcOff, srcStride, dst, w, h, xFrac, yFrac, bitDepth, scratch);
         }
         var f = LUMA_FILTER;
         if (xFrac == 0 && yFrac == 0) {
@@ -214,7 +216,7 @@ final class VectorHevcDsp extends HevcDsp {
     public boolean chromaMc(short[] src, int srcOff, int srcStride, short[] dst, int w, int h, int xFrac, int yFrac,
                             int bitDepth, short[] scratch) {
         if ((w & 3) != 0) {
-            return scalar.chromaMc(src, srcOff, srcStride, dst, w, h, xFrac, yFrac, bitDepth, scratch);
+            return SCALAR.chromaMc(src, srcOff, srcStride, dst, w, h, xFrac, yFrac, bitDepth, scratch);
         }
         var f = CHROMA_FILTER;
         if (xFrac == 0 && yFrac == 0) {
@@ -1131,7 +1133,7 @@ final class VectorHevcDsp extends HevcDsp {
     @Override
     public void putUni(short[] dst, int dstOff, int dstStride, short[] pred, int w, int h, int bitDepth) {
         if ((h & 1) != 0 || (w & 3) != 0) {
-            scalar.putUni(dst, dstOff, dstStride, pred, w, h, bitDepth);
+            SCALAR.putUni(dst, dstOff, dstStride, pred, w, h, bitDepth);
             return;
         }
         var wide = w & ~7;
@@ -1259,7 +1261,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void putBi(short[] dst, int dstOff, int dstStride, short[] pred0, short[] pred1, int w, int h,
                       int bitDepth) {
         if ((h & 1) != 0 || (w & 3) != 0) {
-            scalar.putBi(dst, dstOff, dstStride, pred0, pred1, w, h, bitDepth);
+            SCALAR.putBi(dst, dstOff, dstStride, pred0, pred1, w, h, bitDepth);
             return;
         }
         var wide = w & ~7;
@@ -1432,7 +1434,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void putWeightedUni(short[] dst, int dstOff, int dstStride, short[] pred, int w, int h, int bitDepth,
                                int weight, int offset, int log2Wd) {
         if ((w & 3) != 0 || (h & 1) != 0) {
-            scalar.putWeightedUni(dst, dstOff, dstStride, pred, w, h, bitDepth, weight, offset, log2Wd);
+            SCALAR.putWeightedUni(dst, dstOff, dstStride, pred, w, h, bitDepth, weight, offset, log2Wd);
             return;
         }
         var wide = w & ~7;
@@ -1540,7 +1542,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void putWeightedBi(short[] dst, int dstOff, int dstStride, short[] pred0, short[] pred1, int w, int h,
                               int bitDepth, int weight0, int weight1, int offsets, int log2Wd) {
         if ((w & 3) != 0 || (h & 1) != 0) {
-            scalar.putWeightedBi(dst, dstOff, dstStride, pred0, pred1, w, h, bitDepth, weight0, weight1, offsets,
+            SCALAR.putWeightedBi(dst, dstOff, dstStride, pred0, pred1, w, h, bitDepth, weight0, weight1, offsets,
                     log2Wd);
             return;
         }
@@ -1671,7 +1673,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void saoEdge(short[] dst, short[] src, int offset, int stride, int w, int h, int deltaA, int deltaB,
                         int[] lut, int max) {
         if (w < 16) {
-            scalar.saoEdge(dst, src, offset, stride, w, h, deltaA, deltaB, lut, max);
+            SCALAR.saoEdge(dst, src, offset, stride, w, h, deltaA, deltaB, lut, max);
             return;
         }
         var zero = SHORT256.cast(ShortVector.zero(S256));
@@ -1710,7 +1712,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void saoBand(short[] dst, short[] src, int offset, int stride, int w, int h, int position, int shift,
                         int o0, int o1, int o2, int o3, int max) {
         if (w < 16) {
-            scalar.saoBand(dst, src, offset, stride, w, h, position, shift, o0, o1, o2, o3, max);
+            SCALAR.saoBand(dst, src, offset, stride, w, h, position, shift, o0, o1, o2, o3, max);
             return;
         }
         var zero = SHORT256.cast(ShortVector.zero(S256));
@@ -2057,7 +2059,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void inverseDct(int[] coefficients, int log2Size, int bdShift, int columns, int rows, int[] residual,
                            int[] scratch) {
         if (log2Size == 2) {
-            scalar.inverseDct(coefficients, log2Size, bdShift, columns, rows, residual, scratch);
+            SCALAR.inverseDct(coefficients, log2Size, bdShift, columns, rows, residual, scratch);
             return;
         }
         switch (log2Size) {
@@ -2316,7 +2318,7 @@ final class VectorHevcDsp extends HevcDsp {
     public boolean lumaMc(byte[] src, int srcOff, int srcStride, short[] dst, int w, int h, int xFrac, int yFrac,
                           short[] scratch) {
         if ((w & 3) != 0) {
-            return scalar.lumaMc(src, srcOff, srcStride, dst, w, h, xFrac, yFrac, scratch);
+            return SCALAR.lumaMc(src, srcOff, srcStride, dst, w, h, xFrac, yFrac, scratch);
         }
         var f = LUMA_FILTER;
         if (xFrac == 0 && yFrac == 0) {
@@ -2356,7 +2358,7 @@ final class VectorHevcDsp extends HevcDsp {
     public boolean chromaMc(byte[] src, int srcOff, int srcStride, short[] dst, int w, int h, int xFrac, int yFrac,
                             short[] scratch) {
         if ((w & 3) != 0) {
-            return scalar.chromaMc(src, srcOff, srcStride, dst, w, h, xFrac, yFrac, scratch);
+            return SCALAR.chromaMc(src, srcOff, srcStride, dst, w, h, xFrac, yFrac, scratch);
         }
         var f = CHROMA_FILTER;
         if (xFrac == 0 && yFrac == 0) {
@@ -2485,7 +2487,7 @@ final class VectorHevcDsp extends HevcDsp {
     @Override
     public void putUni(byte[] dst, int dstOff, int dstStride, short[] pred, int w, int h) {
         if ((h & 1) != 0 || (w & 7) != 0) {
-            scalar.putUni(dst, dstOff, dstStride, pred, w, h);
+            SCALAR.putUni(dst, dstOff, dstStride, pred, w, h);
             return;
         }
         if ((w & 15) == 0) {
@@ -2564,7 +2566,7 @@ final class VectorHevcDsp extends HevcDsp {
     @Override
     public void putBi(byte[] dst, int dstOff, int dstStride, short[] pred0, short[] pred1, int w, int h) {
         if ((h & 1) != 0 || (w & 7) != 0) {
-            scalar.putBi(dst, dstOff, dstStride, pred0, pred1, w, h);
+            SCALAR.putBi(dst, dstOff, dstStride, pred0, pred1, w, h);
             return;
         }
         if ((w & 15) == 0) {
@@ -2670,7 +2672,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void putWeightedUni(byte[] dst, int dstOff, int dstStride, short[] pred, int w, int h, int weight,
                                int offset, int log2Wd) {
         if ((w & 7) != 0 || (h & 1) != 0) {
-            scalar.putWeightedUni(dst, dstOff, dstStride, pred, w, h, weight, offset, log2Wd);
+            SCALAR.putWeightedUni(dst, dstOff, dstStride, pred, w, h, weight, offset, log2Wd);
             return;
         }
         var factor = INT256.cast(IntVector.broadcast(I256, weight));
@@ -2702,7 +2704,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void putWeightedBi(byte[] dst, int dstOff, int dstStride, short[] pred0, short[] pred1, int w, int h,
                               int weight0, int weight1, int offsets, int log2Wd) {
         if ((w & 7) != 0 || (h & 1) != 0) {
-            scalar.putWeightedBi(dst, dstOff, dstStride, pred0, pred1, w, h, weight0, weight1, offsets, log2Wd);
+            SCALAR.putWeightedBi(dst, dstOff, dstStride, pred0, pred1, w, h, weight0, weight1, offsets, log2Wd);
             return;
         }
         var factor0 = INT256.cast(IntVector.broadcast(I256, weight0));
@@ -2743,7 +2745,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void saoEdge(byte[] dst, byte[] src, int offset, int stride, int w, int h, int deltaA, int deltaB,
                         int[] lut) {
         if (w < 16) {
-            scalar.saoEdge(dst, src, offset, stride, w, h, deltaA, deltaB, lut);
+            SCALAR.saoEdge(dst, src, offset, stride, w, h, deltaA, deltaB, lut);
             return;
         }
         var zero = SHORT256.cast(ShortVector.zero(S256));
@@ -2786,7 +2788,7 @@ final class VectorHevcDsp extends HevcDsp {
     public void saoBand(byte[] dst, byte[] src, int offset, int stride, int w, int h, int position, int o0, int o1,
                         int o2, int o3) {
         if (w < 16) {
-            scalar.saoBand(dst, src, offset, stride, w, h, position, o0, o1, o2, o3);
+            SCALAR.saoBand(dst, src, offset, stride, w, h, position, o0, o1, o2, o3);
             return;
         }
         var zero = SHORT256.cast(ShortVector.zero(S256));
@@ -2822,7 +2824,7 @@ final class VectorHevcDsp extends HevcDsp {
     @Override
     public void addConstant(byte[] plane, int offset, int stride, int size, int value) {
         if (size < 8) {
-            scalar.addConstant(plane, offset, stride, size, value);
+            SCALAR.addConstant(plane, offset, stride, size, value);
             return;
         }
         if (size == 8) {
@@ -2857,7 +2859,7 @@ final class VectorHevcDsp extends HevcDsp {
     @Override
     public void addResidual(byte[] plane, int offset, int stride, int[] residual, int size) {
         if (size < 8) {
-            scalar.addResidual(plane, offset, stride, residual, size);
+            SCALAR.addResidual(plane, offset, stride, residual, size);
             return;
         }
         var zero = INT256.cast(IntVector.zero(I256));

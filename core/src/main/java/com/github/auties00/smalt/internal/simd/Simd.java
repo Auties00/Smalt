@@ -47,7 +47,13 @@ package com.github.auties00.smalt.internal.simd;
  *       scalar operand other than a shift count is broadcast to a vector first
  *       ({@code vector-scalar-operand}), and no shift takes a vector of counts
  *       ({@code vector-shift-count});</li>
- *   <li>no kernel method exceeds about 2000 bytes of bytecode ({@code kernel-size}).</li>
+ *   <li>no kernel method exceeds about 2000 bytes of bytecode ({@code kernel-size});</li>
+ *   <li>an instance kernel does not read its receiver after a vector loop, for example to reach a
+ *       scalar tail through an instance field ({@code loop-receiver}): HotSpot 26 on Windows x64
+ *       with AVX-512 can keep a reference live across a loop's safepoint poll in one of the
+ *       registers {@code xmm16} to {@code xmm31} and find it null after a safepoint, so a scalar
+ *       tail lives in a {@code static final} field, or a stateful kernel runs it before the
+ *       loop.</li>
  * </ul>
  * {@link KernelLintSuppress} on a method accepts a finding with a reason. The kernel JIT guard of
  * each module's tests then checks, in child JVMs, that every kernel runs compiled by C2 without
