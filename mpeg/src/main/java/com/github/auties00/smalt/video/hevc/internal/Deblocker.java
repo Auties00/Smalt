@@ -270,8 +270,8 @@ public final class Deblocker {
                 var beta = BETA[betaQ] << (bitDepth - 8);
                 var tcQ = Math.clamp(qpL + 2 * (strength - 1) + (header.tcOffsetDiv2 << 1), 0, 53);
                 var tc = TC[tcQ] << (bitDepth - 8);
-                var noP = (pic.flags[p] & PictureState.BYPASS) != 0 || (pcmProtected && (pic.flags[p] & PictureState.PCM) != 0);
-                var noQ = (pic.flags[index] & PictureState.BYPASS) != 0 || (pcmProtected && (pic.flags[index] & PictureState.PCM) != 0);
+                var noP = (pic.flags[p] & PictureState.NO_DEBLOCK) != 0 || (pcmProtected && (pic.flags[p] & PictureState.PCM) != 0);
+                var noQ = (pic.flags[index] & PictureState.NO_DEBLOCK) != 0 || (pcmProtected && (pic.flags[index] & PictureState.PCM) != 0);
                 var origin = y * stride + x;
                 var step = vertical ? 1 : stride;
                 var along = vertical ? stride : 1;
@@ -417,9 +417,9 @@ public final class Deblocker {
                     var qpL = (pic.qp[index] + pic.qp[p] + 1) >> 1;
                     var beta = BETA[Math.clamp(qpL + (header.betaOffsetDiv2 << 1), 0, 51)];
                     tc = TC[Math.clamp(qpL + 2 * (strength - 1) + (header.tcOffsetDiv2 << 1), 0, 53)];
-                    var noP = (pic.flags[p] & PictureState.BYPASS) != 0
+                    var noP = (pic.flags[p] & PictureState.NO_DEBLOCK) != 0
                             || (pcmProtected && (pic.flags[p] & PictureState.PCM) != 0);
-                    var noQ = (pic.flags[index] & PictureState.BYPASS) != 0
+                    var noQ = (pic.flags[index] & PictureState.NO_DEBLOCK) != 0
                             || (pcmProtected && (pic.flags[index] & PictureState.PCM) != 0);
                     var origin = y * stride + x;
                     if (!whole) {
@@ -480,9 +480,9 @@ public final class Deblocker {
                     var qpL = (pic.qp[index] + pic.qp[p] + 1) >> 1;
                     var beta = BETA[Math.clamp(qpL + (header.betaOffsetDiv2 << 1), 0, 51)];
                     tc = TC[Math.clamp(qpL + 2 * (strength - 1) + (header.tcOffsetDiv2 << 1), 0, 53)];
-                    var noP = (pic.flags[p] & PictureState.BYPASS) != 0
+                    var noP = (pic.flags[p] & PictureState.NO_DEBLOCK) != 0
                             || (pcmProtected && (pic.flags[p] & PictureState.PCM) != 0);
-                    var noQ = (pic.flags[index] & PictureState.BYPASS) != 0
+                    var noQ = (pic.flags[index] & PictureState.NO_DEBLOCK) != 0
                             || (pcmProtected && (pic.flags[index] & PictureState.PCM) != 0);
                     var origin = y * stride + x;
                     if (!whole) {
@@ -676,8 +676,8 @@ public final class Deblocker {
                 }
                 var p = vertical ? index - 1 : index - w4;
                 var header = pic.ctbHeader[(y >> log2Ctb) * sps.widthInCtbs + (x >> log2Ctb)];
-                var noP = (pic.flags[p] & PictureState.BYPASS) != 0 || (pcmProtected && (pic.flags[p] & PictureState.PCM) != 0);
-                var noQ = (pic.flags[index] & PictureState.BYPASS) != 0 || (pcmProtected && (pic.flags[index] & PictureState.PCM) != 0);
+                var noP = (pic.flags[p] & PictureState.NO_DEBLOCK) != 0 || (pcmProtected && (pic.flags[p] & PictureState.PCM) != 0);
+                var noQ = (pic.flags[index] & PictureState.NO_DEBLOCK) != 0 || (pcmProtected && (pic.flags[index] & PictureState.PCM) != 0);
                 var qpAverage = (pic.qp[index] + pic.qp[p] + 1) >> 1;
                 for (var c = 0; c < 2; c++) {
                     var plane = c == 0 ? frame.cb : frame.cr;

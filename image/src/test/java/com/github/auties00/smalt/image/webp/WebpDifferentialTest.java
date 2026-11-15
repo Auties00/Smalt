@@ -7,7 +7,7 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -32,6 +32,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * skipped until the VP8 workstream is merged.
  */
 class WebpDifferentialTest {
+    /** VP8 and VP8L decoding are normative and libwebp is the reference, so frames equal dwebp's. */
+    static final Tolerance DWEBP = Tolerance.exact();
+
+    /** Lossy coding at quality 90 of the source frames, compared where they are visible. */
+    static final Tolerance LOSSY_SOURCE = Tolerance.psnr(20);
+
     static final int W = 64;
     static final int H = 48;
 
@@ -41,12 +47,12 @@ class WebpDifferentialTest {
             var frame = WebpTestSupport.scratchPath("fr" + WebpTestSupport.SCRATCH_COUNTER.incrementAndGet() + ".webp");
             WebpTestSupport.runTool("webpmux", List.of("-get", "frame", Integer.toString(i), animation.toString(), "-o", frame.toString()));
             var ours = WebpTestSupport.withVp8(() -> WebpTestSupport.tightRgba(WebpTestSupport.decodeRgba(WebpTestSupport.readFile(frame))));
-            assertArrayEquals(WebpTestSupport.dwebpRgba(frame), ours, "frame " + i);
+            DWEBP.assertWithin("frame " + i, WebpTestSupport.dwebpRgba(frame), ours);
         }
     }
 
-    /** Returns the PSNR over RGBA with the color of pixels transparent in the source ignored. */
-    static double visiblePsnr(byte[] expected, byte[] actual) {
+    /** Asserts that two RGBA frames are within {@link #LOSSY_SOURCE}, ignoring the color of pixels transparent in the source. */
+    static void assertVisible(String what, byte[] expected, byte[] actual) {
         var a = expected.clone();
         var b = actual.clone();
         for (var i = 0; i < a.length; i += 4) {
@@ -55,7 +61,7 @@ class WebpDifferentialTest {
                 b[i] = b[i + 1] = b[i + 2] = 0;
             }
         }
-        return Quality.psnr(a, b);
+        LOSSY_SOURCE.assertWithin(what, a, b);
     }
 
     static List<byte[]> split(byte[] frames, int frameSize) {
@@ -83,7 +89,7 @@ class WebpDifferentialTest {
                 arguments.addAll(List.of(source.png().toString(), "-o", out.toString()));
                 Oracle.run(Oracle.Tool.CWEBP, Duration.ofMinutes(2), arguments);
                 var ours = WebpTestSupport.tightRgba(WebpTestSupport.decodeRgba(WebpTestSupport.readFile(out)));
-                assertArrayEquals(WebpTestSupport.dwebpRgba(out), ours, flags + " " + source);
+                DWEBP.assertWithin(flags + " " + source, WebpTestSupport.dwebpRgba(out), ours);
             }
         }
 
@@ -98,7 +104,7 @@ class WebpDifferentialTest {
                     source.png().toString(), "-o", out.toString()));
             var file = WebpTestSupport.readFile(out);
             var ours = WebpTestSupport.withVp8(() -> WebpTestSupport.tightRgba(WebpTestSupport.decodeRgba(file)));
-            assertArrayEquals(WebpTestSupport.dwebpRgba(out), ours);
+            DWEBP.assertWithin("cwebp -q " + quality, WebpTestSupport.dwebpRgba(out), ours);
         }
     }
 
@@ -180,8 +186,7 @@ class WebpDifferentialTest {
             assertEquals(expected.size(), frames.size());
             assertFramesDecodeLikeDwebp(out, frames.size());
             for (var i = 0; i < frames.size(); i++) {
-                var psnr = visiblePsnr(expected.get(i), frames.get(i));
-                assertTrue(psnr > 20, "frame " + i + ": " + psnr + " dB");
+                assertVisible("frame " + i, expected.get(i), frames.get(i));
             }
         }
     }
@@ -243,8 +248,7 @@ class WebpDifferentialTest {
             assertEquals(pngs.size(), frames.size());
             assertFramesDecodeLikeDwebp(out, frames.size());
             for (var i = 0; i < frames.size(); i++) {
-                var psnr = visiblePsnr(Oracle.decodeVideo(pngs.get(i), "rgba", 1), frames.get(i));
-                assertTrue(psnr > 20, "frame " + i + ": " + psnr + " dB");
+                assertVisible("frame " + i, Oracle.decodeVideo(pngs.get(i), "rgba", 1), frames.get(i));
             }
         }
     }

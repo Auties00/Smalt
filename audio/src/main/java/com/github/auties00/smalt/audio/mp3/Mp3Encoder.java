@@ -53,9 +53,10 @@ public final class Mp3Encoder implements AudioEncoder {
     static final int DELAY = 576 + 481;
 
     /**
-     * The options the encoder was created with.
+     * The options in use: those the encoder was created with, with the bitrate of the last
+     * {@link #setTargetBitrate(long)}.
      */
-    private final Mp3EncoderOptions options;
+    private Mp3EncoderOptions options;
 
     /**
      * The frame encoder.
@@ -127,12 +128,51 @@ public final class Mp3Encoder implements AudioEncoder {
     }
 
     /**
-     * Returns the options the encoder was created with.
+     * Returns the options in use: those the encoder was created with, with the bitrate of the last
+     * {@link #setTargetBitrate(long)} when one was set.
      *
      * @return the options
      */
     public Mp3EncoderOptions options() {
         return options;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>In constant bitrate mode the frames take the highest bitrate of the stream's MPEG version not above the
+     * target, or its lowest when the target is below every one. In average bitrate mode the target, limited to the
+     * version's range of bitrates, becomes the bitrate the noise level is steered toward, from the next coded frame
+     * on by the bitrate of the last quarter second rather than by the average since the start. An automatic bandwidth
+     * follows the new bitrate, and {@link #options()} reports it.
+     *
+     * @throws IllegalArgumentException if {@code bitsPerSecond} is not positive
+     * @throws IllegalStateException if the encoder runs in {@link Mp3BitrateMode#VBR} mode, which has no target
+     * bitrate
+     */
+    @Override
+    public void setTargetBitrate(long bitsPerSecond) {
+        if (bitsPerSecond <= 0) {
+            throw new IllegalArgumentException("invalid bitrate " + bitsPerSecond);
+        }
+        if (options.bitrateMode() == Mp3BitrateMode.VBR) {
+            throw new IllegalStateException("a variable bitrate encoder has no target bitrate");
+        }
+        var table = Mp3EncoderTables.BITRATES[Mp3EncoderTables.sampleRateIndex(options.sampleRate()) < 3 ? 0 : 1];
+        int bitrate;
+        if (options.bitrateMode() == Mp3BitrateMode.CBR) {
+            var index = 1;
+            for (var i = 1; i < table.length; i++) {
+                if (table[i] * 1000L <= bitsPerSecond) {
+                    index = i;
+                }
+            }
+            bitrate = table[index] * 1000;
+        } else {
+            bitrate = (int) Math.clamp(bitsPerSecond, table[1] * 1000L, table[table.length - 1] * 1000L);
+        }
+        options = options.toBuilder().bitrate(bitrate).build();
+        engine.retarget(options);
     }
 
     @Override

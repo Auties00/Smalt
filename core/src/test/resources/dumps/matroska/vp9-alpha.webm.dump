@@ -1,0 +1,24 @@
+# demux dump of matroska/vp9-alpha.webm; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 1000000
+seekable true
+metadata ENCODER="Lavf61.7.100"
+track 1 VIDEO VP9 timebase=1/1000 duration=1000 config=none
+  video 64x48 orientation=NORMAL rate=10/1 interlacing=PROGRESSIVE alpha
+  color ColorInfo[matrix=UNSPECIFIED, range=LIMITED, primaries=UNSPECIFIED, transfer=UNSPECIFIED, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+packets 10
+0 t1 pts=0 dts=0 dur=100 flags=KEY size=1396 crc=acb1568c side=[alpha=381:f086fabf]
+1 t1 pts=100 dts=100 dur=100 flags=- size=74 crc=285f4702 side=[alpha=92:cdacece6]
+2 t1 pts=200 dts=200 dur=100 flags=- size=65 crc=c5efd82b side=[alpha=43:66d13fb0]
+3 t1 pts=300 dts=300 dur=100 flags=- size=50 crc=95fa913e side=[alpha=50:1c567abd]
+4 t1 pts=400 dts=400 dur=100 flags=- size=49 crc=3e68594f side=[alpha=88:86168875]
+5 t1 pts=500 dts=500 dur=100 flags=KEY size=1402 crc=7718e5be side=[alpha=401:dfa4f1a8]
+6 t1 pts=600 dts=600 dur=100 flags=- size=52 crc=c65fd39e side=[alpha=68:e20a440b]
+7 t1 pts=700 dts=700 dur=100 flags=- size=91 crc=1f73b71e side=[alpha=95:8cef2f58]
+8 t1 pts=800 dts=800 dur=100 flags=- size=148 crc=976a4c13 side=[alpha=78:6fcca969]
+9 t1 pts=900 dts=900 dur=100 flags=- size=148 crc=c38fa9de side=[alpha=49:dc41c4d5]
+seek 0: t1@0
+seek 333333: t1@0
+seek 666666: t1@5
+seek 1000000: end
+seek -1000000: t1@0

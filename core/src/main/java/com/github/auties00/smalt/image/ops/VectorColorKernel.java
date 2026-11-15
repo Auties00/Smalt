@@ -135,14 +135,16 @@ final class VectorColorKernel implements ColorKernel {
 
     /**
      * The scalar kernel handling the row ends.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarColorKernel scalar;
+    private static final ScalarColorKernel SCALAR = new ScalarColorKernel();
 
     /**
      * Constructs the kernel.
      */
     private VectorColorKernel() {
-        this.scalar = new ScalarColorKernel();
     }
 
     /**
@@ -248,7 +250,7 @@ final class VectorColorKernel implements ColorKernel {
     public void yuvToRgba(byte[] y, int yOff, byte[] u, byte[] v, int cOff, int farOff, byte[] alpha, int aOff,
                           byte[] dst, int dOff, int width, int mode, ColorMatrix m) {
         if (!m.standard) {
-            scalar.yuvToRgbaRange(y, yOff, u, v, cOff, farOff, alpha, aOff, dst, dOff, width, mode, m, 0, width);
+            SCALAR.yuvToRgbaRange(y, yOff, u, v, cOff, farOff, alpha, aOff, dst, dOff, width, mode, m, 0, width);
             return;
         }
         var chromaWidth = (width + 1) >> 1;
@@ -280,11 +282,11 @@ final class VectorColorKernel implements ColorKernel {
             default -> throw new IllegalArgumentException("unknown chroma mode " + mode);
         }
         if (end <= start) {
-            scalar.yuvToRgbaRange(y, yOff, u, v, cOff, farOff, alpha, aOff, dst, dOff, width, mode, m, 0, width);
+            SCALAR.yuvToRgbaRange(y, yOff, u, v, cOff, farOff, alpha, aOff, dst, dOff, width, mode, m, 0, width);
             return;
         }
-        scalar.yuvToRgbaRange(y, yOff, u, v, cOff, farOff, alpha, aOff, dst, dOff, width, mode, m, 0, start);
-        scalar.yuvToRgbaRange(y, yOff, u, v, cOff, farOff, alpha, aOff, dst, dOff, width, mode, m, end, width);
+        SCALAR.yuvToRgbaRange(y, yOff, u, v, cOff, farOff, alpha, aOff, dst, dOff, width, mode, m, 0, start);
+        SCALAR.yuvToRgbaRange(y, yOff, u, v, cOff, farOff, alpha, aOff, dst, dOff, width, mode, m, end, width);
     }
 
     /**
@@ -560,7 +562,7 @@ final class VectorColorKernel implements ColorKernel {
                     .lanewise(VectorOperators.OR, opacity.lanewise(VectorOperators.LSHL, 24));
             PIXEL_VECTOR.cast(INT_VECTOR.cast(packed).reinterpretShape(BP, 0)).intoArray(dst, dOff + 4 * x);
         }
-        scalar.grayToRgbaRange(y, yOff, alpha, aOff, dst, dOff, m, end, width);
+        SCALAR.grayToRgbaRange(y, yOff, alpha, aOff, dst, dOff, m, end, width);
     }
 
     @Override
@@ -571,7 +573,7 @@ final class VectorColorKernel implements ColorKernel {
         } else {
             lumaAndAlpha(src, sOff, y, yOff, alpha, aOff, m, end);
         }
-        scalar.rgbaToLumaRange(src, sOff, y, yOff, alpha, aOff, m, end, width);
+        SCALAR.rgbaToLumaRange(src, sOff, y, yOff, alpha, aOff, m, end, width);
     }
 
     /**
@@ -658,7 +660,7 @@ final class VectorColorKernel implements ColorKernel {
         } else {
             end = 0;
         }
-        scalar.rgbaToChromaRange(src, off0, off1, width, pairX, pairY, u, v, cOff, m, end, count);
+        SCALAR.rgbaToChromaRange(src, off0, off1, width, pairX, pairY, u, v, cOff, m, end, count);
     }
 
     /**

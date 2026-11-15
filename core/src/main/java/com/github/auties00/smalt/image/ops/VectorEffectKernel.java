@@ -133,14 +133,16 @@ final class VectorEffectKernel implements EffectKernel {
 
     /**
      * The scalar kernel handling the row ends.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarEffectKernel scalar;
+    private static final ScalarEffectKernel SCALAR = new ScalarEffectKernel();
 
     /**
      * Constructs the kernel.
      */
     private VectorEffectKernel() {
-        this.scalar = new ScalarEffectKernel();
     }
 
     /**
@@ -175,7 +177,7 @@ final class VectorEffectKernel implements EffectKernel {
             var a = INT_VECTOR.cast(IntVector.fromArray(I, acc, i));
             INT_VECTOR.cast(a.lanewise(VectorOperators.ADD, s.lanewise(VectorOperators.MUL, w))).intoArray(acc, i);
         }
-        scalar.boxAccumulateRange(src, offset, weight, acc, i, length);
+        SCALAR.boxAccumulateRange(src, offset, weight, acc, i, length);
     }
 
     @Override
@@ -203,7 +205,7 @@ final class VectorEffectKernel implements EffectKernel {
             var result = INT_VECTOR.cast(bulk).lanewise(VectorOperators.LSHR, 24);
             SAMPLE_VECTOR.cast(INT_VECTOR.cast(result).convertShape(VectorOperators.I2B, B8, 0)).intoArray(dst, dstOffset + i);
         }
-        scalar.boxRowRange(src, add, subtract, left, right, acc, ww, fw, dst, dstOffset, i, length);
+        SCALAR.boxRowRange(src, add, subtract, left, right, acc, ww, fw, dst, dstOffset, i, length);
     }
 
     @Override
@@ -244,7 +246,7 @@ final class VectorEffectKernel implements EffectKernel {
                     .lanewise(VectorOperators.OR, pixels.lanewise(VectorOperators.AND, ALPHA_BYTE));
             PIXEL_VECTOR.cast(INT_VECTOR.cast(packed).reinterpretShape(BP, 0)).intoArray(dst, dstOffset + 4 * x);
         }
-        scalar.mixRowRange(src, srcOffset, matrix, dst, dstOffset, x, width);
+        SCALAR.mixRowRange(src, srcOffset, matrix, dst, dstOffset, x, width);
     }
 
     /**
@@ -276,7 +278,7 @@ final class VectorEffectKernel implements EffectKernel {
             SAMPLE_VECTOR.cast(INT_VECTOR.cast(result).convertShape(VectorOperators.I2B, B8, 0))
                     .intoArray(dst, dstOffset + i);
         }
-        scalar.unsharpRange(original, originalOffset, blurred, blurredOffset, percent, threshold, dst, dstOffset, i, length);
+        SCALAR.unsharpRange(original, originalOffset, blurred, blurredOffset, percent, threshold, dst, dstOffset, i, length);
     }
 
     @Override
@@ -334,7 +336,7 @@ final class VectorEffectKernel implements EffectKernel {
             p4 = p6.lanewise(VectorOperators.UMAX, t);
             PIXEL_VECTOR.cast(p4.lanewise(VectorOperators.UMIN, p2)).intoArray(dst, dstOffset + i);
         }
-        scalar.median9Range(above, row, below, offset, dst, dstOffset, i, length);
+        SCALAR.median9Range(above, row, below, offset, dst, dstOffset, i, length);
     }
 
     @Override
@@ -735,6 +737,6 @@ final class VectorEffectKernel implements EffectKernel {
             FLOAT_VECTOR.cast(ZERO.blend(blue, visible)).intoArray(bb, i);
             FLOAT_VECTOR.cast(ao).intoArray(ba, i);
         }
-        scalar.compositeRange(br, bg, bb, ba, sr, sg, sb, sa, opacity, i, length);
+        SCALAR.compositeRange(br, bg, bb, ba, sr, sg, sb, sa, opacity, i, length);
     }
 }

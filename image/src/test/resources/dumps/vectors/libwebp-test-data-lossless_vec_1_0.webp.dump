@@ -1,0 +1,13 @@
+# image dump of vectors/libwebp-test-data-lossless_vec_1_0.webp; regenerate with -Dsmalt.test.updateDumps=true
+format WEBP
+info ImageInfo[format=WEBP, width=16, height=16, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 16x16 rgba8 alpha=true crc=107421a0
+  format=WEBP orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+scaled 4x4
+picture 16x16 rgba8 alpha=true crc=107421a0
+  format=WEBP orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none

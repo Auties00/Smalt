@@ -23,6 +23,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -63,6 +64,16 @@ class AiffMuxerTest {
         var name = "aiff-" + ffmpegName + ".aiff";
         assertEquals(ffmpegName, ContainerProbe.probe(MuxSupport.save(name, output)).streams().getFirst().codecName());
         MuxSupport.assertFfmpegClean(name, output);
+    }
+
+    @Test
+    @DisplayName("does not write 64-bit integers, wider than the sample size AIFF allows")
+    void sixtyFourBits() {
+        assertFalse(AiffMuxer.supports(Codec.PCM_S64BE));
+        assertFalse(AiffMuxer.supports(Codec.PCM_S64LE));
+        var input = PcmPackets.tone(Codec.PCM_S64BE, 44_100, ChannelLayout.STEREO, 10);
+        assertThrows(IllegalArgumentException.class,
+                () -> MuxSupport.toMemory(List.of(input.track()), input.packets(), AiffMuxer::new));
     }
 
     @ParameterizedTest

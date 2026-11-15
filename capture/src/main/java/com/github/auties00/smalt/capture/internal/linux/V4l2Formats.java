@@ -104,6 +104,9 @@ final class V4l2Formats {
     /**
      * Lists the pixel formats the device captures that this backend converts.
      *
+     * <p>A single-planar device never offers the formats of several memory planes; should one list
+     * them, they are skipped.
+     *
      * @return the formats in the order of preference of {@link V4l2PixelFormat}
      * @throws MediaException.Io if the enumeration fails
      */
@@ -114,7 +117,7 @@ final class V4l2Formats {
             for (var index = 0; index < MAX_ENTRIES; index++) {
                 description.fill((byte) 0);
                 description.set(JAVA_INT, V4l2.FMTDESC_INDEX, index);
-                description.set(JAVA_INT, V4l2.FMTDESC_TYPE, V4l2.BUF_TYPE_VIDEO_CAPTURE);
+                description.set(JAVA_INT, V4l2.FMTDESC_TYPE, device.bufferType());
                 var error = device.ioctl(V4l2.VIDIOC_ENUM_FMT, description);
                 if (error == Posix.EINVAL) {
                     break;
@@ -123,7 +126,7 @@ final class V4l2Formats {
                     throw failure("VIDIOC_ENUM_FMT", error);
                 }
                 var format = V4l2PixelFormat.of(description.get(JAVA_INT, V4l2.FMTDESC_PIXELFORMAT));
-                if (format != null) {
+                if (format != null && (format.contiguous() || device.multiPlanar())) {
                     found.add(format);
                 }
             }
@@ -296,49 +299,113 @@ final class V4l2Formats {
     }
 
     /**
-     * Sets the device's format to an offer and returns the converter of its frames.
-     *
-     * <p>The field order is left to the driver; progressive and interleaved frames are accepted,
-     * separate fields are not. The driver must accept the offer's pixel format and size exactly.
+     * Sets the device's format to an offer and returns the layout and converter of its frames,
+     * letting the driver choose the field order.
      *
      * @param kernel the row kernel of the converter
-     * @return the converter of the negotiated frames
+     * @return the negotiated frames
      * @throws MediaException.Unsupported if the driver substitutes another format or size, or
-     * delivers separate fields
+     * reports a field order or plane layout this backend does not assemble
      * @throws MediaException.Io if the request fails, for example because another
      * process is capturing
      */
-    static FrameConverter negotiate(V4l2Device device, Offer offer, ConversionKernel kernel) {
+    static Negotiated negotiate(V4l2Device device, Offer offer, ConversionKernel kernel) {
+        return negotiate(device, offer, kernel, V4l2.FIELD_ANY);
+    }
+
+    /**
+     * Sets the device's format to an offer with a field order and returns the layout and converter
+     * of its frames.
+     *
+     * <p>The driver must accept the offer's pixel format and size exactly; for the field orders
+     * that deliver one field per buffer ({@code V4L2_FIELD_TOP}, {@code V4L2_FIELD_BOTTOM},
+     * {@code V4L2_FIELD_ALTERNATE}) the height it reports is that of a field, half the offer's.
+     * The field order the driver answers with may differ from the one requested; every order of
+     * {@link V4l2FrameLayout} is accepted. The color of the frames comes from the format's
+     * colorspace, encoding, quantization and transfer; R'G'B' and luma-only samples are full range
+     * unless the driver reports limited quantization, as the V4L2 test pattern generator produces them.
+     *
+     * @param kernel the row kernel of the converter
+     * @param field the requested {@code field}, {@link V4l2#FIELD_ANY} to let the driver choose
+     * @return the negotiated frames
+     * @throws MediaException.Unsupported if the driver substitutes another format or size, or
+     * reports a field order or plane layout this backend does not assemble
+     * @throws MediaException.Io if the request fails, for example because another
+     * process is capturing
+     */
+    static Negotiated negotiate(V4l2Device device, Offer offer, ConversionKernel kernel, int field) {
         try (var arena = Arena.ofConfined()) {
             var format = arena.allocate(V4l2.FORMAT);
             var pix = V4l2.FORMAT_PIX;
-            format.set(JAVA_INT, V4l2.FORMAT_TYPE, V4l2.BUF_TYPE_VIDEO_CAPTURE);
+            format.set(JAVA_INT, V4l2.FORMAT_TYPE, device.bufferType());
             format.set(JAVA_INT, pix + V4l2.PIX_WIDTH, offer.width());
-            format.set(JAVA_INT, pix + V4l2.PIX_HEIGHT, offer.height());
+            format.set(JAVA_INT, pix + V4l2.PIX_HEIGHT, fieldRows(field) ? offer.height() / 2 : offer.height());
             format.set(JAVA_INT, pix + V4l2.PIX_PIXELFORMAT, offer.format().fourcc());
-            format.set(JAVA_INT, pix + V4l2.PIX_FIELD, V4l2.FIELD_ANY);
+            format.set(JAVA_INT, pix + V4l2.PIX_FIELD, field);
+            if (device.multiPlanar()) {
+                format.set(JAVA_BYTE, pix + V4l2.MP_NUM_PLANES, (byte) offer.format().memoryPlanes());
+            }
             var error = device.ioctl(V4l2.VIDIOC_S_FMT, format);
             if (error != 0) {
                 throw failure(error == Posix.EBUSY ? "VIDIOC_S_FMT (the camera is in use)" : "VIDIOC_S_FMT", error);
             }
             var width = format.get(JAVA_INT, pix + V4l2.PIX_WIDTH);
-            var height = format.get(JAVA_INT, pix + V4l2.PIX_HEIGHT);
+            var rows = format.get(JAVA_INT, pix + V4l2.PIX_HEIGHT);
             var fourcc = format.get(JAVA_INT, pix + V4l2.PIX_PIXELFORMAT);
+            var actualField = format.get(JAVA_INT, pix + V4l2.PIX_FIELD);
+            var height = fieldRows(actualField) ? 2L * rows : rows;
             if (fourcc != offer.format().fourcc() || width != offer.width() || height != offer.height()) {
                 throw new MediaException.Unsupported("v4l2 mode", "the driver replaced " + offer.width() + "x" + offer.height()
                         + " " + V4l2.fourccName(offer.format().fourcc()) + " with " + width + "x" + height + " "
                         + V4l2.fourccName(fourcc));
             }
-            var field = format.get(JAVA_INT, pix + V4l2.PIX_FIELD);
-            if (field != V4l2.FIELD_ANY && field != V4l2.FIELD_NONE && field != V4l2.FIELD_INTERLACED
-                    && field != V4l2.FIELD_INTERLACED_TB && field != V4l2.FIELD_INTERLACED_BT) {
-                throw new MediaException.Unsupported("v4l2 field order", "the camera delivers separate fields (field order " + field + ")");
+            int[] strides;
+            int colorspace;
+            int encoding;
+            int quantization;
+            int transfer;
+            if (device.multiPlanar()) {
+                var planes = Byte.toUnsignedInt(format.get(JAVA_BYTE, pix + V4l2.MP_NUM_PLANES));
+                if (planes != offer.format().memoryPlanes()) {
+                    throw new MediaException.Unsupported("v4l2 planes", "the driver describes " + V4l2.fourccName(fourcc)
+                            + " with " + planes + " memory planes instead of " + offer.format().memoryPlanes());
+                }
+                strides = new int[planes];
+                for (var plane = 0; plane < planes; plane++) {
+                    strides[plane] = format.get(JAVA_INT, pix + V4l2.MP_PLANE_FMT + plane * V4l2.PLANE_PIX_FORMAT.byteSize()
+                            + V4l2.PLANE_FMT_BYTESPERLINE);
+                }
+                colorspace = format.get(JAVA_INT, pix + V4l2.MP_COLORSPACE);
+                encoding = Byte.toUnsignedInt(format.get(JAVA_BYTE, pix + V4l2.MP_YCBCR_ENC));
+                quantization = Byte.toUnsignedInt(format.get(JAVA_BYTE, pix + V4l2.MP_QUANTIZATION));
+                transfer = Byte.toUnsignedInt(format.get(JAVA_BYTE, pix + V4l2.MP_XFER_FUNC));
+            } else {
+                strides = new int[]{format.get(JAVA_INT, pix + V4l2.PIX_BYTESPERLINE)};
+                colorspace = format.get(JAVA_INT, pix + V4l2.PIX_COLORSPACE);
+                encoding = format.get(JAVA_INT, pix + V4l2.PIX_YCBCR_ENC);
+                quantization = format.get(JAVA_INT, pix + V4l2.PIX_QUANTIZATION);
+                transfer = format.get(JAVA_INT, pix + V4l2.PIX_XFER_FUNC);
             }
-            var color = V4l2Colors.colorInfo(format.get(JAVA_INT, pix + V4l2.PIX_COLORSPACE),
-                    format.get(JAVA_INT, pix + V4l2.PIX_YCBCR_ENC), format.get(JAVA_INT, pix + V4l2.PIX_QUANTIZATION),
-                    format.get(JAVA_INT, pix + V4l2.PIX_XFER_FUNC));
-            return new FrameConverter(offer.format(), width, height, format.get(JAVA_INT, pix + V4l2.PIX_BYTESPERLINE), color, kernel);
+            var kind = offer.format().kind();
+            if ((kind == V4l2PixelFormat.Kind.RGB || kind == V4l2PixelFormat.Kind.LUMA)
+                    && quantization != V4l2Colors.QUANTIZATION_LIMITED) {
+                quantization = V4l2Colors.QUANTIZATION_FULL;
+            }
+            var color = V4l2Colors.colorInfo(colorspace, encoding, quantization, transfer);
+            var layout = new V4l2FrameLayout(offer.format(), width, rows, actualField, strides);
+            return new Negotiated(layout, new FrameConverter(layout, color, kernel));
         }
+    }
+
+    /**
+     * Returns whether a field order delivers one field per buffer, so the reported height is a
+     * field's.
+     *
+     * @param field the {@code field}
+     * @return whether the order is top, bottom or alternate
+     */
+    static boolean fieldRows(int field) {
+        return field == V4l2.FIELD_TOP || field == V4l2.FIELD_BOTTOM || field == V4l2.FIELD_ALTERNATE;
     }
 
     /**
@@ -354,7 +421,7 @@ final class V4l2Formats {
     static void requestRate(V4l2Device device, Rational rate) {
         try (var arena = Arena.ofConfined()) {
             var parameters = arena.allocate(V4l2.STREAMPARM);
-            parameters.set(JAVA_INT, V4l2.STREAMPARM_TYPE, V4l2.BUF_TYPE_VIDEO_CAPTURE);
+            parameters.set(JAVA_INT, V4l2.STREAMPARM_TYPE, device.bufferType());
             if (device.ioctl(V4l2.VIDIOC_G_PARM, parameters) != 0
                     || (parameters.get(JAVA_INT, V4l2.STREAMPARM_CAPABILITY) & V4l2.CAP_TIMEPERFRAME) == 0) {
                 return;
@@ -396,15 +463,16 @@ final class V4l2Formats {
     private static Offer current(V4l2Device device) {
         try (var arena = Arena.ofConfined()) {
             var format = arena.allocate(V4l2.FORMAT);
-            format.set(JAVA_INT, V4l2.FORMAT_TYPE, V4l2.BUF_TYPE_VIDEO_CAPTURE);
+            format.set(JAVA_INT, V4l2.FORMAT_TYPE, device.bufferType());
             var error = device.ioctl(V4l2.VIDIOC_G_FMT, format);
             if (error != 0) {
                 throw failure("VIDIOC_G_FMT", error);
             }
             var pixelFormat = V4l2PixelFormat.of(format.get(JAVA_INT, V4l2.FORMAT_PIX + V4l2.PIX_PIXELFORMAT));
             var width = format.get(JAVA_INT, V4l2.FORMAT_PIX + V4l2.PIX_WIDTH);
-            var height = format.get(JAVA_INT, V4l2.FORMAT_PIX + V4l2.PIX_HEIGHT);
-            if (pixelFormat == null || !validSize(width, height)) {
+            var rows = format.get(JAVA_INT, V4l2.FORMAT_PIX + V4l2.PIX_HEIGHT);
+            var height = fieldRows(format.get(JAVA_INT, V4l2.FORMAT_PIX + V4l2.PIX_FIELD)) ? 2 * rows : rows;
+            if (pixelFormat == null || (!pixelFormat.contiguous() && !device.multiPlanar()) || !validSize(width, height)) {
                 throw new MediaException.Unsupported("v4l2 pixel format", "the camera offers no pixel format this backend converts");
             }
             return new Offer(pixelFormat, width, height, FALLBACK_RATE);
@@ -489,12 +557,32 @@ final class V4l2Formats {
      */
     record Capability(String card, int capabilities) {
         /**
-         * Returns whether the node captures single-planar video with streaming I/O.
+         * Returns whether the node captures single-planar or multi-planar video with streaming I/O.
          *
          * @return whether this backend can capture from the node
          */
         boolean canCapture() {
-            return (capabilities & V4l2.CAP_VIDEO_CAPTURE) != 0 && (capabilities & V4l2.CAP_STREAMING) != 0;
+            return (capabilities & (V4l2.CAP_VIDEO_CAPTURE | V4l2.CAP_VIDEO_CAPTURE_MPLANE)) != 0
+                    && (capabilities & V4l2.CAP_STREAMING) != 0;
+        }
+
+        /**
+         * Returns the buffer type to capture the node with: single-planar when the node offers it.
+         *
+         * @return {@link V4l2#BUF_TYPE_VIDEO_CAPTURE} or {@link V4l2#BUF_TYPE_VIDEO_CAPTURE_MPLANE}
+         */
+        int bufferType() {
+            return (capabilities & V4l2.CAP_VIDEO_CAPTURE) != 0 ? V4l2.BUF_TYPE_VIDEO_CAPTURE : V4l2.BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        }
+
+        /**
+         * Returns the device that issues requests to the node with its buffer type.
+         *
+         * @param requests the node's requests
+         * @return the device
+         */
+        V4l2Device device(V4l2Device requests) {
+            return V4l2Device.of(requests, bufferType());
         }
     }
 
@@ -633,6 +721,15 @@ final class V4l2Formats {
             }
             return candidates;
         }
+    }
+
+    /**
+     * Pairs the layout of the negotiated frames with their converter.
+     *
+     * @param layout where the planes of a buffer lie and how buffers become frames
+     * @param converter the converter of the assembled frames
+     */
+    record Negotiated(V4l2FrameLayout layout, FrameConverter converter) {
     }
 
     /**

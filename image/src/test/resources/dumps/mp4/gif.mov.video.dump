@@ -1,0 +1,15 @@
+# video decode dump of mp4/gif.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 500000
+seekable true
+track 1 GIF 64x48 timebase=1/10240
+0 pts=0 dur=1024 key=true 64x48 rgba8 alpha=true crc=4f5750b4
+1 pts=1024 dur=1024 key=false 64x48 rgba8 alpha=true crc=ef1a571c
+2 pts=2048 dur=1024 key=false 64x48 rgba8 alpha=true crc=a737eaf1
+3 pts=3072 dur=1024 key=false 64x48 rgba8 alpha=true crc=2c1e86af
+4 pts=4096 dur=1024 key=false 64x48 rgba8 alpha=true crc=38e37cd1
+seek 0: @0
+seek 166666: @1
+seek 333333: @3
+seek 500000: end
+seek -1000000: @0

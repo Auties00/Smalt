@@ -3,6 +3,7 @@ package com.github.auties00.smalt.image.metadata;
 import com.github.auties00.smalt.image.webp.WebpContainer;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -22,7 +23,7 @@ import java.util.Map;
  * and format-level extraction of the compressed pixel data that edits must not touch.
  */
 final class MetadataSupport {
-    static final Path DIRECTORY = Path.of("target", "metadata-fixtures");
+    static final Path DIRECTORY = Scratch.directory("metadata-fixtures");
 
     private MetadataSupport() {
     }

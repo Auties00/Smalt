@@ -107,7 +107,7 @@ final class Vp9RtPartition {
     /**
      * The chroma predictions of the superblock, 32x32 each.
      */
-    final byte[][] predUv = {new byte[32 * 32], new byte[32 * 32]};
+    final byte[][] predUv = {new byte[64 * 64], new byte[64 * 64]};
 
     /**
      * The 8x8 averages of a 16x16 source block, from {@link Vp9EncDsp#avg8x8Quad}.
@@ -654,9 +654,13 @@ final class Vp9RtPartition {
      */
     private void buildPrediction(Vp9EncPicture ref, int mv, int row, int col) {
         var p = coder.predictor;
+        var ssX = coder.enc.ssX;
+        var ssY = coder.enc.ssY;
         p.predictInter(ref, 0, col * 8, row * 8, mv, BILINEAR, predY, 0, 64, 64, 64, false);
-        p.predictInter(ref, 1, col * 4, row * 4, mv, BILINEAR, predUv[0], 0, 32, 32, 32, false);
-        p.predictInter(ref, 2, col * 4, row * 4, mv, BILINEAR, predUv[1], 0, 32, 32, 32, false);
+        p.predictInter(ref, 1, (col * 8) >> ssX, (row * 8) >> ssY, mv, BILINEAR, predUv[0], 0, 64, 64 >> ssX,
+                64 >> ssY, false);
+        p.predictInter(ref, 2, (col * 8) >> ssX, (row * 8) >> ssY, mv, BILINEAR, predUv[1], 0, 64, 64 >> ssX,
+                64 >> ssY, false);
     }
 
     /**
@@ -823,7 +827,7 @@ final class Vp9RtPartition {
             if (row + half < miRows) {
                 var subsize = Vp9Constants.SUBSIZE[PARTITION_VERT * 13 + bsize];
                 if (vt.compute(level, base + VERT) < threshold && vt.compute(level, base + VERT + 1) < threshold
-                        && Vp9Constants.SS_SIZE[subsize * 4 + 3] != Vp9Constants.BLOCK_INVALID) {
+                        && enc.uvBsize(subsize) != Vp9Constants.BLOCK_INVALID) {
                     setBlockSize(row, col, subsize);
                     setBlockSize(row, col + half, subsize);
                     return true;
@@ -832,7 +836,7 @@ final class Vp9RtPartition {
             if (col + half < miCols) {
                 var subsize = Vp9Constants.SUBSIZE[PARTITION_HORZ * 13 + bsize];
                 if (vt.compute(level, base + HORZ) < threshold && vt.compute(level, base + HORZ + 1) < threshold
-                        && Vp9Constants.SS_SIZE[subsize * 4 + 3] != Vp9Constants.BLOCK_INVALID) {
+                        && enc.uvBsize(subsize) != Vp9Constants.BLOCK_INVALID) {
                     setBlockSize(row, col, subsize);
                     setBlockSize(row + half, col, subsize);
                     return true;
@@ -862,11 +866,16 @@ final class Vp9RtPartition {
             }
         }
         var src = enc.source;
-        var uvBsize = Vp9Constants.SS_SIZE[bsize * 4 + 3];
+        var uvBsize = enc.uvBsize(bsize);
+        if (uvBsize == Vp9Constants.BLOCK_INVALID) {
+            coder.colorSensitivity[0] = true;
+            coder.colorSensitivity[1] = true;
+            return;
+        }
         var w = Vp9RtCoder.NUM_4X4_WIDE[uvBsize] * 4;
         var h = Vp9RtCoder.NUM_4X4_HIGH[uvBsize] * 4;
         for (var i = 1; i <= 2; i++) {
-            var uvSad = coder.edsp.sad(src.planes[i], coder.srcOff[i], src.strides[i], predUv[i - 1], 0, 32, w, h);
+            var uvSad = coder.edsp.sad(src.planes[i], coder.srcOff[i], src.strides[i], predUv[i - 1], 0, 64, w, h);
             coder.colorSensitivity[i - 1] = Integer.compareUnsigned(uvSad, ySad >>> 2) > 0;
         }
     }

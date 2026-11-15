@@ -18,9 +18,20 @@ import com.github.auties00.smalt.video.av1.internal.DequantTables;
  */
 final class Quantizer {
     /**
-     * The 8-bit maximum magnitude of a dequantized coefficient.
+     * The bit depth of the samples, 8, 10 or 12.
      */
-    private static final int CF_MAX = (128 << 8) - 1;
+    private final int bitDepth;
+
+    /**
+     * The largest magnitude of a dequantized coefficient, {@code (128 << bitDepth) - 1}.
+     */
+    private final int cfMax;
+
+    /**
+     * The 8-bit dequantizers of the DC and AC coefficients at the same quantizer index and deltas,
+     * the steps the analysis models and thresholds use at every bit depth.
+     */
+    final int[] analysisDequant = new int[2];
 
     /**
      * The dead-zone thresholds of the DC and AC coefficients.
@@ -70,9 +81,20 @@ final class Quantizer {
     final int[] dequant = new int[2];
 
     /**
-     * Creates an unset quantizer.
+     * Creates an unset quantizer of 8-bit samples.
      */
     Quantizer() {
+        this(8);
+    }
+
+    /**
+     * Creates an unset quantizer of a bit depth.
+     *
+     * @param bitDepth the bit depth, 8, 10 or 12
+     */
+    Quantizer(int bitDepth) {
+        this.bitDepth = bitDepth;
+        this.cfMax = (128 << bitDepth) - 1;
     }
 
     /**
@@ -98,6 +120,30 @@ final class Quantizer {
     }
 
     /**
+     * Returns the DC dequantizer of a quantizer index at a bit depth ({@code av1_dc_quant_QTX}).
+     *
+     * @param qindex the quantizer index
+     * @param delta the DC delta
+     * @param hbd 0 for 8 bits, 1 for 10 bits, 2 for 12 bits
+     * @return the dequantizer
+     */
+    static int dcQuant(int qindex, int delta, int hbd) {
+        return DequantTables.DQ[hbd * 512 + Math.clamp(qindex + delta, 0, 255) * 2];
+    }
+
+    /**
+     * Returns the AC dequantizer of a quantizer index at a bit depth ({@code av1_ac_quant_QTX}).
+     *
+     * @param qindex the quantizer index
+     * @param delta the AC delta
+     * @param hbd 0 for 8 bits, 1 for 10 bits, 2 for 12 bits
+     * @return the dequantizer
+     */
+    static int acQuant(int qindex, int delta, int hbd) {
+        return DequantTables.DQ[hbd * 512 + Math.clamp(qindex + delta, 0, 255) * 2 + 1];
+    }
+
+    /**
      * Sets the parameters for a quantizer index and the plane's deltas.
      *
      * @param qindex the quantizer index
@@ -105,10 +151,13 @@ final class Quantizer {
      * @param acDelta the AC delta
      */
     void set(int qindex, int dcDelta, int acDelta) {
-        var zbinFactor = qindex == 0 ? 64 : (dcQuant(qindex, 0) < 148 ? 84 : 80);
+        var hbd = (bitDepth - 8) >> 1;
+        // the 8-bit threshold 148 of get_qzbin_factor, scaled by four for each two bits
+        var zbinFactor = qindex == 0 ? 64 : (dcQuant(qindex, 0, hbd) < 148 << (bitDepth - 8) ? 84 : 80);
         var roundFactor = qindex == 0 ? 64 : 48;
         for (var i = 0; i < 2; i++) {
-            var q = i == 0 ? dcQuant(qindex, dcDelta) : acQuant(qindex, acDelta);
+            var q = i == 0 ? dcQuant(qindex, dcDelta, hbd) : acQuant(qindex, acDelta, hbd);
+            analysisDequant[i] = i == 0 ? dcQuant(qindex, dcDelta) : acQuant(qindex, acDelta);
             build(q, zbinFactor, roundFactor, i, quant, quantShift, zbin, round);
             quantFp[i] = (1 << 16) / q;
             roundFp[i] = (64 * q) >> 7;
@@ -182,7 +231,7 @@ final class Quantizer {
      */
     int quantizeB(int[] coeff, int nCoeffs, int[] scan, int[] iscan, int logScale, int[] qcoeff, int[] round) {
         return quantize(coeff, nCoeffs, scan, iscan, logScale, qcoeff, zbin, round, quant, quantShift, 0,
-                Short.MAX_VALUE, true);
+                bitDepth == 8 ? Short.MAX_VALUE : Integer.MAX_VALUE, bitDepth == 8);
     }
 
     /**
@@ -265,7 +314,7 @@ final class Quantizer {
      * untouched and must be zero
      */
     void dequantize(int[] qcoeff, int eob, int[] scan, int dqShift, int[] out) {
-        dequantize(qcoeff, eob, scan, dqShift, dequant[0], dequant[1], CF_MAX, out);
+        dequantize(qcoeff, eob, scan, dqShift, dequant[0], dequant[1], cfMax, out);
     }
 
     /**

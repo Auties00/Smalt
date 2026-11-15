@@ -77,14 +77,16 @@ public final class BandLayout {
      * Computes the layout of one window size.
      *
      * @param sampleRate the sampling rate in hertz
+     * @param frameLength the frame length, 1024 or 960
      * @param shortWindow whether the layout is for short windows
      * @param bandwidth the audio bandwidth in hertz
      * @param channelBitrate the bitrate per channel in bits per second
      */
-    public BandLayout(int sampleRate, boolean shortWindow, int bandwidth, int channelBitrate) {
+    public BandLayout(int sampleRate, int frameLength, boolean shortWindow, int bandwidth, int channelBitrate) {
         var tableIndex = SamplingTables.tableIndexFor(sampleRate);
-        this.offsets = shortWindow ? SamplingTables.shortOffsets(tableIndex, 1024) : SamplingTables.longOffsets(tableIndex, 1024);
-        this.windowLength = shortWindow ? 128 : 1024;
+        this.offsets = shortWindow ? SamplingTables.shortOffsets(tableIndex, frameLength)
+                : SamplingTables.longOffsets(tableIndex, frameLength);
+        this.windowLength = shortWindow ? frameLength / 8 : frameLength;
         this.count = offsets.length - 1;
         this.lowpassLine = Math.min(windowLength, (int) ((long) bandwidth * 2 * windowLength / sampleRate));
         var activeBands = 0;
@@ -104,13 +106,13 @@ public final class BandLayout {
             var high = offsets[band + 1] * lineWidth;
             bark[band] = (float) bark((low + high) / 2);
             var threshold = Math.min(hearingThreshold(bark(low)), hearingThreshold(bark(high)));
-            var perLine = fullScale * Math.pow(10, (threshold - 96 - 20) / 10);
+            var perLine = fullScale * StrictMath.pow(10, (threshold - 96 - 20) / 10);
             quiet[band] = (float) (perLine * (offsets[band + 1] - offsets[band]));
         }
         for (var band = 1; band < count; band++) {
             var distance = bark[band] - bark[band - 1];
-            spreadUp[band] = (float) Math.pow(10, -15 * distance / 10);
-            spreadDown[band - 1] = (float) Math.pow(10, -30 * distance / 10);
+            spreadUp[band] = (float) StrictMath.pow(10, -15 * distance / 10);
+            spreadDown[band - 1] = (float) StrictMath.pow(10, -30 * distance / 10);
         }
         var bitsPerWindow = (double) channelBitrate * windowLength / sampleRate;
         var pePerWindow = 1.18 * bitsPerWindow;
@@ -123,8 +125,8 @@ public final class BandLayout {
             var lines = offsets[band + 1] - offsets[band];
             var perLine = 0.024 * pePerWindow * 24 * width / (lastBark * lines);
             perLine = Math.clamp(perLine, 1.4, 8.4);
-            var snr = 1 / (Math.pow(2, perLine) - 1.5);
-            minSnr[band] = (float) Math.clamp(snr, Math.pow(10, -2.5), Math.pow(10, -0.1));
+            var snr = 1 / (StrictMath.pow(2, perLine) - 1.5);
+            minSnr[band] = (float) Math.clamp(snr, StrictMath.pow(10, -2.5), StrictMath.pow(10, -0.1));
         }
     }
 
@@ -135,7 +137,7 @@ public final class BandLayout {
      * @return the Bark value
      */
     private static double bark(double frequency) {
-        return 13 * Math.atan(0.00076 * frequency) + 3.5 * Math.atan(Math.pow(frequency / 7500, 2));
+        return 13 * StrictMath.atan(0.00076 * frequency) + 3.5 * StrictMath.atan(StrictMath.pow(frequency / 7500, 2));
     }
 
     /**
@@ -151,7 +153,7 @@ public final class BandLayout {
     /**
      * Returns the number of spectral lines of one window.
      *
-     * @return 1024 or 128
+     * @return the frame length for long windows, an eighth of it for short windows
      */
     public int windowLength() {
         return windowLength;

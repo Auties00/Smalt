@@ -3,6 +3,7 @@ package com.github.auties00.smalt.audio.voice;
 import com.github.auties00.smalt.internal.check.Checks;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Holds the settings of a {@link VoiceProcessor}. Instances are immutable and thread-safe; create
@@ -10,9 +11,14 @@ import java.util.Objects;
  */
 public final class VoiceProcessorOptions {
     /**
-     * The sampling rate of every processor, in hertz.
+     * The default sampling rate, in hertz.
      */
-    private static final int SAMPLE_RATE = 16_000;
+    private static final int DEFAULT_SAMPLE_RATE = 16_000;
+
+    /**
+     * The highest number of capture or render channels.
+     */
+    private static final int MAX_CHANNELS = 8;
 
     /**
      * The default target level, in dB below full scale.
@@ -39,6 +45,16 @@ public final class VoiceProcessorOptions {
      */
     private static final VoiceProcessorOptions VOIP = new Builder().build();
 
+    private final int sampleRate;
+
+    private final int captureChannels;
+
+    private final int renderChannels;
+
+    private final boolean multichannelCapture;
+
+    private final boolean multichannelRender;
+
     private final EchoCancellation echoCancellation;
 
     private final MobileEchoRoute mobileEchoRoute;
@@ -55,7 +71,16 @@ public final class VoiceProcessorOptions {
 
     private final boolean limiter;
 
+    private final AnalogGainControllerOptions analogGainController;
+
+    private final LevelControlOptions levelControl;
+
     private VoiceProcessorOptions(Builder builder) {
+        this.sampleRate = builder.sampleRate;
+        this.captureChannels = builder.captureChannels;
+        this.renderChannels = builder.renderChannels;
+        this.multichannelCapture = builder.multichannelCapture;
+        this.multichannelRender = builder.multichannelRender;
         this.echoCancellation = builder.echoCancellation;
         this.mobileEchoRoute = builder.mobileEchoRoute;
         this.comfortNoise = builder.comfortNoise;
@@ -64,6 +89,8 @@ public final class VoiceProcessorOptions {
         this.targetLevelDbfs = builder.targetLevelDbfs;
         this.compressionGainDb = builder.compressionGainDb;
         this.limiter = builder.limiter;
+        this.analogGainController = builder.analogGainController;
+        this.levelControl = builder.levelControl;
     }
 
     /**
@@ -76,8 +103,8 @@ public final class VoiceProcessorOptions {
     }
 
     /**
-     * Returns the options of a two-way voice call: the {@link EchoCancellation#STANDARD} echo
-     * canceller, noise suppression at {@link NoiseSuppression#HIGH} and no gain control.
+     * Returns the options of a two-way voice call: 16 kHz mono, the {@link EchoCancellation#STANDARD}
+     * echo canceller, noise suppression at {@link NoiseSuppression#HIGH} and no gain control.
      *
      * @apiNote Gain control is off because it changes the speech level, which a call application
      * may already manage; enable it with {@code toBuilder().gainControl(GainControl.ADAPTIVE_DIGITAL)}
@@ -108,10 +135,65 @@ public final class VoiceProcessorOptions {
     }
 
     /**
-     * {@return the sampling rate of both the render and the capture signal, always 16000 Hz}
+     * {@return the sampling rate of both the render and the capture signal, in hertz: 8000, 16000,
+     * 32000 or 48000; 16000 by default}
+     *
+     * <p>At 32 and 48 kHz the signal is split into bands of 8 kHz: the echo cancellers, the noise
+     * suppressor and the gain controller of {@link #gainControl()} analyze the lowest 16 kHz band
+     * and apply their gains to every band, while the high-pass filter and the level controller of
+     * {@link #levelControl()} work on the full band. At 8 kHz both signals are resampled to 16 kHz
+     * for processing and the capture signal back to 8 kHz, which adds about 1 ms of delay each
+     * way.
      */
     public int sampleRate() {
-        return SAMPLE_RATE;
+        return sampleRate;
+    }
+
+    /**
+     * {@return the number of channels of the capture signal, from 1 to 8; 1 by default}
+     *
+     * <p>With the {@link EchoCancellation#STANDARD} echo canceller and without
+     * {@link #multichannelCapture()}, only the first capture channel is conditioned and the output
+     * repeats it on every channel; otherwise every channel is conditioned on its own.
+     */
+    public int captureChannels() {
+        return captureChannels;
+    }
+
+    /**
+     * {@return the number of channels of the render signal, from 1 to 8; 1 by default}
+     *
+     * <p>Without {@link #multichannelRender()} the render channels are averaged into one before the
+     * echo cancellers see them.
+     */
+    public int renderChannels() {
+        return renderChannels;
+    }
+
+    /**
+     * {@return whether the {@link EchoCancellation#STANDARD} echo canceller conditions every capture
+     * channel; {@code false} by default}
+     *
+     * <p>The echo canceller then cancels the echo in each channel separately, which costs about one
+     * mono canceller per channel. The setting applies only with {@link EchoCancellation#STANDARD};
+     * the other configurations always condition every channel.
+     */
+    public boolean multichannelCapture() {
+        return multichannelCapture;
+    }
+
+    /**
+     * {@return whether the echo cancellers see every render channel instead of their average;
+     * {@code false} by default}
+     *
+     * <p>With {@link EchoCancellation#STANDARD}, a render signal whose channels differ (true stereo
+     * rather than a mono signal on several channels) is then modeled with one adaptive filter per
+     * render channel, which cancels echo better when the loudspeakers play different signals. With
+     * {@link EchoCancellation#MOBILE}, one canceller runs for every pair of capture and render
+     * channel.
+     */
+    public boolean multichannelRender() {
+        return multichannelRender;
     }
 
     /**
@@ -151,7 +233,7 @@ public final class VoiceProcessorOptions {
     }
 
     /**
-     * {@return the gain controller; {@link GainControl#OFF} by default}
+     * {@return the gain controller of the lowest 16 kHz band; {@link GainControl#OFF} by default}
      */
     public GainControl gainControl() {
         return gainControl;
@@ -187,9 +269,32 @@ public final class VoiceProcessorOptions {
         return limiter;
     }
 
+    /**
+     * {@return the settings of the managed analog gain controller;
+     * {@link AnalogGainControllerOptions#defaults()} by default}
+     *
+     * <p>The settings apply only when {@link #gainControl()} is {@link GainControl#MANAGED_ANALOG}.
+     */
+    public AnalogGainControllerOptions analogGainController() {
+        return analogGainController;
+    }
+
+    /**
+     * {@return the level controller that runs after every other stage, or an empty optional for
+     * none, the default}
+     */
+    public Optional<LevelControlOptions> levelControl() {
+        return Optional.ofNullable(levelControl);
+    }
+
     @Override
     public boolean equals(Object object) {
         return object instanceof VoiceProcessorOptions that
+                && sampleRate == that.sampleRate
+                && captureChannels == that.captureChannels
+                && renderChannels == that.renderChannels
+                && multichannelCapture == that.multichannelCapture
+                && multichannelRender == that.multichannelRender
                 && echoCancellation == that.echoCancellation
                 && mobileEchoRoute == that.mobileEchoRoute
                 && comfortNoise == that.comfortNoise
@@ -197,18 +302,25 @@ public final class VoiceProcessorOptions {
                 && gainControl == that.gainControl
                 && targetLevelDbfs == that.targetLevelDbfs
                 && compressionGainDb == that.compressionGainDb
-                && limiter == that.limiter;
+                && limiter == that.limiter
+                && analogGainController.equals(that.analogGainController)
+                && Objects.equals(levelControl, that.levelControl);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(echoCancellation, mobileEchoRoute, comfortNoise, noiseSuppression, gainControl,
-                targetLevelDbfs, compressionGainDb, limiter);
+        return Objects.hash(sampleRate, captureChannels, renderChannels, multichannelCapture, multichannelRender,
+                echoCancellation, mobileEchoRoute, comfortNoise, noiseSuppression, gainControl, targetLevelDbfs,
+                compressionGainDb, limiter, analogGainController, levelControl);
     }
 
     @Override
     public String toString() {
-        return "VoiceProcessorOptions[sampleRate=" + SAMPLE_RATE
+        return "VoiceProcessorOptions[sampleRate=" + sampleRate
+                + ", captureChannels=" + captureChannels
+                + ", renderChannels=" + renderChannels
+                + ", multichannelCapture=" + multichannelCapture
+                + ", multichannelRender=" + multichannelRender
                 + ", echoCancellation=" + echoCancellation
                 + ", mobileEchoRoute=" + mobileEchoRoute
                 + ", comfortNoise=" + comfortNoise
@@ -216,7 +328,9 @@ public final class VoiceProcessorOptions {
                 + ", gainControl=" + gainControl
                 + ", targetLevelDbfs=" + targetLevelDbfs
                 + ", compressionGainDb=" + compressionGainDb
-                + ", limiter=" + limiter + "]";
+                + ", limiter=" + limiter
+                + ", analogGainController=" + analogGainController
+                + ", levelControl=" + levelControl + "]";
     }
 
     /**
@@ -226,6 +340,16 @@ public final class VoiceProcessorOptions {
      * thread-safe.
      */
     public static final class Builder {
+        private int sampleRate;
+
+        private int captureChannels;
+
+        private int renderChannels;
+
+        private boolean multichannelCapture;
+
+        private boolean multichannelRender;
+
         private EchoCancellation echoCancellation;
 
         private MobileEchoRoute mobileEchoRoute;
@@ -242,7 +366,16 @@ public final class VoiceProcessorOptions {
 
         private boolean limiter;
 
+        private AnalogGainControllerOptions analogGainController;
+
+        private LevelControlOptions levelControl;
+
         private Builder() {
+            this.sampleRate = DEFAULT_SAMPLE_RATE;
+            this.captureChannels = 1;
+            this.renderChannels = 1;
+            this.multichannelCapture = false;
+            this.multichannelRender = false;
             this.echoCancellation = EchoCancellation.STANDARD;
             this.mobileEchoRoute = MobileEchoRoute.SPEAKERPHONE;
             this.comfortNoise = false;
@@ -251,9 +384,16 @@ public final class VoiceProcessorOptions {
             this.targetLevelDbfs = DEFAULT_TARGET_LEVEL_DBFS;
             this.compressionGainDb = DEFAULT_COMPRESSION_GAIN_DB;
             this.limiter = true;
+            this.analogGainController = AnalogGainControllerOptions.defaults();
+            this.levelControl = null;
         }
 
         private Builder(VoiceProcessorOptions options) {
+            this.sampleRate = options.sampleRate;
+            this.captureChannels = options.captureChannels;
+            this.renderChannels = options.renderChannels;
+            this.multichannelCapture = options.multichannelCapture;
+            this.multichannelRender = options.multichannelRender;
             this.echoCancellation = options.echoCancellation;
             this.mobileEchoRoute = options.mobileEchoRoute;
             this.comfortNoise = options.comfortNoise;
@@ -262,6 +402,65 @@ public final class VoiceProcessorOptions {
             this.targetLevelDbfs = options.targetLevelDbfs;
             this.compressionGainDb = options.compressionGainDb;
             this.limiter = options.limiter;
+            this.analogGainController = options.analogGainController;
+            this.levelControl = options.levelControl;
+        }
+
+        /**
+         * Sets the sampling rate; see {@link VoiceProcessorOptions#sampleRate()}.
+         *
+         * @param sampleRate the value
+         * @return this builder
+         */
+        public Builder sampleRate(int sampleRate) {
+            this.sampleRate = sampleRate;
+            return this;
+        }
+
+        /**
+         * Sets the number of capture channels; see {@link VoiceProcessorOptions#captureChannels()}.
+         *
+         * @param captureChannels the value
+         * @return this builder
+         */
+        public Builder captureChannels(int captureChannels) {
+            this.captureChannels = captureChannels;
+            return this;
+        }
+
+        /**
+         * Sets the number of render channels; see {@link VoiceProcessorOptions#renderChannels()}.
+         *
+         * @param renderChannels the value
+         * @return this builder
+         */
+        public Builder renderChannels(int renderChannels) {
+            this.renderChannels = renderChannels;
+            return this;
+        }
+
+        /**
+         * Sets whether the standard echo canceller conditions every capture channel; see
+         * {@link VoiceProcessorOptions#multichannelCapture()}.
+         *
+         * @param multichannelCapture the value
+         * @return this builder
+         */
+        public Builder multichannelCapture(boolean multichannelCapture) {
+            this.multichannelCapture = multichannelCapture;
+            return this;
+        }
+
+        /**
+         * Sets whether the echo cancellers see every render channel; see
+         * {@link VoiceProcessorOptions#multichannelRender()}.
+         *
+         * @param multichannelRender the value
+         * @return this builder
+         */
+        public Builder multichannelRender(boolean multichannelRender) {
+            this.multichannelRender = multichannelRender;
+            return this;
         }
 
         /**
@@ -358,15 +557,60 @@ public final class VoiceProcessorOptions {
         }
 
         /**
+         * Sets the settings of the managed analog gain controller; see
+         * {@link VoiceProcessorOptions#analogGainController()}.
+         *
+         * @param analogGainController the value
+         * @return this builder
+         */
+        public Builder analogGainController(AnalogGainControllerOptions analogGainController) {
+            this.analogGainController = Objects.requireNonNull(analogGainController, "analogGainController");
+            return this;
+        }
+
+        /**
+         * Sets the level controller; see {@link VoiceProcessorOptions#levelControl()}.
+         *
+         * @param levelControl the value
+         * @return this builder
+         */
+        public Builder levelControl(LevelControlOptions levelControl) {
+            this.levelControl = Objects.requireNonNull(levelControl, "levelControl");
+            return this;
+        }
+
+        /**
+         * Removes the level controller; see {@link VoiceProcessorOptions#levelControl()}.
+         *
+         * @return this builder
+         */
+        public Builder noLevelControl() {
+            this.levelControl = null;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
-         * @throws IllegalArgumentException if the target level is outside 0 to 31 or the compression
-         * gain is outside 0 to 90
+         * @throws IllegalArgumentException if the sampling rate is not 8000, 16000, 32000 or 48000,
+         * either channel count is outside 1 to 8, the target level is outside 0 to 31, the
+         * compression gain is outside 0 to 90, or the level controller recommends a microphone
+         * volume while {@link VoiceProcessorOptions#gainControl()} is not {@link GainControl#OFF}
          */
         public VoiceProcessorOptions build() {
+            if (sampleRate != 8_000 && sampleRate != 16_000 && sampleRate != 32_000 && sampleRate != 48_000) {
+                throw new IllegalArgumentException("sample rate must be 8000, 16000, 32000 or 48000 Hz: "
+                        + sampleRate);
+            }
+            Checks.inRange("capture channels", captureChannels, 1, MAX_CHANNELS);
+            Checks.inRange("render channels", renderChannels, 1, MAX_CHANNELS);
             Checks.inRange("target level", targetLevelDbfs, 0, MAX_TARGET_LEVEL_DBFS);
             Checks.inRange("compression gain", compressionGainDb, 0, MAX_COMPRESSION_GAIN_DB);
+            if (levelControl != null && levelControl.inputVolumeController() && gainControl != GainControl.OFF) {
+                throw new IllegalArgumentException("the input volume controller of the level controller needs "
+                        + "the gain control off: " + gainControl);
+            }
             return new VoiceProcessorOptions(this);
         }
     }

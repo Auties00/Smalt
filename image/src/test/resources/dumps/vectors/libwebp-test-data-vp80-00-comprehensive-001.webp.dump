@@ -1,0 +1,13 @@
+# image dump of vectors/libwebp-test-data-vp80-00-comprehensive-001.webp; regenerate with -Dsmalt.test.updateDumps=true
+format WEBP
+info ImageInfo[format=WEBP, width=176, height=144, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=4f946337 u=589779cf v=a4e42d90
+  format=WEBP orientation=NORMAL source=176x144
+  icc=none exif=none xmp=none
+  profile=none
+scaled 44x36
+picture 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=4f946337 u=589779cf v=a4e42d90
+  format=WEBP orientation=NORMAL source=176x144
+  icc=none exif=none xmp=none
+  profile=none

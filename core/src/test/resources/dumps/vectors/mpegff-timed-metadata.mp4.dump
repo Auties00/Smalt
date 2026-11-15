@@ -1,0 +1,40 @@
+# demux dump of vectors/mpegff-timed-metadata.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 233333
+seekable true
+metadata compatible_brands="mp42isom"
+metadata creation_time="2007-04-23T21:47:01.000000Z"
+metadata major_brand="mp42"
+metadata minor_version="0"
+track 1 DATA DATA timebase=1/48000 duration=11264 config=80:8d655118
+track 2 AUDIO AAC timebase=1/48000 duration=11264 config=none
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 22
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=4041 crc=275ea9cf
+1 t1 pts=1024 dts=1024 dur=1024 flags=KEY size=4062 crc=9f0dda75
+2 t1 pts=2048 dts=2048 dur=1024 flags=KEY size=4063 crc=83293d0f
+3 t1 pts=3072 dts=3072 dur=1024 flags=KEY size=4068 crc=d35d0cfb
+4 t1 pts=4096 dts=4096 dur=1024 flags=KEY size=4061 crc=105c9e48
+5 t1 pts=5120 dts=5120 dur=1024 flags=KEY size=4068 crc=c16a4015
+6 t1 pts=6144 dts=6144 dur=1024 flags=KEY size=4085 crc=08c37d79
+7 t1 pts=7168 dts=7168 dur=1024 flags=KEY size=4088 crc=2873542d
+8 t1 pts=8192 dts=8192 dur=1024 flags=KEY size=4136 crc=b03e8536
+9 t1 pts=9216 dts=9216 dur=1024 flags=KEY size=4139 crc=20a65593
+10 t1 pts=10240 dts=10240 dur=1024 flags=KEY size=4117 crc=a677212e
+11 t2 pts=0 dts=0 dur=1024 flags=KEY size=197 crc=10a78ce3
+12 t2 pts=1024 dts=1024 dur=1024 flags=KEY size=126 crc=75a6e6c5
+13 t2 pts=2048 dts=2048 dur=1024 flags=KEY size=131 crc=4dcb0653
+14 t2 pts=3072 dts=3072 dur=1024 flags=KEY size=146 crc=2f274a13
+15 t2 pts=4096 dts=4096 dur=1024 flags=KEY size=125 crc=c32f2942
+16 t2 pts=5120 dts=5120 dur=1024 flags=KEY size=145 crc=475ce426
+17 t2 pts=6144 dts=6144 dur=1024 flags=KEY size=201 crc=cefe7ea3
+18 t2 pts=7168 dts=7168 dur=1024 flags=KEY size=274 crc=6e44dd8e
+19 t2 pts=8192 dts=8192 dur=1024 flags=KEY size=179 crc=829dcfeb
+20 t2 pts=9216 dts=9216 dur=1024 flags=KEY size=195 crc=94c4231f
+21 t2 pts=10240 dts=10240 dur=1024 flags=KEY size=128 crc=e45f014e
+seek 0: t1@0 t2@0
+seek 77777: t1@3 t2@3
+seek 155555: t1@7 t2@7
+seek 234667: end
+seek 233333: t1@10 t2@10
+seek -1000000: t1@0 t2@0

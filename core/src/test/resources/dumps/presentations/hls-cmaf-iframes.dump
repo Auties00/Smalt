@@ -1,0 +1,10 @@
+# demux dump of presentations/hls-cmaf-iframes; regenerate with -Dsmalt.test.updateDumps=true
+format HLS
+duration 2000000
+seekable false
+track 1 VIDEO H264 timebase=1/15360 duration=0 config=40:a59e7e8a
+  video 160x120 orientation=NORMAL sar=1/1
+packets 3
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=3267 crc=3febcc6f
+1 t1 pts=10240 dts=10240 dur=1024 flags=KEY size=3157 crc=f8973586
+2 t1 pts=20480 dts=20480 dur=1024 flags=KEY size=3297 crc=0cb69f3d

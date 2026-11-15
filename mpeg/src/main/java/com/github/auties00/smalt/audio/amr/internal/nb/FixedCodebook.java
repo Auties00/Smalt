@@ -207,9 +207,9 @@ final class FixedCodebook {
             sharp = (short) lTemp;
         }
         sharpen(h, hOffset, t0, sharp, overflow);
-        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 1, y32);
+        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 1, y32, overflow);
         CodebookCorrelation.setSign(dn, dnSign, dn2, 8);
-        CodebookCorrelation.corH(h, hOffset, dnSign, rr, h2);
+        CodebookCorrelation.corH(h, hOffset, dnSign, rr, h2, overflow);
         search2i40_9(subNr);
         ana[anaOffset] = build2i40_9(subNr, code, h, hOffset, y, ana, anaOffset + 1, overflow);
         sharpen(code, 0, t0, sharp, overflow);
@@ -332,9 +332,9 @@ final class FixedCodebook {
                                  short[] ana, int anaOffset, Flag overflow) {
         var sharp = (short) (pitchSharp << 1);
         sharpen(h, hOffset, t0, sharp, overflow);
-        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 1, y32);
+        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 1, y32, overflow);
         CodebookCorrelation.setSign(dn, dnSign, dn2, 8);
-        CodebookCorrelation.corH(h, hOffset, dnSign, rr, h2);
+        CodebookCorrelation.corH(h, hOffset, dnSign, rr, h2, overflow);
         search2i40_11(overflow);
         ana[anaOffset] = build2i40_11(code, h, hOffset, y, ana, anaOffset + 1, overflow);
         sharpen(code, 0, t0, sharp, overflow);
@@ -471,9 +471,9 @@ final class FixedCodebook {
                                  short[] ana, int anaOffset, Flag overflow) {
         var sharp = (short) (pitchSharp << 1);
         sharpen(h, hOffset, t0, sharp, overflow);
-        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 1, y32);
+        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 1, y32, overflow);
         CodebookCorrelation.setSign(dn, dnSign, dn2, 6);
-        CodebookCorrelation.corH(h, hOffset, dnSign, rr, h2);
+        CodebookCorrelation.corH(h, hOffset, dnSign, rr, h2, overflow);
         search3i40(overflow);
         ana[anaOffset] = build3i40(code, h, hOffset, y, ana, anaOffset + 1, overflow);
         sharpen(code, 0, t0, sharp, overflow);
@@ -642,9 +642,9 @@ final class FixedCodebook {
                                  short[] ana, int anaOffset, Flag overflow) {
         var sharp = (short) (pitchSharp << 1);
         sharpen(h, hOffset, t0, sharp, overflow);
-        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 1, y32);
+        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 1, y32, overflow);
         CodebookCorrelation.setSign(dn, dnSign, dn2, 4);
-        CodebookCorrelation.corH(h, hOffset, dnSign, rr, h2);
+        CodebookCorrelation.corH(h, hOffset, dnSign, rr, h2, overflow);
         search4i40();
         ana[anaOffset] = build4i40(code, h, hOffset, y, ana, anaOffset + 1, overflow);
         sharpen(code, 0, t0, sharp, overflow);

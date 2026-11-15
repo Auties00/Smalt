@@ -194,8 +194,8 @@ public final class IccSynthesizer {
         var out = new int[n];
         for (var i = 0; i < n; i++) {
             var e = i / (double) (n - 1);
-            var p = Math.pow(e, 4096.0 / (2523.0 * 128.0));
-            var d = Math.pow(Math.max(p - 0.8359375, 0) / (18.8515625 - 18.6875 * p), 16384.0 / 2610.0);
+            var p = StrictMath.pow(e, 4096.0 / (2523.0 * 128.0));
+            var d = StrictMath.pow(Math.max(p - 0.8359375, 0) / (18.8515625 - 18.6875 * p), 16384.0 / 2610.0);
             out[i] = (int) Math.min(65535, Math.max(0, d * 65535.0));
         }
         return out;
@@ -211,7 +211,7 @@ public final class IccSynthesizer {
         var out = new int[n];
         for (var i = 0; i < n; i++) {
             var e = i / (double) (n - 1);
-            var d = e <= 0.5 ? e * e / 3.0 : (Math.exp((e - 0.5599107) / 0.17883277) + 0.28466892) / 12.0;
+            var d = e <= 0.5 ? e * e / 3.0 : (StrictMath.exp((e - 0.5599107) / 0.17883277) + 0.28466892) / 12.0;
             out[i] = (int) Math.min(65535, Math.max(0, d * 65535.0));
         }
         return out;

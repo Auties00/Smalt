@@ -11,7 +11,7 @@
     <artifactId>smalt-audio</artifactId>
     <packaging>jar</packaging>
     <name>${project.groupId}:${project.artifactId}</name>
-    <description>Smalt audio codecs: Opus, Vorbis, FLAC, ALAC, MP3, and voice processing</description>
+    <description>Smalt audio codecs: Opus, Vorbis, FLAC, ALAC, MP3, Speex, WavPack, ATRAC9, and voice processing</description>
 
     <dependencies>
         <dependency>
@@ -22,6 +22,16 @@
             <groupId>${project.groupId}</groupId>
             <artifactId>smalt-core</artifactId>
             <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.code-intelligence</groupId>
+            <artifactId>jazzer-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

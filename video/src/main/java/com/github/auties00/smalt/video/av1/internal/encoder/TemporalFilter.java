@@ -1,7 +1,6 @@
 package com.github.auties00.smalt.video.av1.internal.encoder;
 
-import com.github.auties00.smalt.image.ChromaFormat;
-import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.video.av1.internal.McDsp;
 
@@ -98,13 +97,13 @@ final class TemporalFilter {
     /**
      * The result of filtering one picture.
      *
-     * @param picture the filtered picture
+     * @param picture the filtered picture, of the class, format and depth of the filtered source
      * @param diffSum the sum over 32x32 blocks of the squared error between the source and the
-     * filtered picture
+     * filtered picture, at the 8-bit scale
      * @param diffSse the sum over 32x32 blocks of the squared block squared errors
      * @param blocks the number of 32x32 blocks
      */
-    record Result(YuvPicture picture, long diffSum, double diffSse, int blocks) {
+    record Result(Picture picture, long diffSum, double diffSse, int blocks) {
     }
 
     /**
@@ -129,34 +128,34 @@ final class TemporalFilter {
         /**
          * Pads a picture.
          *
-         * @param p the picture
+         * @param p the picture, a {@code YuvPicture} or a {@code Yuv16Picture}
+         * @param planes the number of planes, 1 or 3
+         * @param ssHor 1 when chroma is subsampled horizontally
+         * @param ssVer 1 when chroma is subsampled vertically
          */
-        Padded(YuvPicture p) {
-            for (var pl = 0; pl < 3; pl++) {
-                var ss = pl == 0 ? 0 : 1;
-                var w = pl == 0 ? p.width() : p.chromaWidth();
-                var h = pl == 0 ? p.height() : p.chromaHeight();
-                var border = BORDER >> ss;
-                var s = w + 2 * border;
-                var plane = new short[s * (h + 2 * border)];
-                var src = pl == 0 ? p.y() : pl == 1 ? p.u() : p.v();
-                var srcStride = pl == 0 ? p.yStride() : p.uvStride();
+        Padded(Picture p, int planes, int ssHor, int ssVer) {
+            for (var pl = 0; pl < planes; pl++) {
+                var ssx = pl == 0 ? 0 : ssHor;
+                var ssy = pl == 0 ? 0 : ssVer;
+                var w = SourcePlanes.width(p, pl);
+                var h = SourcePlanes.height(p, pl);
+                var borderX = BORDER >> ssx;
+                var borderY = BORDER >> ssy;
+                var s = w + 2 * borderX;
+                var plane = new short[s * (h + 2 * borderY)];
+                SourcePlanes.widen(p, pl, 0, h, plane, borderY * s + borderX, s);
                 for (var y = 0; y < h; y++) {
-                    var d = (y + border) * s + border;
-                    var o = y * srcStride;
-                    for (var x = 0; x < w; x++) {
-                        plane[d + x] = (short) (src[o + x] & 0xFF);
-                    }
-                    Arrays.fill(plane, d - border, d, plane[d]);
-                    Arrays.fill(plane, d + w, d + w + border, plane[d + w - 1]);
+                    var d = (y + borderY) * s + borderX;
+                    Arrays.fill(plane, d - borderX, d, plane[d]);
+                    Arrays.fill(plane, d + w, d + w + borderX, plane[d + w - 1]);
                 }
-                for (var y = 0; y < border; y++) {
-                    System.arraycopy(plane, border * s, plane, y * s, s);
-                    System.arraycopy(plane, (border + h - 1) * s, plane, (border + h + y) * s, s);
+                for (var y = 0; y < borderY; y++) {
+                    System.arraycopy(plane, borderY * s, plane, y * s, s);
+                    System.arraycopy(plane, (borderY + h - 1) * s, plane, (borderY + h + y) * s, s);
                 }
                 data[pl] = plane;
                 stride[pl] = s;
-                origin[pl] = border * s + border;
+                origin[pl] = borderY * s + borderX;
             }
         }
     }
@@ -170,36 +169,45 @@ final class TemporalFilter {
 
     /**
      * Estimates the noise standard deviation of one plane from its Laplacian at samples without a
-     * strong gradient ({@code av1_estimate_noise_from_single_plane_c}).
+     * strong gradient, at the 8-bit scale ({@code av1_estimate_noise_from_single_plane_c} and its
+     * high bit depth variant).
      *
-     * @param p the picture
+     * @param p the picture, a {@code YuvPicture} or a {@code Yuv16Picture}
      * @param plane the plane index: 0 luma, 1 U, 2 V
      * @return the estimate, or -1 when fewer than 16 samples are smooth enough
      */
-    static double noiseLevel(YuvPicture p, int plane) {
-        var w = plane == 0 ? p.width() : p.chromaWidth();
-        var h = plane == 0 ? p.height() : p.chromaHeight();
-        var src = plane == 0 ? p.y() : plane == 1 ? p.u() : p.v();
-        var stride = plane == 0 ? p.yStride() : p.uvStride();
+    static double noiseLevel(Picture p, int plane) {
+        var w = SourcePlanes.width(p, plane);
+        var h = SourcePlanes.height(p, plane);
+        if (w < 3 || h < 3) {
+            return -1.0;
+        }
+        var src = new short[3 * w];
+        var shift = SourcePlanes.bitDepth(p) - 8;
+        var round = (1 << shift) >> 1;
+        SourcePlanes.widen(p, plane, 0, 2, src, 0, w);
         long accum = 0;
         var count = 0;
         for (var i = 1; i < h - 1; i++) {
+            var top = ((i - 1) % 3) * w;
+            var mid = (i % 3) * w;
+            var bottom = ((i + 1) % 3) * w;
+            SourcePlanes.widen(p, plane, i + 1, i + 2, src, bottom, w);
             for (var j = 1; j < w - 1; j++) {
-                var c = i * stride + j;
-                var m00 = src[c - stride - 1] & 0xFF;
-                var m01 = src[c - stride] & 0xFF;
-                var m02 = src[c - stride + 1] & 0xFF;
-                var m10 = src[c - 1] & 0xFF;
-                var m11 = src[c] & 0xFF;
-                var m12 = src[c + 1] & 0xFF;
-                var m20 = src[c + stride - 1] & 0xFF;
-                var m21 = src[c + stride] & 0xFF;
-                var m22 = src[c + stride + 1] & 0xFF;
+                var m00 = src[top + j - 1];
+                var m01 = src[top + j];
+                var m02 = src[top + j + 1];
+                var m10 = src[mid + j - 1];
+                var m11 = src[mid + j];
+                var m12 = src[mid + j + 1];
+                var m20 = src[bottom + j - 1];
+                var m21 = src[bottom + j];
+                var m22 = src[bottom + j + 1];
                 var gx = (m00 - m02) + (m20 - m22) + 2 * (m10 - m12);
                 var gy = (m00 - m20) + (m02 - m22) + 2 * (m01 - m21);
-                if (Math.abs(gx) + Math.abs(gy) < NOISE_EDGE_THRESHOLD) {
+                if ((Math.abs(gx) + Math.abs(gy) + round) >> shift < NOISE_EDGE_THRESHOLD) {
                     var v = 4 * m11 - 2 * (m01 + m21 + m10 + m12) + (m00 + m02 + m20 + m22);
-                    accum += Math.abs(v);
+                    accum += (Math.abs(v) + round) >> shift;
                     count++;
                 }
             }
@@ -227,7 +235,8 @@ final class TemporalFilter {
     /**
      * Filters one picture of a sequence.
      *
-     * @param frames the pictures, in display order
+     * @param frames the pictures, in display order, all {@code YuvPicture}s or all
+     * {@code Yuv16Picture}s of the same size, format and depth
      * @param center the index of the picture to filter
      * @param qindex the quantizer index whose step scales the filtering
      * @param strength the strength, 0 to 6
@@ -236,27 +245,33 @@ final class TemporalFilter {
      * @param threads the most threads to use
      * @return the filtered picture and its difference statistics
      */
-    static Result filter(List<YuvPicture> frames, int center, int qindex, int strength, boolean key, int threads) {
+    static Result filter(List<Picture> frames, int center, int qindex, int strength, boolean key, int threads) {
         var target = frames.get(center);
         var width = target.width();
         var height = target.height();
+        var format = SourcePlanes.format(target);
+        var planes = format.hasChroma() ? 3 : 1;
+        var ssHor = format.shiftX();
+        var ssVer = format.shiftY();
+        var bitDepth = SourcePlanes.bitDepth(target);
         var padded = new Padded[frames.size()];
         for (var i = 0; i < frames.size(); i++) {
-            padded[i] = new Padded(frames.get(i));
+            padded[i] = new Padded(frames.get(i), planes, ssHor, ssVer);
         }
         var noise = new double[3];
-        for (var pl = 0; pl < 3; pl++) {
+        for (var pl = 0; pl < planes; pl++) {
             noise[pl] = noiseLevel(target, pl);
         }
         var qFactor = (int) RateControl.qindexToQ(qindex);
-        var out = YuvPicture.allocate(width, height, ChromaFormat.YUV420, false, target.color());
+        var out = SourcePlanes.allocateLike(target);
         var mbCols = (width + BLOCK - 1) / BLOCK;
         var mbRows = (height + BLOCK - 1) / BLOCK;
         var bands = Math.max(1, Math.min(threads, mbRows));
         var sums = new long[bands];
         var sses = new double[bands];
         ParallelBands.run(bands, band -> {
-            var worker = new Worker(padded, center, width, height, noise, qFactor, strength, key);
+            var worker = new Worker(padded, center, width, height, noise, qFactor, strength, key, planes, ssHor, ssVer,
+                    bitDepth);
             var first = ParallelBands.start(band, bands, mbRows);
             var end = ParallelBands.start(band + 1, bands, mbRows);
             for (var r = first; r < end; r++) {
@@ -333,7 +348,32 @@ final class TemporalFilter {
         /**
          * The kernels.
          */
-        private final EncDsp dsp = EncDsp.select();
+        private final EncDsp dsp;
+
+        /**
+         * The number of planes, 1 or 3.
+         */
+        private final int planes;
+
+        /**
+         * 1 when chroma is subsampled horizontally, 0 otherwise.
+         */
+        private final int ssHor;
+
+        /**
+         * 1 when chroma is subsampled vertically, 0 otherwise.
+         */
+        private final int ssVer;
+
+        /**
+         * The largest sample value.
+         */
+        private final int bdMax;
+
+        /**
+         * Twice the bit depth above 8, the shift of a squared difference to the 8-bit scale.
+         */
+        private final int sseShift;
 
         /**
          * The motion compensation kernels.
@@ -348,7 +388,7 @@ final class TemporalFilter {
         /**
          * The prediction of a block, luma then U then V, each of stride its width.
          */
-        private final short[] pred = new short[BLOCK * BLOCK + 2 * (BLOCK / 2) * (BLOCK / 2)];
+        private final short[] pred = new short[3 * BLOCK * BLOCK];
 
         /**
          * A trial prediction of the sub-sample search.
@@ -416,9 +456,13 @@ final class TemporalFilter {
          * @param qFactor the quantizer step factor
          * @param strength the filter strength
          * @param key whether the picture is a key frame
+         * @param planes the number of planes, 1 or 3
+         * @param ssHor 1 when chroma is subsampled horizontally
+         * @param ssVer 1 when chroma is subsampled vertically
+         * @param bitDepth the bit depth of the samples
          */
         Worker(Padded[] frames, int center, int width, int height, double[] noise, int qFactor, int strength,
-               boolean key) {
+               boolean key, int planes, int ssHor, int ssVer, int bitDepth) {
             this.frames = frames;
             this.center = center;
             this.width = width;
@@ -427,6 +471,12 @@ final class TemporalFilter {
             this.qFactor = qFactor;
             this.strength = strength;
             this.key = key;
+            this.planes = planes;
+            this.ssHor = ssHor;
+            this.ssVer = ssVer;
+            this.bdMax = (1 << bitDepth) - 1;
+            this.sseShift = 2 * (bitDepth - 8);
+            this.dsp = EncDsp.select(bitDepth);
         }
 
         /**
@@ -436,7 +486,7 @@ final class TemporalFilter {
          * @param col the block column
          * @param out the output picture
          */
-        void block(int row, int col, YuvPicture out) {
+        void block(int row, int col, Picture out) {
             Arrays.fill(accum, 0);
             Arrays.fill(count, 0);
             refMv[0] = 0;
@@ -484,12 +534,12 @@ final class TemporalFilter {
                     for (var r = 0; r < 4; r++) {
                         var o = base + (y + r) * s + x;
                         for (var c = 0; c < 4; c++) {
-                            int v = target.data[0][o + c];
+                            long v = target.data[0][o + c];
                             sum += v;
                             sq += v * v;
                         }
                     }
-                    var var = (int) (sq - (sum * sum) / 16);
+                    var var = (int) ((sq - (sum * sum) / 16) >> sseShift);
                     min = Math.min(min, var);
                     max = Math.max(max, var);
                 }
@@ -506,19 +556,21 @@ final class TemporalFilter {
          */
         private void self(Padded target, int px, int py) {
             var off = 0;
-            for (var pl = 0; pl < 3; pl++) {
-                var ss = pl == 0 ? 0 : 1;
-                var size = BLOCK >> ss;
+            for (var pl = 0; pl < planes; pl++) {
+                var ssx = pl == 0 ? 0 : ssHor;
+                var ssy = pl == 0 ? 0 : ssVer;
+                var w = BLOCK >> ssx;
+                var h = BLOCK >> ssy;
                 var s = target.stride[pl];
-                var base = target.origin[pl] + (py >> ss) * s + (px >> ss);
-                for (var y = 0; y < size; y++) {
-                    for (var x = 0; x < size; x++) {
-                        var i = off + y * size + x;
+                var base = target.origin[pl] + (py >> ssy) * s + (px >> ssx);
+                for (var y = 0; y < h; y++) {
+                    for (var x = 0; x < w; x++) {
+                        var i = off + y * w + x;
                         accum[i] += (long) WEIGHT_SCALE * target.data[pl][base + y * s + x];
                         count[i] += WEIGHT_SCALE;
                     }
                 }
-                off += size * size;
+                off += w * h;
             }
         }
 
@@ -714,7 +766,7 @@ final class TemporalFilter {
         private long subpelError(short[] src, int srcOff, short[] refPlane, int refBase, int s, int size, int tr,
                                  int tc) {
             mc.mc(McDsp.FILTER_2D_8TAP_SHARP, trial, 0, size, refPlane, refBase + (tr >> 3) * s + (tc >> 3), s,
-                    size, size, (tc & 7) << 1, (tr & 7) << 1, mcScratch, 255);
+                    size, size, (tc & 7) << 1, (tr & 7) << 1, mcScratch, bdMax);
             return dsp.sseSum(src, srcOff, s, trial, 0, size, size, size);
         }
 
@@ -728,38 +780,30 @@ final class TemporalFilter {
          */
         private void predict(Padded ref, int px, int py) {
             var off = 0;
-            for (var pl = 0; pl < 3; pl++) {
-                var ss = pl == 0 ? 0 : 1;
-                var size = BLOCK >> ss;
-                var half = size >> 1;
+            for (var pl = 0; pl < planes; pl++) {
+                var ssx = pl == 0 ? 0 : ssHor;
+                var ssy = pl == 0 ? 0 : ssVer;
+                var w = BLOCK >> ssx;
+                var h = BLOCK >> ssy;
+                var halfW = w >> 1;
+                var halfH = h >> 1;
                 var s = ref.stride[pl];
-                var base = ref.origin[pl] + (py >> ss) * s + (px >> ss);
+                var base = ref.origin[pl] + (py >> ssy) * s + (px >> ssx);
                 var i = 0;
-                for (var y = 0; y < size; y += half) {
-                    for (var x = 0; x < size; x += half) {
+                for (var y = 0; y < h; y += halfH) {
+                    for (var x = 0; x < w; x += halfW) {
                         var mvr = subMv[i * 2];
                         var mvc = subMv[i * 2 + 1];
                         i++;
-                        int ir;
-                        int ic;
-                        int fr;
-                        int fc;
-                        if (ss == 0) {
-                            ir = mvr >> 3;
-                            ic = mvc >> 3;
-                            fr = (mvr & 7) << 1;
-                            fc = (mvc & 7) << 1;
-                        } else {
-                            ir = mvr >> 4;
-                            ic = mvc >> 4;
-                            fr = mvr & 15;
-                            fc = mvc & 15;
-                        }
-                        mc.mc(McDsp.FILTER_2D_8TAP_SHARP, pred, off + y * size + x, size, ref.data[pl],
-                                base + (y + ir) * s + x + ic, s, half, half, fc, fr, mcScratch, 255);
+                        var ir = mvr >> (3 + ssy);
+                        var ic = mvc >> (3 + ssx);
+                        var fr = (mvr & (15 >> (ssy ^ 1))) << (ssy ^ 1);
+                        var fc = (mvc & (15 >> (ssx ^ 1))) << (ssx ^ 1);
+                        mc.mc(McDsp.FILTER_2D_8TAP_SHARP, pred, off + y * w + x, w, ref.data[pl],
+                                base + (y + ir) * s + x + ic, s, halfW, halfH, fc, fr, mcScratch, bdMax);
                     }
                 }
-                off += size * size;
+                off += w * h;
             }
         }
 
@@ -780,6 +824,9 @@ final class TemporalFilter {
         /**
          * Adds a neighbor's prediction with its per-sample weights ({@code av1_apply_temporal_filter_c}).
          *
+         * <p>Squared differences are taken at the 8-bit scale, so the weights do not depend on the
+         * bit depth.
+         *
          * @param target the padded picture being filtered
          * @param px the block column in luma samples
          * @param py the block row in luma samples
@@ -795,7 +842,7 @@ final class TemporalFilter {
                     qDecay = 0.5 * StrictMath.pow(qFactor / 64.0, 2);
                 }
                 var sDecay = Math.clamp(StrictMath.pow(strength / 4.0, 2), 1e-5, 1);
-                for (var pl = 0; pl < 3; pl++) {
+                for (var pl = 0; pl < planes; pl++) {
                     planeDecay[pl] = 1 / ((0.5 + StrictMath.log(2 * noise[pl] + 5.0)) * qDecay * sDecay);
                 }
                 decayStrength = strength;
@@ -809,36 +856,38 @@ final class TemporalFilter {
                 dFactor[k] = Math.max(distance / distanceThreshold, 1);
             }
             var off = 0;
-            for (var pl = 0; pl < 3; pl++) {
-                var ss = pl == 0 ? 0 : 1;
-                var size = BLOCK >> ss;
+            for (var pl = 0; pl < planes; pl++) {
+                var ssx = pl == 0 ? 0 : ssHor;
+                var ssy = pl == 0 ? 0 : ssVer;
+                var w = BLOCK >> ssx;
+                var h = BLOCK >> ssy;
                 var decay = planeDecay[pl];
                 var s = target.stride[pl];
-                var base = target.origin[pl] + (py >> ss) * s + (px >> ss);
-                var ext = size + 4;
-                for (var y = 0; y < size; y++) {
-                    for (var x = 0; x < size; x++) {
-                        var d = target.data[pl][base + y * s + x] - pred[off + y * size + x];
-                        square[(y + 2) * ext + x + 2] = d * d;
+                var base = target.origin[pl] + (py >> ssy) * s + (px >> ssx);
+                var ext = w + 4;
+                for (var y = 0; y < h; y++) {
+                    for (var x = 0; x < w; x++) {
+                        var d = target.data[pl][base + y * s + x] - pred[off + y * w + x];
+                        square[(y + 2) * ext + x + 2] = (d * d) >> sseShift;
                     }
                 }
                 if (pl == 0) {
-                    for (var y = 0; y < size; y++) {
-                        System.arraycopy(square, (y + 2) * ext + 2, lumaSquare, y * size, size);
+                    for (var y = 0; y < h; y++) {
+                        System.arraycopy(square, (y + 2) * ext + 2, lumaSquare, y * w, w);
                     }
                 }
-                for (var y = 2; y < size + 2; y++) {
+                for (var y = 2; y < h + 2; y++) {
                     var row = y * ext;
                     square[row] = square[row + 2];
                     square[row + 1] = square[row + 2];
-                    square[row + size + 2] = square[row + size + 1];
-                    square[row + size + 3] = square[row + size + 1];
+                    square[row + w + 2] = square[row + w + 1];
+                    square[row + w + 3] = square[row + w + 1];
                 }
                 System.arraycopy(square, 2 * ext, square, 0, ext);
                 System.arraycopy(square, 2 * ext, square, ext, ext);
-                System.arraycopy(square, (size + 1) * ext, square, (size + 2) * ext, ext);
-                System.arraycopy(square, (size + 1) * ext, square, (size + 3) * ext, ext);
-                for (var y = 0; y < size; y++) {
+                System.arraycopy(square, (h + 1) * ext, square, (h + 2) * ext, ext);
+                System.arraycopy(square, (h + 1) * ext, square, (h + 3) * ext, ext);
+                for (var y = 0; y < h; y++) {
                     for (var x = 0; x < ext; x++) {
                         long v = 0;
                         for (var k = 0; k < 5; k++) {
@@ -847,69 +896,72 @@ final class TemporalFilter {
                         column[y * ext + x] = v;
                     }
                 }
-                var refPixels = pl == 0 ? 25 : 29;
-                for (var y = 0; y < size; y++) {
-                    for (var x = 0; x < size; x++) {
+                var refPixels = pl == 0 ? 25 : 25 + (1 << (ssx + ssy));
+                for (var y = 0; y < h; y++) {
+                    for (var x = 0; x < w; x++) {
                         var sum = column[y * ext + x] + column[y * ext + x + 1] + column[y * ext + x + 2]
                                 + column[y * ext + x + 3] + column[y * ext + x + 4];
                         if (pl != 0) {
-                            var ly = y << 1;
-                            var lx = x << 1;
-                            var lsize = BLOCK;
-                            sum += lumaSquare[ly * lsize + lx] + lumaSquare[ly * lsize + lx + 1]
-                                    + lumaSquare[(ly + 1) * lsize + lx] + lumaSquare[(ly + 1) * lsize + lx + 1];
+                            var ly = y << ssy;
+                            var lx = x << ssx;
+                            for (var j = 0; j <= ssy; j++) {
+                                for (var k = 0; k <= ssx; k++) {
+                                    sum += lumaSquare[(ly + j) * BLOCK + lx + k];
+                                }
+                            }
                         }
                         var windowError = (double) sum / refPixels;
-                        var sub = (y >= size / 2 ? 2 : 0) + (x >= size / 2 ? 1 : 0);
+                        var sub = (y >= h / 2 ? 2 : 0) + (x >= w / 2 ? 1 : 0);
                         var combined = weightFactor * windowError + subMse[sub] * invFactor;
                         var scaled = Math.min(combined * dFactor[sub] * decay, 7);
                         var weight = (int) (expNegative(scaled) * WEIGHT_SCALE);
-                        var i = off + y * size + x;
+                        var i = off + y * w + x;
                         accum[i] += (long) weight * pred[i];
                         count[i] += weight;
                     }
                 }
-                off += size * size;
+                off += w * h;
             }
         }
 
         /**
          * Divides the weighted sums into the output picture and adds the block's difference
-         * statistics ({@code tf_normalize_filtered_frame}).
+         * statistics, at the 8-bit scale ({@code tf_normalize_filtered_frame}).
          *
          * @param target the padded picture being filtered
          * @param px the block column in luma samples
          * @param py the block row in luma samples
          * @param out the output picture
          */
-        private void normalize(Padded target, int px, int py, YuvPicture out) {
+        private void normalize(Padded target, int px, int py, Picture out) {
             var off = 0;
             long sse = 0;
-            for (var pl = 0; pl < 3; pl++) {
-                var ss = pl == 0 ? 0 : 1;
-                var size = BLOCK >> ss;
-                var w = pl == 0 ? width : out.chromaWidth();
-                var h = pl == 0 ? height : out.chromaHeight();
-                var dst = pl == 0 ? out.y() : pl == 1 ? out.u() : out.v();
-                var stride = pl == 0 ? out.yStride() : out.uvStride();
-                var x0 = px >> ss;
-                var y0 = py >> ss;
+            for (var pl = 0; pl < planes; pl++) {
+                var ssx = pl == 0 ? 0 : ssHor;
+                var ssy = pl == 0 ? 0 : ssVer;
+                var bw = BLOCK >> ssx;
+                var bh = BLOCK >> ssy;
+                var w = SourcePlanes.width(out, pl);
+                var h = SourcePlanes.height(out, pl);
+                var x0 = px >> ssx;
+                var y0 = py >> ssy;
                 var s = target.stride[pl];
                 var base = target.origin[pl] + y0 * s + x0;
-                for (var y = 0; y < size && y0 + y < h; y++) {
-                    for (var x = 0; x < size && x0 + x < w; x++) {
-                        var i = off + y * size + x;
+                for (var y = 0; y < bh && y0 + y < h; y++) {
+                    for (var x = 0; x < bw && x0 + x < w; x++) {
+                        var i = off + y * bw + x;
                         var c = count[i];
                         var v = (int) ((accum[i] + (c >> 1)) / c);
-                        dst[(y0 + y) * stride + x0 + x] = (byte) v;
+                        SourcePlanes.store(out, pl, x0 + x, y0 + y, v);
                         if (pl == 0) {
-                            var d = target.data[0][base + y * s + x] - v;
+                            long d = target.data[0][base + y * s + x] - v;
                             sse += d * d;
                         }
                     }
                 }
-                off += size * size;
+                off += bw * bh;
             }
+            sse >>= sseShift;
             diffSum += sse;
             diffSse += (double) sse * sse;
         }

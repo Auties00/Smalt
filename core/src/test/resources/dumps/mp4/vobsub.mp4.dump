@@ -1,0 +1,22 @@
+# demux dump of mp4/vobsub.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 3500000
+seekable true
+metadata compatible_brands="isomiso2mp41"
+metadata encoder="Lavf61.7.100"
+metadata major_brand="isom"
+metadata minor_version="512"
+track 1 DATA DVD_SUBTITLE timebase=1/1000 duration=3000 config=201:28c2eb15
+track 2 DATA DVD_SUBTITLE timebase=1/1000 duration=3500 config=201:28c2eb15
+packets 6
+0 t1 pts=1000 dts=1000 dur=1000 flags=KEY size=166 crc=e2f06b0c
+1 t2 pts=1500 dts=1500 dur=1000 flags=KEY size=190 crc=f044dee9
+2 t1 pts=2000 dts=2000 dur=1000 flags=KEY size=3874 crc=84638ae4
+3 t2 pts=2500 dts=2500 dur=1000 flags=KEY size=220 crc=bc1cc701
+4 t1 pts=3000 dts=3000 dur=0 flags=KEY size=218 crc=6dc7ac37
+5 t2 pts=3500 dts=3500 dur=0 flags=KEY size=249 crc=07e7c860
+seek 0: t1@0 t2@0
+seek 1166666: t1@0 t2@0
+seek 2333333: t1@1 t2@0
+seek 3500000: end
+seek -1000000: t1@0 t2@0

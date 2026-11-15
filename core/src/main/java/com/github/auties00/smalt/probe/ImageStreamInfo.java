@@ -2,11 +2,13 @@ package com.github.auties00.smalt.probe;
 
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.track.TrackDisposition;
 
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 /**
  * Describes the picture of a probed image file, still or animated.
@@ -127,6 +129,11 @@ public final class ImageStreamInfo implements StreamInfo {
     @Override
     public Map<String, String> tags() {
         return fields.tags();
+    }
+
+    @Override
+    public Set<TrackDisposition> disposition() {
+        return fields.disposition();
     }
 
     /**

@@ -6,6 +6,7 @@ import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.amr.internal.AmrFrameDecoder;
+import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -23,9 +24,15 @@ import java.util.function.Consumer;
  * a header byte ({@code P FT(4) Q P(2)}) followed by the frame's speech bits, as the
  * {@code .amr} demuxer, the MP4 {@code samr}/{@code sawb} sample entries and Matroska
  * {@code A_AMR/NB}/{@code A_AMR/WB} tracks deliver them. Every frame decodes to one block of 20
- * milliseconds: 160 samples for AMR-NB, 320 for AMR-WB, mono, scaled so that full-scale 16-bit
+ * milliseconds: 160 samples for AMR-NB, 320 for AMR-WB, scaled so that full-scale 16-bit
  * output spans {@code [-1, 1]}. The decoder adds no delay of its own and outputs every frame,
  * whatever its type, so the output stays aligned with the packet timestamps.
+ *
+ * <p>A track of more than one channel, as the multichannel storage format (RFC 4867 section 5.2)
+ * delivers it, holds frame-blocks instead of frames: one frame per channel, in channel order, each
+ * decoded by its own decoder state into its channel of one block. Every channel of such a track
+ * decodes exactly as a single-channel track carrying only that channel's frames would. A packet
+ * that ends inside a frame-block conceals the channels it is missing.
  *
  * <p>Frame types are handled as the specifications require:
  * <ul>
@@ -53,6 +60,11 @@ public final class AmrDecoder implements AudioDecoder {
     private static final int NO_DATA = 15;
 
     /**
+     * The payload of a frame that carries no data.
+     */
+    private static final byte[] NO_PAYLOAD = new byte[0];
+
+    /**
      * The scale from 16-bit samples to the {@code [-1, 1]} range.
      */
     private static final float SCALE = 1f / 32768f;
@@ -68,9 +80,14 @@ public final class AmrDecoder implements AudioDecoder {
     private final boolean wideband;
 
     /**
-     * The frame decoder of the track's codec.
+     * The frame decoder of each channel.
      */
-    private final AmrFrameDecoder frames;
+    private final AmrFrameDecoder[] frames;
+
+    /**
+     * The number of channels, which is the number of frames of a frame-block.
+     */
+    private final int channels;
 
     /**
      * The number of samples of one frame.
@@ -78,9 +95,14 @@ public final class AmrDecoder implements AudioDecoder {
     private final int frameSamples;
 
     /**
-     * The 16-bit samples of the frame being decoded.
+     * The 16-bit samples of the frame-block being decoded, one array per channel.
      */
-    private final short[] pcm;
+    private final short[][] pcm;
+
+    /**
+     * The channel layout of the track.
+     */
+    private final ChannelLayout layout;
 
     /**
      * The buffer handed to the caller, reused for every frame.
@@ -97,6 +119,7 @@ public final class AmrDecoder implements AudioDecoder {
      *
      * @param track the AMR-NB or AMR-WB track
      * @throws IllegalArgumentException if the track is not an AMR track
+     * @throws MediaException.Unsupported if the track has more than 15 channels
      */
     public AmrDecoder(AudioTrack track) {
         this(track, AudioDecoderOptions.defaults());
@@ -105,14 +128,17 @@ public final class AmrDecoder implements AudioDecoder {
     /**
      * Constructs a decoder for a track.
      *
-     * <p>The track needs no codec configuration: the codec fixes the rate and the layout, and an MP4 {@code damr}
-     * box only lists the modes the stream uses. An AMR stream is always mono and the decoder allocates nothing whose
-     * size depends on the input, so no limit of {@link AudioDecoderOptions#limits()} binds it;
-     * {@link AudioDecoderOptions#preferredSampleRate()} is ignored, because each codec decodes at one rate only.
+     * <p>The track needs no codec configuration: the codec fixes the rate, the track layout gives the number of
+     * channels, and an MP4 {@code damr} box only lists the modes the stream uses. The decoder allocates nothing whose
+     * size depends on the input beyond one decoder state per channel, so no limit of
+     * {@link AudioDecoderOptions#limits()} binds it; {@link AudioDecoderOptions#preferredSampleRate()} is ignored,
+     * because each codec decodes at one rate only.
      *
      * @param track the AMR-NB or AMR-WB track
      * @param options the decoder settings
      * @throws IllegalArgumentException if the track is not an AMR track
+     * @throws MediaException.Unsupported if the track has more than 15 channels, the most a multichannel storage
+     * file holds
      */
     public AmrDecoder(AudioTrack track, AudioDecoderOptions options) {
         Objects.requireNonNull(track, "track");
@@ -122,10 +148,18 @@ public final class AmrDecoder implements AudioDecoder {
             case AMR_NB -> false;
             default -> throw new IllegalArgumentException(track.codec().displayName() + " is not AMR");
         };
-        this.frames = AmrFrameDecoder.create(wideband);
+        this.layout = track.layout().orElse(ChannelLayout.MONO);
+        this.channels = layout.channels();
+        if (channels > 15) {
+            throw new MediaException.Unsupported("amr", "an AMR track holds at most 15 channels, not " + channels);
+        }
+        this.frames = new AmrFrameDecoder[channels];
         this.frameSamples = wideband ? 320 : 160;
-        this.pcm = new short[frameSamples];
-        this.buffer = new AudioBuffer(ChannelLayout.MONO, sampleRate(), frameSamples);
+        this.pcm = new short[channels][frameSamples];
+        for (var channel = 0; channel < channels; channel++) {
+            frames[channel] = AmrFrameDecoder.create(wideband);
+        }
+        this.buffer = new AudioBuffer(layout, sampleRate(), frameSamples);
     }
 
     /**
@@ -155,11 +189,11 @@ public final class AmrDecoder implements AudioDecoder {
     /**
      * {@inheritDoc}
      *
-     * @return {@link ChannelLayout#MONO}
+     * @return the layout of the track, {@link ChannelLayout#MONO} for a single-channel track
      */
     @Override
     public ChannelLayout layout() {
-        return ChannelLayout.MONO;
+        return layout;
     }
 
     /**
@@ -172,8 +206,8 @@ public final class AmrDecoder implements AudioDecoder {
     /**
      * {@inheritDoc}
      *
-     * <p>Every frame of the packet yields one block of {@link #frameSize()} samples; an empty packet yields one
-     * concealed block.
+     * <p>Every frame (or frame-block, for a multichannel track) of the packet yields one block of
+     * {@link #frameSize()} samples per channel; an empty packet yields one concealed block.
      *
      * @throws IllegalStateException if the decoder is closed
      */
@@ -187,31 +221,83 @@ public final class AmrDecoder implements AudioDecoder {
         var data = packet.data();
         var corrupt = packet.flags().contains(PacketFlag.CORRUPT);
         if (data.length == 0) {
-            decodeFrame(NO_DATA, false, data, 0, 0);
+            for (var channel = 0; channel < channels; channel++) {
+                decodeFrame(channel, NO_DATA, false, data, 0, 0);
+            }
             emit(output);
             return;
         }
         var position = 0;
         while (position < data.length) {
-            var header = data[position] & 0xFF;
-            var type = (header >> 3) & 0x0F;
-            var quality = (header & 0x04) != 0 && !corrupt;
-            var available = data.length - position - 1;
-            var size = AmrConfigs.payloadSize(wideband, type);
-            if (available < size) {
-                decodeFrame(type, false, data, position + 1, available);
-                emit(output);
+            var truncated = false;
+            for (var channel = 0; channel < channels; channel++) {
+                if (position >= data.length) {
+                    decodeFrame(channel, NO_DATA, false, data, data.length, 0);
+                    truncated = true;
+                    continue;
+                }
+                var header = data[position] & 0xFF;
+                var type = (header >> 3) & 0x0F;
+                var quality = (header & 0x04) != 0 && !corrupt;
+                var available = data.length - position - 1;
+                var size = AmrConfigs.payloadSize(wideband, type);
+                if (available < size) {
+                    decodeFrame(channel, type, false, data, position + 1, available);
+                    position = data.length;
+                    truncated = true;
+                    continue;
+                }
+                decodeFrame(channel, type, quality, data, position + 1, size);
+                position += 1 + size;
+            }
+            emit(output);
+            if (truncated) {
                 return;
             }
-            decodeFrame(type, quality, data, position + 1, size);
-            emit(output);
-            position += 1 + size;
         }
     }
 
     /**
-     * Decodes one frame into {@link #pcm}.
+     * {@inheritDoc}
      *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The concealment unit is one frame, {@link #frameSize()} samples. Every lost frame is decoded as an empty
+     * ("no data") frame of every channel: concealed from the preceding frames by the bad frame handling of TS 26.091
+     * and TS 26.191 during speech, and continued as comfort noise during discontinuous transmission.
+     *
+     * @throws IllegalArgumentException if {@code samples} is not positive
+     * @throws IllegalStateException if the decoder is closed
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        if (closed) {
+            throw new IllegalStateException("the decoder is closed");
+        }
+        var frames = Math.min(Math.max(1, (samples + frameSamples / 2) / frameSamples), Integer.MAX_VALUE / frameSamples);
+        for (var frame = 0; frame < frames; frame++) {
+            for (var channel = 0; channel < channels; channel++) {
+                decodeFrame(channel, NO_DATA, false, NO_PAYLOAD, 0, 0);
+            }
+            emit(output);
+        }
+        return frames * frameSamples;
+    }
+
+    /**
+     * Decodes one frame of a channel into its array of {@link #pcm}.
+     *
+     * @param channel the channel index, which selects the decoder state and the output array
      * @param type the frame type
      * @param quality the quality bit, {@code false} for a damaged frame
      * @param data the packet
@@ -219,23 +305,26 @@ public final class AmrDecoder implements AudioDecoder {
      * @param length the payload bytes available
      * @throws MediaException.Malformed if the frame decoder fails on the payload
      */
-    private void decodeFrame(int type, boolean quality, byte[] data, int offset, int length) {
+    private void decodeFrame(int channel, int type, boolean quality, byte[] data, int offset, int length) {
         try {
-            frames.decode(type, quality, data, offset, length, pcm, 0);
+            frames[channel].decode(type, quality, data, offset, length, pcm[channel], 0);
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("corrupt AMR frame", exception);
         }
     }
 
     /**
-     * Converts the decoded frame to floats and hands it to the caller.
+     * Converts the decoded frame-block to floats and hands it to the caller.
      *
      * @param output receives the block
      */
     private void emit(Consumer<AudioBuffer> output) {
-        var plane = buffer.plane(0);
-        for (var i = 0; i < frameSamples; i++) {
-            plane[i] = pcm[i] * SCALE;
+        for (var channel = 0; channel < channels; channel++) {
+            var plane = buffer.plane(channel);
+            var samples = pcm[channel];
+            for (var i = 0; i < frameSamples; i++) {
+                plane[i] = samples[i] * SCALE;
+            }
         }
         buffer.setFrames(frameSamples);
         output.accept(buffer);
@@ -260,7 +349,9 @@ public final class AmrDecoder implements AudioDecoder {
         if (closed) {
             throw new IllegalStateException("the decoder is closed");
         }
-        frames.reset();
+        for (var decoder : frames) {
+            decoder.reset();
+        }
     }
 
     /**

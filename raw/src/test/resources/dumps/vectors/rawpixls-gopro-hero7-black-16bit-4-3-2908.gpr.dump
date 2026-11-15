@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-gopro-hero7-black-16bit-4-3-2908.gpr; regenerate with -Dsmalt.test.updateDumps=true
+format DNG
+info ImageInfo[format=DNG, width=4000, height=3000, hasAlpha=false, animated=false, frameCount=1, orientation=FLIP_HORIZONTAL]
+decode
+picture 4000x3000 rgba8 alpha=false crc=9f67e872
+  format=DNG orientation=FLIP_HORIZONTAL source=4000x3000
+  icc=520:86132914 exif=624:40158a94 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 4000x3000 channels=1 cfa=RGGB neutral=[0.490421, 1.0, 0.600939] crc=31b69fe0

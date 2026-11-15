@@ -1,0 +1,15 @@
+# video decode dump of mp4/cfhd.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 500000
+seekable true
+track 1 CFHD 64x48 timebase=1/10240
+0 pts=0 dur=1024 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=e2fcd0c5 u=361a7c51 v=4d580b8f
+1 pts=1024 dur=1024 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=c4eab071 u=08e858b2 v=63910796
+2 pts=2048 dur=1024 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=d9d4476a u=c0ee2054 v=2a12d1ea
+3 pts=3072 dur=1024 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=505a2a5f u=3e4407f2 v=3994e82a
+4 pts=4096 dur=1024 key=true 64x48 yuv16 depth=10 YUV422 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=5c8fa790 u=8a13ab51 v=2487689d
+seek 0: @0
+seek 166666: @1
+seek 333333: @3
+seek 500000: end
+seek -1000000: @0

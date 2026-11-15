@@ -13,6 +13,7 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.plane.Planes;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
+import java.util.Arrays;
 import java.util.Objects;
 
 /**
@@ -20,7 +21,9 @@ import java.util.Objects;
  * depth, and copies decoded tiles, or planar pictures, into regions of them.
  *
  * <p>Color samples are copied at the source depth, or reduced to 8 bits by rounding to nearest
- * with the tile's own kernel ({@link DecodedTile#narrow}). Alpha samples are full range at the
+ * with the tile's own kernel ({@link DecodedTile#narrow}). A canvas that keeps the depth holds every
+ * plane at the canvas depth: the samples of a shallower plane, such as 8-bit luma with 10-bit
+ * chroma, are shifted left to it. Alpha samples are full range at the
  * canvas depth: a limited-range alpha plane is first expanded to full range, alpha of another
  * depth than the color is rescaled to it, and an 8-bit canvas of a deeper source holds alpha
  * rescaled exactly, {@code min(255, (a * 255 + max / 2) / max)}, as
@@ -190,8 +193,8 @@ public final class HeifCanvas {
     }
 
     /**
-     * Copies one plane region of a tile, widening 8-bit samples for a wide canvas and narrowing
-     * deep samples for an 8-bit one.
+     * Copies one plane region of a tile, widening shallower samples to the depth of a wide canvas
+     * and narrowing deep samples for an 8-bit one.
      *
      * @param tile the decoded tile
      * @param plane the plane index
@@ -211,18 +214,31 @@ public final class HeifCanvas {
                 return;
             }
             var dst = widePlanes[plane];
+            var up = bitDepth - 8;
             for (var row = 0; row < h; row++) {
                 var in = srcOffset + row * srcStride;
                 var out = dstOffset + row * dstStride;
                 for (var col = 0; col < w; col++) {
-                    dst[out + col] = (short) (src[in + col] & 0xFF);
+                    dst[out + col] = (short) ((src[in + col] & 0xFF) << up);
                 }
             }
             return;
         }
         var src = tile.plane16(plane);
         if (wide) {
-            Planes.copy(src, srcOffset, srcStride, widePlanes[plane], dstOffset, dstStride, w, h);
+            var up = bitDepth - tile.depth(plane);
+            if (up <= 0) {
+                Planes.copy(src, srcOffset, srcStride, widePlanes[plane], dstOffset, dstStride, w, h);
+                return;
+            }
+            var dst = widePlanes[plane];
+            for (var row = 0; row < h; row++) {
+                var in = srcOffset + row * srcStride;
+                var out = dstOffset + row * dstStride;
+                for (var col = 0; col < w; col++) {
+                    dst[out + col] = (short) (src[in + col] << up);
+                }
+            }
             return;
         }
         var dst = narrowPlanes[plane];
@@ -305,6 +321,25 @@ public final class HeifCanvas {
     }
 
     /**
+     * Makes a region of the alpha plane fully opaque.
+     *
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param w the region width
+     * @param h the region height
+     */
+    public void fillAlpha(int x, int y, int w, int h) {
+        for (var row = y; row < y + h; row++) {
+            var from = x + row * width;
+            if (wide) {
+                Arrays.fill(widePlanes[3], from, from + w, (short) ((1 << bitDepth) - 1));
+            } else {
+                Arrays.fill(narrowPlanes[3], from, from + w, (byte) 0xFF);
+            }
+        }
+    }
+
+    /**
      * Copies the luma plane of a planar alpha picture into the alpha plane.
      *
      * @param picture the alpha picture, a {@link YuvPicture} or a {@link Yuv16Picture} of the
@@ -313,19 +348,35 @@ public final class HeifCanvas {
      * @throws MediaException.Malformed if the picture is not planar
      */
     public void writeAlpha(Picture picture, boolean limited) {
+        writeAlpha(picture, 0, 0, width, height, limited);
+    }
+
+    /**
+     * Copies the top-left region of the luma plane of a planar alpha picture into a region of the
+     * alpha plane.
+     *
+     * @param picture the alpha picture, a {@link YuvPicture} or a {@link Yuv16Picture} at least
+     * {@code w} by {@code h}
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param w the region width
+     * @param h the region height
+     * @param limited whether the alpha samples are limited range
+     * @throws MediaException.Malformed if the picture is not planar
+     */
+    public void writeAlpha(Picture picture, int x, int y, int w, int h, boolean limited) {
         switch (picture) {
             case YuvPicture yuv -> {
-                var samples = new short[width];
-                for (var row = 0; row < height; row++) {
+                var samples = new short[w];
+                for (var row = 0; row < h; row++) {
                     var in = row * yuv.yStride();
-                    for (var col = 0; col < width; col++) {
+                    for (var col = 0; col < w; col++) {
                         samples[col] = (short) (yuv.y()[in + col] & 0xFF);
                     }
-                    writeAlpha(samples, 0, width, 8, 0, row, width, 1, limited);
+                    writeAlpha(samples, 0, w, 8, x, y + row, w, 1, limited);
                 }
             }
-            case Yuv16Picture yuv -> writeAlpha(yuv.y(), 0, yuv.yStride(), yuv.bitDepth(), 0, 0, width, height,
-                    limited);
+            case Yuv16Picture yuv -> writeAlpha(yuv.y(), 0, yuv.yStride(), yuv.bitDepth(), x, y, w, h, limited);
             default -> throw new MediaException.Malformed(name + ": the alpha image is not a planar picture");
         }
     }

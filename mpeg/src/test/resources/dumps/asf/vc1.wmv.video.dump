@@ -1,0 +1,36 @@
+# video decode dump of asf/vc1.wmv; regenerate with -Dsmalt.test.updateDumps=true
+format ASF
+duration 840000
+seekable true
+track 1 VC1 128x96 timebase=1/1000
+0 pts=0 dur=-1 key=true 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=fd417909 u=b5314054 v=de6824fa
+1 pts=40 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=fd417909 u=b5314054 v=de6824fa
+2 pts=80 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=fd417909 u=b5314054 v=de6824fa
+3 pts=120 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=fd417909 u=b5314054 v=de6824fa
+4 pts=160 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=fd417909 u=b5314054 v=de6824fa
+5 pts=200 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=fd417909 u=b5314054 v=de6824fa
+6 pts=240 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=fd417909 u=b5314054 v=de6824fa
+7 pts=280 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=fd417909 u=b5314054 v=de6824fa
+8 pts=320 dur=-1 key=true 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=3234c2e3 u=01725d4d v=3eb0b4cd
+9 pts=360 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=3234c2e3 u=01725d4d v=3eb0b4cd
+10 pts=400 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=3234c2e3 u=01725d4d v=3eb0b4cd
+11 pts=440 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=3234c2e3 u=01725d4d v=3eb0b4cd
+12 pts=480 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=3234c2e3 u=01725d4d v=3eb0b4cd
+13 pts=520 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=3234c2e3 u=01725d4d v=3eb0b4cd
+14 pts=560 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=3234c2e3 u=01725d4d v=3eb0b4cd
+15 pts=600 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=3234c2e3 u=01725d4d v=3eb0b4cd
+16 pts=640 dur=-1 key=true 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=e5351383 u=79d97725 v=6a22c50d
+17 pts=680 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=e5351383 u=79d97725 v=6a22c50d
+18 pts=720 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=e5351383 u=79d97725 v=6a22c50d
+19 pts=760 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=e5351383 u=79d97725 v=6a22c50d
+20 pts=800 dur=-1 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=e5351383 u=79d97725 v=6a22c50d
+seek 0: @0
+seek 280000: @7
+seek 560000: @14
+seek 840000: end
+seek -1000000: @0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format ASF
+  duration 840000
+  seekable false
+  track 1 VC1 128x96 timebase=1/1000

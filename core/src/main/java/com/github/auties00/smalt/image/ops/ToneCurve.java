@@ -116,7 +116,7 @@ public final class ToneCurve {
             throw new IllegalArgumentException("gamma " + gamma + " is not positive and finite");
         }
         var exponent = 1 / gamma;
-        return of(x -> Math.pow(x, exponent));
+        return of(x -> StrictMath.pow(x, exponent));
     }
 
     /**

@@ -1,0 +1,7 @@
+# file;pixel format;width;height;frames;md5 of the source frames as ffmpeg rawvideo in that pixel format
+# made by tools/testdata/mjpeg/make-vectors.sh with ffmpeg 7.1 (-c:v ljpeg)
+ljpeg-yuvj420p-pred1.avi;yuvj420p;41;29;2;e055eeb572aef155b2f0e93aa65fb1c9
+ljpeg-yuvj422p-pred2.mkv;yuvj422p;40;30;2;fb33757886abb7be4ffbd087bbcce261
+ljpeg-yuvj444p-pred3.avi;yuvj444p;33;17;2;0098a6b5b34d274e2813d6130c5efc15
+ljpeg-bgr24-pred1.avi;bgr24;40;30;2;c3e39afe74da12b4e86b8d209fd0a7f0
+ljpeg-bgra-pred2.mkv;bgra;40;30;2;2a98561cc73497237559fafba8ef2fa8

@@ -1,0 +1,13 @@
+# image dump of resources/jpeg/lossless/variants/45x31-rgb-p12-psv5-cjpeg-scans.jpg; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=45, height=31, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 45x31 rgba8 alpha=false crc=029559ee
+  format=JPEG orientation=NORMAL source=45x31
+  icc=none exif=none xmp=none
+  profile=none
+scaled 11x7
+picture 45x31 rgba8 alpha=false crc=029559ee
+  format=JPEG orientation=NORMAL source=45x31
+  icc=none exif=none xmp=none
+  profile=none

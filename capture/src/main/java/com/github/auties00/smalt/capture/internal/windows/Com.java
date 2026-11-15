@@ -12,6 +12,8 @@ import java.lang.invoke.MethodHandle;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.locks.LockSupport;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
@@ -114,6 +116,16 @@ final class Com {
     private static final MethodHandle P_II = shape(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT);
 
     /**
+     * Invokes {@code HRESULT f(this, LONG, LONG, LONG)}.
+     */
+    private static final MethodHandle P_III = shape(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT);
+
+    /**
+     * Invokes {@code HRESULT f(this, LONG, void*, void*, void*, void*, void*)}.
+     */
+    private static final MethodHandle P_IPPPPP = shape(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
+
+    /**
      * Invokes {@code HRESULT f(this, UINT, void*)}.
      */
     private static final MethodHandle P_IP = shape(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS);
@@ -174,6 +186,17 @@ final class Com {
     private static final Ole32 OLE32 = Ole32.load();
 
     /**
+     * The lock guarding {@link #apartmentKept}.
+     */
+    private static final Object APARTMENT_LOCK = new Object();
+
+    /**
+     * Whether the multithreaded apartment is kept alive for the life of the process; guarded by
+     * {@link #APARTMENT_LOCK}.
+     */
+    private static boolean apartmentKept;
+
+    /**
      * Prevents instantiation.
      */
     private Com() {
@@ -186,8 +209,11 @@ final class Com {
      * @param initialize {@code HRESULT CoInitializeEx(void*, DWORD)}
      * @param uninitialize {@code void CoUninitialize()}
      * @param free {@code void CoTaskMemFree(void*)}
+     * @param incrementMtaUsage {@code HRESULT CoIncrementMTAUsage(CO_MTA_USAGE_COOKIE*)}, or {@code null} before
+     * Windows 8
      */
-    private record Ole32(MethodHandle initialize, MethodHandle uninitialize, MethodHandle free) {
+    private record Ole32(MethodHandle initialize, MethodHandle uninitialize, MethodHandle free,
+                         MethodHandle incrementMtaUsage) {
         /**
          * Loads the library and binds the functions.
          *
@@ -202,7 +228,9 @@ final class Com {
                 return new Ole32(
                         Native.function(library, "CoInitializeEx", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT)),
                         Native.function(library, "CoUninitialize", FunctionDescriptor.ofVoid()),
-                        Native.function(library, "CoTaskMemFree", FunctionDescriptor.ofVoid(ADDRESS)));
+                        Native.function(library, "CoTaskMemFree", FunctionDescriptor.ofVoid(ADDRESS)),
+                        Native.optionalFunction(library, "CoIncrementMTAUsage",
+                                FunctionDescriptor.of(JAVA_INT, ADDRESS)).orElse(null));
             } catch (RuntimeException | UnsatisfiedLinkError exception) {
                 return null;
             }
@@ -233,6 +261,9 @@ final class Com {
     /**
      * Joins the calling thread to the multithreaded apartment.
      *
+     * <p>The first thread that joins also keeps the apartment for the life of the process
+     * ({@link #keepApartment()}), so that leaving it never unloads a library still in use.
+     *
      * @return whether the call must be balanced by {@link #uninitialize()}: {@code false} when the
      * thread already belongs to a single-threaded apartment, which serves the free-threaded
      * objects this package uses equally well
@@ -252,7 +283,64 @@ final class Com {
             return false;
         }
         check(result, "CoInitializeEx");
+        try {
+            keepApartment();
+        } catch (RuntimeException | Error failure) {
+            uninitialize();
+            throw failure;
+        }
         return true;
+    }
+
+    /**
+     * Keeps the multithreaded apartment alive for the life of the process, once.
+     *
+     * <p>The threads of this package join the apartment only for the work they do. When the last of them leaves,
+     * COM tears the apartment down and unloads the in-process libraries it loaded, while threads those libraries
+     * started can still be running: a stream of the audio engine released just before keeps a worker of
+     * {@code audiokse.dll} that then executes unloaded code and ends the process with an access violation that no
+     * handler sees. {@code CoIncrementMTAUsage} keeps the apartment, and with it the libraries, for the life of the
+     * process; where it is missing (before Windows 8), a parked daemon thread that joined the apartment does the
+     * same.
+     */
+    private static void keepApartment() {
+        synchronized (APARTMENT_LOCK) {
+            if (apartmentKept) {
+                return;
+            }
+            apartmentKept = true;
+        }
+        if (OLE32.incrementMtaUsage() != null) {
+            int result;
+            try {
+                // the cookie is never passed to CoDecrementMTAUsage: the usage lasts as long as the process
+                result = (int) OLE32.incrementMtaUsage().invokeExact(Arena.global().allocate(ADDRESS));
+            } catch (Throwable throwable) {
+                throw Native.rethrow(throwable);
+            }
+            if (result >= 0) {
+                return;
+            }
+        }
+        var joined = new CountDownLatch(1);
+        Thread.ofPlatform().daemon().name("smalt-com-apartment").start(() -> {
+            try {
+                var ignored = (int) OLE32.initialize().invokeExact(MemorySegment.NULL,
+                        COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
+            } catch (Throwable throwable) {
+                // the apartment then lives only as long as the threads that use it
+            } finally {
+                joined.countDown();
+            }
+            while (true) {
+                LockSupport.park();
+            }
+        });
+        try {
+            joined.await();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
@@ -500,6 +588,41 @@ final class Com {
     static int call(MemorySegment self, int slot, int a) {
         try {
             return (int) P_I.invokeExact(method(self, slot), self, a);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Invokes a method taking three 32-bit integers.
+     *
+     * @param self the interface pointer
+     * @param slot the vtable slot
+     * @param a the first argument
+     * @param b the second argument
+     * @param c the third argument
+     * @return the {@code HRESULT}
+     */
+    static int call(MemorySegment self, int slot, int a, int b, int c) {
+        try {
+            return (int) P_III.invokeExact(method(self, slot), self, a, b, c);
+        } catch (Throwable throwable) {
+            throw Native.rethrow(throwable);
+        }
+    }
+
+    /**
+     * Invokes a method taking a 32-bit integer and five pointers.
+     *
+     * @param self the interface pointer
+     * @param slot the vtable slot
+     * @param a the first argument
+     * @return the {@code HRESULT}
+     */
+    static int call(MemorySegment self, int slot, int a, MemorySegment b, MemorySegment c, MemorySegment d,
+                    MemorySegment e, MemorySegment f) {
+        try {
+            return (int) P_IPPPPP.invokeExact(method(self, slot), self, a, b, c, d, e, f);
         } catch (Throwable throwable) {
             throw Native.rethrow(throwable);
         }
