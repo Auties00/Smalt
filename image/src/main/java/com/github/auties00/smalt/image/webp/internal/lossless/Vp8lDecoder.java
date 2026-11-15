@@ -296,6 +296,11 @@ public final class Vp8lDecoder {
     private byte[] alphaOut;
 
     /**
+     * The number of rows of the main image decoded, from the top; the pixels below them are not decoded.
+     */
+    private int rowLimit = Integer.MAX_VALUE;
+
+    /**
      * The alpha filter method applied after extracting the alpha plane.
      */
     private int alphaFilter;
@@ -358,12 +363,32 @@ public final class Vp8lDecoder {
      * @throws MediaException.LimitExceeded if a declared size exceeds {@code limits}
      */
     public static Result decodeRgba(byte[] data, int offset, int length, MediaLimits limits) {
+        return decodeRgba(data, offset, length, limits, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Decodes the top rows of a complete VP8L stream (with its 5-byte header) to a new packed RGBA array.
+     *
+     * <p>The pixels below the rows are not decoded, so damage there goes undetected; the rows equal those of the
+     * whole decode, and the limits bound them rather than the whole image.
+     *
+     * @param data the array holding the stream
+     * @param offset the index of the first byte of the stream
+     * @param length the number of bytes of the stream
+     * @param limits the resource bounds
+     * @param rows the number of rows to decode, positive
+     * @return the decoded rows, as an image of {@code min(rows, height)} rows
+     * @throws MediaException.Malformed if the stream is invalid or truncated
+     * @throws MediaException.LimitExceeded if a declared size exceeds {@code limits}
+     */
+    public static Result decodeRgba(byte[] data, int offset, int length, MediaLimits limits, int rows) {
         var header = readHeader(data, offset, length);
-        LimitChecks.checkPicture(limits, header[0], header[1]);
-        LimitChecks.checkAllocation(limits, (long) header[0] * header[1] * 4);
-        var rgba = new byte[header[0] * header[1] * 4];
-        decodeRgbaInto(data, offset, length, limits, rgba, 0, header[0] * 4);
-        return new Result(header[0], header[1], header[2] != 0, rgba);
+        var shown = Math.min(rows, header[1]);
+        LimitChecks.checkPicture(limits, header[0], shown);
+        LimitChecks.checkAllocation(limits, (long) header[0] * shown * 4);
+        var rgba = new byte[header[0] * shown * 4];
+        decodeRgbaInto(data, offset, length, limits, rgba, 0, header[0] * 4, shown);
+        return new Result(header[0], shown, header[2] != 0, rgba);
     }
 
     /**
@@ -383,11 +408,32 @@ public final class Vp8lDecoder {
      */
     public static int[] decodeRgbaInto(byte[] data, int offset, int length, MediaLimits limits,
                                        byte[] dst, int dstOffset, int dstStride) {
+        return decodeRgbaInto(data, offset, length, limits, dst, dstOffset, dstStride, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Decodes the top rows of a complete VP8L stream into a region of an RGBA buffer.
+     *
+     * @param data the array holding the stream
+     * @param offset the index of the first byte of the stream
+     * @param length the number of bytes of the stream
+     * @param limits the resource bounds
+     * @param dst the RGBA destination
+     * @param dstOffset the index of the first byte of the region
+     * @param dstStride the distance in bytes between destination rows
+     * @param rows the number of rows to decode, positive
+     * @return {@code {width, height, alphaHint}} of the stream
+     * @throws MediaException.Malformed if the stream is invalid or truncated
+     * @throws MediaException.LimitExceeded if a declared size exceeds {@code limits}
+     */
+    private static int[] decodeRgbaInto(byte[] data, int offset, int length, MediaLimits limits,
+                                        byte[] dst, int dstOffset, int dstStride, int rows) {
         var header = readHeader(data, offset, length);
         var width = header[0];
         var height = header[1];
-        LimitChecks.checkPicture(limits, width, height);
+        LimitChecks.checkPicture(limits, width, Math.min(rows, height));
         var decoder = new Vp8lDecoder(data, offset, length, limits);
+        decoder.rowLimit = rows;
         decoder.br.read(8);
         decoder.br.read(14);
         decoder.br.read(14);
@@ -416,7 +462,29 @@ public final class Vp8lDecoder {
      */
     public static void decodeAlpha(byte[] data, int offset, int length, int width, int height, int filter,
                                    byte[] out, MediaLimits limits) {
+        decodeAlpha(data, offset, length, width, height, filter, out, limits, height);
+    }
+
+    /**
+     * Decodes the top rows of a headerless VP8L stream holding an alpha plane, as
+     * {@link #decodeAlpha(byte[], int, int, int, int, int, byte[], MediaLimits)} decodes all of them.
+     *
+     * @param data the array holding the stream
+     * @param offset the index of the first byte of the stream
+     * @param length the number of bytes of the stream
+     * @param width the image width
+     * @param height the image height
+     * @param filter the filter method from the {@code ALPH} header, from 0 to 3
+     * @param out the destination plane of {@code width * rows} bytes
+     * @param limits the resource bounds
+     * @param rows the number of rows to decode, from 1 to {@code height}
+     * @throws MediaException.Malformed if the stream is invalid or truncated
+     * @throws MediaException.LimitExceeded if a declared size exceeds {@code limits}
+     */
+    public static void decodeAlpha(byte[] data, int offset, int length, int width, int height, int filter,
+                                   byte[] out, MediaLimits limits, int rows) {
         var decoder = new Vp8lDecoder(data, offset, length, limits);
+        decoder.rowLimit = rows;
         decoder.alphaOut = out;
         decoder.alphaFilter = filter;
         decoder.decodeMain(width, height);
@@ -438,11 +506,12 @@ public final class Vp8lDecoder {
         checkNotOverrun();
         codedWidth = xsize;
         outWidth = width;
-        LimitChecks.checkAllocation(limits, ((long) xsize * height + (long) width * (NUM_ARGB_CACHE_ROWS + 1)) * 4);
-        pixels = new int[xsize * height];
+        var rows = Math.min(rowLimit, height);
+        LimitChecks.checkAllocation(limits, ((long) xsize * rows + (long) width * (NUM_ARGB_CACHE_ROWS + 1)) * 4);
+        pixels = new int[xsize * rows];
         argbCache = new int[width * (NUM_ARGB_CACHE_ROWS + 1)];
         cacheStart = width;
-        decodeImageData(pixels, xsize, height, hdr, true);
+        decodeImageData(pixels, xsize, height, hdr, true, rows);
     }
 
     /**
@@ -792,9 +861,26 @@ public final class Vp8lDecoder {
      * image only)
      */
     private void decodeImageData(int[] data, int width, int height, Metadata hdr, boolean processRows) {
+        decodeImageData(data, width, height, hdr, processRows, height);
+    }
+
+    /**
+     * Decodes the LZ77-coded pixels of the top rows of an image; a backward reference that reaches below them is
+     * checked against the whole image and copied as far as they reach.
+     *
+     * @param data the destination of {@code width * rows} pixels
+     * @param width the image width
+     * @param height the image height
+     * @param hdr the prefix codes and color cache
+     * @param processRows whether rows are inverse-transformed and emitted while decoding (main
+     * image only)
+     * @param rows the number of rows to decode, from 1 to {@code height}
+     */
+    private void decodeImageData(int[] data, int width, int height, Metadata hdr, boolean processRows, int rows) {
         var br = this.br;
         var tables = hdr.tables;
-        var end = width * height;
+        var whole = (long) width * height;
+        var end = width * rows;
         var pos = 0;
         var col = 0;
         var row = 0;
@@ -872,8 +958,22 @@ public final class Vp8lDecoder {
                 if (br.eos()) {
                     throw new MediaException.Malformed("VP8L stream truncated in pixel data");
                 }
-                if (pos < dist || end - pos < length) {
+                if (pos < dist || whole - pos < length) {
                     throw new MediaException.Malformed("VP8L backward reference out of range");
+                }
+                if (end - pos < length) {
+                    // the copy reaches below the rows decoded: copy as far as they reach and stop there
+                    copyBlock(data, pos, dist, end - pos);
+                    col += end - pos;
+                    pos = end;
+                    while (col >= width) {
+                        col -= width;
+                        ++row;
+                        if (processRows && (row & (NUM_ARGB_CACHE_ROWS - 1)) == 0) {
+                            processRows(row);
+                        }
+                    }
+                    break;
                 }
                 copyBlock(data, pos, dist, length);
                 pos += length;
@@ -921,9 +1021,11 @@ public final class Vp8lDecoder {
                 throw new MediaException.Malformed("VP8L symbol " + code + " out of range");
             }
         }
-        checkNotOverrun();
+        if (rows == height) {
+            checkNotOverrun();
+        }
         if (processRows) {
-            processRows(row > height ? height : row);
+            processRows(Math.min(row, rows));
         }
     }
 

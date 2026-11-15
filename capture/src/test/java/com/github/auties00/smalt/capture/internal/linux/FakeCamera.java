@@ -28,6 +28,11 @@ final class FakeCamera implements V4l2Device {
     int[] current = {640, 480, V4l2PixelFormat.YUYV.fourcc()};
     int[] substitute;
     int field = V4l2.FIELD_NONE;
+    boolean echoField;
+    int bufferType = V4l2.BUF_TYPE_VIDEO_CAPTURE;
+    int[] planeStrides = {};
+    int reportedPlanes = -1;
+    int requestedField = -1;
     int bytesPerLine;
     int[] color = {0, 0, 0, 0};
     boolean timePerFrame = true;
@@ -59,6 +64,11 @@ final class FakeCamera implements V4l2Device {
     }
 
     @Override
+    public int bufferType() {
+        return bufferType;
+    }
+
+    @Override
     public int ioctl(long request, MemorySegment argument) {
         requests.add(request);
         var injected = errors.get(request);
@@ -74,7 +84,7 @@ final class FakeCamera implements V4l2Device {
         }
         if (request == V4l2.VIDIOC_ENUM_FMT) {
             var index = argument.get(JAVA_INT, V4l2.FMTDESC_INDEX);
-            if (argument.get(JAVA_INT, V4l2.FMTDESC_TYPE) != V4l2.BUF_TYPE_VIDEO_CAPTURE) {
+            if (argument.get(JAVA_INT, V4l2.FMTDESC_TYPE) != bufferType) {
                 return Posix.EINVAL;
             }
             if (endlessFormats) {
@@ -140,14 +150,31 @@ final class FakeCamera implements V4l2Device {
         }
         if (request == V4l2.VIDIOC_G_FMT || request == V4l2.VIDIOC_S_FMT) {
             var pix = V4l2.FORMAT_PIX;
+            if (argument.get(JAVA_INT, V4l2.FORMAT_TYPE) != bufferType) {
+                return Posix.EINVAL;
+            }
             if (request == V4l2.VIDIOC_S_FMT) {
+                requestedField = argument.get(JAVA_INT, pix + V4l2.PIX_FIELD);
                 current = substitute != null ? substitute : new int[]{argument.get(JAVA_INT, pix + V4l2.PIX_WIDTH),
                         argument.get(JAVA_INT, pix + V4l2.PIX_HEIGHT), argument.get(JAVA_INT, pix + V4l2.PIX_PIXELFORMAT)};
             }
             argument.set(JAVA_INT, pix + V4l2.PIX_WIDTH, current[0]);
             argument.set(JAVA_INT, pix + V4l2.PIX_HEIGHT, current[1]);
             argument.set(JAVA_INT, pix + V4l2.PIX_PIXELFORMAT, current[2]);
-            argument.set(JAVA_INT, pix + V4l2.PIX_FIELD, field);
+            argument.set(JAVA_INT, pix + V4l2.PIX_FIELD, echoField && requestedField >= 0 ? requestedField : field);
+            if (bufferType == V4l2.BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+                var planes = reportedPlanes >= 0 ? reportedPlanes : planeStrides.length;
+                argument.set(JAVA_BYTE, pix + V4l2.MP_NUM_PLANES, (byte) planes);
+                for (var plane = 0; plane < planeStrides.length; plane++) {
+                    argument.set(JAVA_INT, pix + V4l2.MP_PLANE_FMT + plane * V4l2.PLANE_PIX_FORMAT.byteSize()
+                            + V4l2.PLANE_FMT_BYTESPERLINE, planeStrides[plane]);
+                }
+                argument.set(JAVA_INT, pix + V4l2.MP_COLORSPACE, color[0]);
+                argument.set(JAVA_BYTE, pix + V4l2.MP_YCBCR_ENC, (byte) color[1]);
+                argument.set(JAVA_BYTE, pix + V4l2.MP_QUANTIZATION, (byte) color[2]);
+                argument.set(JAVA_BYTE, pix + V4l2.MP_XFER_FUNC, (byte) color[3]);
+                return 0;
+            }
             argument.set(JAVA_INT, pix + V4l2.PIX_BYTESPERLINE, bytesPerLine);
             argument.set(JAVA_INT, pix + V4l2.PIX_COLORSPACE, color[0]);
             argument.set(JAVA_INT, pix + V4l2.PIX_YCBCR_ENC, color[1]);

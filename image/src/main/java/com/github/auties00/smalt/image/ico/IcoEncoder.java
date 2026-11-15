@@ -157,7 +157,8 @@ public final class IcoEncoder {
         var height = picture.height();
         var scale = Math.min((double) size / width, (double) size / height);
         var filter = scale < 1 ? ResizeFilter.AREA : ResizeFilter.BICUBIC;
-        var fitted = width == size && height == size ? picture : ImageOps.fitInto(picture, size, size, filter, 0);
+        var fitted = width == size && height == size ? picture
+                : (RgbaPicture) ImageOps.fitInto(picture, size, size, filter, 0);
         IcoEntry.Hotspot moved = null;
         if (hotspot != null) {
             var w = Math.max(1, (int) Math.round(width * scale));

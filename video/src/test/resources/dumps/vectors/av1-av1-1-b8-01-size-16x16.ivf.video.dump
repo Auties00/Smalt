@@ -1,0 +1,12 @@
+# video decode dump of vectors/av1-av1-1-b8-01-size-16x16.ivf; regenerate with -Dsmalt.test.updateDumps=true
+format IVF
+duration 66667
+seekable true
+track 0 AV1 16x16 timebase=1/30
+0 pts=0 dur=-1 key=true 16x16 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=4a790919 u=4e23b9fa v=b5442ae5
+1 pts=1 dur=-1 key=false 16x16 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=1277cd56 u=762cf394 v=8c3e4b58
+seek 0: @0
+seek 22222: @0
+seek 44444: @1
+seek 66667: end
+seek -1000000: @0

@@ -2,6 +2,7 @@ package com.github.auties00.smalt.capture.internal.windows;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.capture.internal.Pictures;
 import com.github.auties00.smalt.capture.internal.convert.ConversionKernel;
 import com.github.auties00.smalt.capture.internal.convert.MjpegReducer;
 import com.github.auties00.smalt.capture.internal.convert.RgbLayout;

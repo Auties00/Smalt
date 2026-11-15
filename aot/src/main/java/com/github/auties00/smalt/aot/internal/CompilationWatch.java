@@ -126,6 +126,22 @@ public final class CompilationWatch implements AutoCloseable {
     }
 
     /**
+     * Returns whether a method of a class has been compiled at the highest tier so far.
+     *
+     * @param className the binary name of a class of a tracked package
+     * @return whether one of its methods, its lambda bodies included, has been compiled
+     */
+    public boolean compiled(String className) {
+        var prefix = className + "::";
+        for (var method : compiled) {
+            if (method.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Stops watching and closes the stream.
      */
     @Override

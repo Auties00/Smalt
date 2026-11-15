@@ -144,7 +144,8 @@ class SilkComponentsTest {
                     }
                     var buffer = new byte[4000];
                     var encoder = new RangeEncoder(buffer, 0, buffer.length);
-                    CodeSigns.encodeSigns(encoder, pulses, 0, length, signalType, offset, sums);
+                    CodeSigns.encodeSigns(encoder, pulses, 0, length, signalType, offset, sums,
+                            new short[]{-1, -1});
                     encoder.encDone();
                     var decoded = new short[length];
                     for (var i = 0; i < length; i++) {

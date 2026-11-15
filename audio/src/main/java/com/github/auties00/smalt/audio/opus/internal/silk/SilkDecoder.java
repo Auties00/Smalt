@@ -2,6 +2,8 @@
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
 import com.github.auties00.smalt.audio.opus.internal.celt.RangeDecoder;
+import com.github.auties00.smalt.audio.opus.internal.dnn.LpcnetPlc;
+import com.github.auties00.smalt.audio.opus.internal.dnn.Osce;
 
 import java.util.Arrays;
 
@@ -28,7 +30,7 @@ import static com.github.auties00.smalt.audio.opus.internal.silk.SilkErrors.SILK
  * decoder never throws on any bitstream content: every decoded index is clamped by the codec, and
  * the controls, which come from the validated packet header, select the frame geometry.
  *
- * @implNote This implementation omits the OSCE and deep PLC extensions and holds the temporary output buffers the
+ * @implNote This implementation holds the temporary output buffers the
  * reference places on the stack, or inside the caller's output buffer, as scratch arrays.
  */
 public final class SilkDecoder {
@@ -143,6 +145,39 @@ public final class SilkDecoder {
      */
     public int decode(SilkDecControl decControl, int lostFlag, int newPacketFlag, RangeDecoder psRangeDec,
                       short[] samplesOut, int samplesOutOff, int[] nSamplesOut) {
+        return decode(decControl, lostFlag, newPacketFlag, psRangeDec, samplesOut, samplesOutOff, nSamplesOut, null);
+    }
+
+    /**
+     * Puts both channels in deep PLC mode, where they behave as the reference built with the deep PLC and OSCE;
+     * each channel gets its own speech enhancer. Call it once, before the first frame.
+     */
+    public void enableDnn() {
+        for (var state : channel_state) {
+            state.dnn = true;
+            if (state.osce == null) {
+                state.osce = new Osce();
+            }
+        }
+    }
+
+    /**
+     * Decodes one SILK frame with the deep PLC available ({@code silk_Decode}), as
+     * {@link #decode(SilkDecControl, int, int, RangeDecoder, short[], int, int[])} does.
+     *
+     * @param decControl    the controls; {@code prevPitchLag} is written back
+     * @param lostFlag      {@link Define#FLAG_DECODE_NORMAL}, {@link Define#FLAG_PACKET_LOST}
+     *                      or {@link Define#FLAG_DECODE_LBRR}
+     * @param newPacketFlag nonzero for the first call of a packet
+     * @param psRangeDec    the range decoder positioned on the SILK data
+     * @param samplesOut    receives the decoded samples
+     * @param samplesOutOff the index of the first output sample
+     * @param nSamplesOut   receives the number of samples per channel at index 0
+     * @param lpcnet        the deep PLC of the first channel, or {@code null}
+     * @return {@link SilkErrors#SILK_NO_ERROR} or a negative SILK error code
+     */
+    public int decode(SilkDecControl decControl, int lostFlag, int newPacketFlag, RangeDecoder psRangeDec,
+                      short[] samplesOut, int samplesOutOff, int[] nSamplesOut, LpcnetPlc lpcnet) {
         var decode_only_middle = 0;
         var ret = SILK_NO_ERROR;
         var MS_pred_Q13 = this.MS_pred_Q13;
@@ -288,6 +323,7 @@ public final class SilkDecoder {
                     || (decControl.nChannelsInternal == 2 && lostFlag == FLAG_DECODE_LBRR
                     && channel_state[1].LBRR_flags[channel_state[1].nFramesDecoded] == 1) ? 1 : 0;
         }
+        channel_state[0].sPLC.enable_deep_plc = decControl.enable_deep_plc;
         var nSamplesOutDec = 0;
         for (var n = 0; n < decControl.nChannelsInternal; n++) {
             var tmpOff = n == 0 ? tmp0 : tmp1;
@@ -304,8 +340,12 @@ public final class SilkDecoder {
                 } else {
                     condCoding = CODE_CONDITIONALLY;
                 }
+                var osce = channel_state[n].osce;
+                if (osce != null && osce.method() != decControl.osce_method) {
+                    osce.reset(decControl.osce_method);
+                }
                 nSamplesOutDec = DecodeFrame.decodeFrame(channel_state[n], psRangeDec, samplesOut1, tmpOff + 2,
-                        lostFlag, condCoding);
+                        lostFlag, condCoding, n == 0 && channel_state[n].dnn ? lpcnet : null);
             } else {
                 Arrays.fill(samplesOut1, tmpOff + 2, tmpOff + 2 + nSamplesOutDec, (short) 0);
             }

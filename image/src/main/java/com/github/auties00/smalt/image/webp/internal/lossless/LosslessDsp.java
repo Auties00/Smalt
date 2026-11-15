@@ -21,6 +21,12 @@ public sealed interface LosslessDsp permits ScalarLosslessDsp, VectorLosslessDsp
     LosslessDsp INSTANCE = Simd.ENABLED ? VectorLosslessDsp.create() : new ScalarLosslessDsp();
 
     /**
+     * The length of the lane scratch the cross-color histogram kernels take: the {@code int} lanes of the widest
+     * vector the Vector API allows (2048 bits, the SVE maximum).
+     */
+    int LANE_SCRATCH = 64;
+
+    /**
      * Adds the green channel to the red and blue channels (the inverse subtract-green transform).
      *
      * @param src    the source pixels
@@ -172,9 +178,10 @@ public sealed interface LosslessDsp permits ScalarLosslessDsp, VectorLosslessDsp
      * @param tileHeight the tile height
      * @param greenToRed the multiplier, a signed 8-bit value
      * @param histo      the 256-entry histogram to increment
+     * @param scratch    a scratch of at least {@link #LANE_SCRATCH} entries, whose contents are unspecified on return
      */
     void collectColorRedTransforms(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int greenToRed,
-                                   int[] histo);
+                                   int[] histo, int[] scratch);
 
     /**
      * Accumulates the histogram of the blue channel of a tile after the forward cross-color
@@ -188,7 +195,9 @@ public sealed interface LosslessDsp permits ScalarLosslessDsp, VectorLosslessDsp
      * @param greenToBlue the green-to-blue multiplier, a signed 8-bit value
      * @param redToBlue   the red-to-blue multiplier, a signed 8-bit value
      * @param histo       the 256-entry histogram to increment
+     * @param scratch     a scratch of at least {@link #LANE_SCRATCH} entries, whose contents are unspecified on
+     *                    return
      */
     void collectColorBlueTransforms(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int greenToBlue,
-                                    int redToBlue, int[] histo);
+                                    int redToBlue, int[] histo, int[] scratch);
 }

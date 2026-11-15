@@ -1,0 +1,30 @@
+# demux dump of mp4/ambisonic-aac.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 250000
+seekable true
+metadata compatible_brands="isomiso2mp41"
+metadata encoder="Lavf61.7.100"
+metadata major_brand="isom"
+metadata minor_version="512"
+track 1 AUDIO AAC timebase=1/48000 duration=12000 config=5:9df10581
+  audio rate=48000 bits=0 skip=1024 layout=[UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN] ambisonics=SN3D[0, 1, 2, 3]
+packets 13
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=593 crc=3217e18a
+1 t1 pts=1024 dts=1024 dur=1024 flags=KEY size=739 crc=7264f4f4
+2 t1 pts=2048 dts=2048 dur=1024 flags=KEY size=386 crc=9d632ae7
+3 t1 pts=3072 dts=3072 dur=1024 flags=KEY size=442 crc=4f6fa609
+4 t1 pts=4096 dts=4096 dur=1024 flags=KEY size=437 crc=9df33e3d
+5 t1 pts=5120 dts=5120 dur=1024 flags=KEY size=528 crc=b9dcd8af
+6 t1 pts=6144 dts=6144 dur=1024 flags=KEY size=516 crc=574f0239
+7 t1 pts=7168 dts=7168 dur=1024 flags=KEY size=539 crc=b8a05e4d
+8 t1 pts=8192 dts=8192 dur=1024 flags=KEY size=502 crc=4bba2d17
+9 t1 pts=9216 dts=9216 dur=1024 flags=KEY size=495 crc=2577a770
+10 t1 pts=10240 dts=10240 dur=1024 flags=KEY size=518 crc=020ae89b
+11 t1 pts=11264 dts=11264 dur=1024 flags=KEY size=532 crc=38ed317e
+12 t1 pts=12288 dts=12288 dur=736 flags=KEY size=498 crc=f5baa46e
+seek 0: t1@0
+seek 83333: t1@3
+seek 166666: t1@7
+seek 271334: end
+seek 250000: t1@11
+seek -1000000: t1@0

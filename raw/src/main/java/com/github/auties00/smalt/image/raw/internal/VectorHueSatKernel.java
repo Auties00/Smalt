@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.internal.simd.KernelSetup;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.VectorMask;
@@ -166,6 +167,14 @@ final class VectorHueSatKernel implements HueSatKernel {
     }
 
     @Override
+    @KernelSetup("builds the corner table of a table once, before its first row")
+    public void prepare(HueSatTable table) {
+        if (LOOKUP) {
+            table.corners();
+        }
+    }
+
+    @Override
     public void apply(HueSatTable table, float[] r, float[] g, float[] b, int count) {
         var scratch = SCRATCH.get();
         var bound = count - count % L;
@@ -241,9 +250,9 @@ final class VectorHueSatKernel implements HueSatKernel {
             var saturation = chroma.lanewise(VectorOperators.DIV, max);
             var redHue = green.lanewise(VectorOperators.SUB, blue).lanewise(VectorOperators.DIV, chroma);
             redHue = redHue.blend(redHue.lanewise(VectorOperators.ADD, six), redHue.compare(VectorOperators.LT, zero));
-            var greenHue = two.lanewise(VectorOperators.ADD, blue.lanewise(VectorOperators.SUB, red)
+            var greenHue = FLOAT_VECTOR.cast(two).lanewise(VectorOperators.ADD, blue.lanewise(VectorOperators.SUB, red)
                     .lanewise(VectorOperators.DIV, chroma));
-            var blueHue = four.lanewise(VectorOperators.ADD, red.lanewise(VectorOperators.SUB, green)
+            var blueHue = FLOAT_VECTOR.cast(four).lanewise(VectorOperators.ADD, red.lanewise(VectorOperators.SUB, green)
                     .lanewise(VectorOperators.DIV, chroma));
             var hue = blueHue.blend(greenHue, max.compare(VectorOperators.EQ, green))
                     .blend(redHue, max.compare(VectorOperators.EQ, red))
@@ -268,8 +277,8 @@ final class VectorHueSatKernel implements HueSatKernel {
                     .intoArray(scratch.lower, index);
             INT_VECTOR.cast(h1.lanewise(VectorOperators.MUL, hueStride).lanewise(VectorOperators.ADD, saturationOffset))
                     .intoArray(scratch.upper, index);
-            var hueLow = one.lanewise(VectorOperators.SUB, hueFraction);
-            var satLow = one.lanewise(VectorOperators.SUB, satFraction);
+            var hueLow = FLOAT_VECTOR.cast(one).lanewise(VectorOperators.SUB, hueFraction);
+            var satLow = FLOAT_VECTOR.cast(one).lanewise(VectorOperators.SUB, satFraction);
             FLOAT_VECTOR.cast(hueLow.lanewise(VectorOperators.MUL, satLow)).intoArray(scratch.w00, index);
             FLOAT_VECTOR.cast(hueLow.lanewise(VectorOperators.MUL, satFraction)).intoArray(scratch.w01, index);
             FLOAT_VECTOR.cast(hueFraction.lanewise(VectorOperators.MUL, satLow)).intoArray(scratch.w10, index);
@@ -426,7 +435,7 @@ final class VectorHueSatKernel implements HueSatKernel {
                     .lanewise(VectorOperators.ADD, w01.lanewise(VectorOperators.MUL, d01))
                     .lanewise(VectorOperators.ADD, w10.lanewise(VectorOperators.MUL, d10))
                     .lanewise(VectorOperators.ADD, w11.lanewise(VectorOperators.MUL, d11));
-            FLOAT_VECTOR.cast(one.lanewise(VectorOperators.SUB, fraction).lanewise(VectorOperators.MUL, near)
+            FLOAT_VECTOR.cast(FLOAT_VECTOR.cast(one).lanewise(VectorOperators.SUB, fraction).lanewise(VectorOperators.MUL, near)
                     .lanewise(VectorOperators.ADD, fraction.lanewise(VectorOperators.MUL, far))).intoArray(target, index);
         }
     }
@@ -503,7 +512,7 @@ final class VectorHueSatKernel implements HueSatKernel {
                     .lanewise(VectorOperators.ADD, w01.lanewise(VectorOperators.MUL, d01))
                     .lanewise(VectorOperators.ADD, w10.lanewise(VectorOperators.MUL, d10))
                     .lanewise(VectorOperators.ADD, w11.lanewise(VectorOperators.MUL, d11));
-            FLOAT_VECTOR.cast(one.lanewise(VectorOperators.SUB, fraction).lanewise(VectorOperators.MUL, near)
+            FLOAT_VECTOR.cast(FLOAT_VECTOR.cast(one).lanewise(VectorOperators.SUB, fraction).lanewise(VectorOperators.MUL, near)
                     .lanewise(VectorOperators.ADD, fraction.lanewise(VectorOperators.MUL, far))).intoArray(target, index);
         }
     }
@@ -618,13 +627,13 @@ final class VectorHueSatKernel implements HueSatKernel {
                     .lanewise(VectorOperators.MAX, zero).lanewise(VectorOperators.MIN, one);
             var value = FLOAT_VECTOR.cast(FloatVector.fromArray(F, scratch.value, index))
                     .lanewise(VectorOperators.MUL, FLOAT_VECTOR.cast(FloatVector.fromArray(F, scratch.valScale, index)));
-            var p = value.lanewise(VectorOperators.MUL, one.lanewise(VectorOperators.SUB, saturation));
+            var p = value.lanewise(VectorOperators.MUL, FLOAT_VECTOR.cast(one).lanewise(VectorOperators.SUB, saturation));
             var sector = FLOAT_VECTOR.cast(INT_VECTOR.cast(hue.convertShape(VectorOperators.F2I, I, 0))
                     .convertShape(VectorOperators.I2F, F, 0));
             var f = hue.lanewise(VectorOperators.SUB, sector);
-            var q = value.lanewise(VectorOperators.MUL, one.lanewise(VectorOperators.SUB, saturation.lanewise(VectorOperators.MUL, f)));
-            var t = value.lanewise(VectorOperators.MUL, one.lanewise(VectorOperators.SUB,
-                    saturation.lanewise(VectorOperators.MUL, one.lanewise(VectorOperators.SUB, f))));
+            var q = value.lanewise(VectorOperators.MUL, FLOAT_VECTOR.cast(one).lanewise(VectorOperators.SUB, saturation.lanewise(VectorOperators.MUL, f)));
+            var t = value.lanewise(VectorOperators.MUL, FLOAT_VECTOR.cast(one).lanewise(VectorOperators.SUB,
+                    saturation.lanewise(VectorOperators.MUL, FLOAT_VECTOR.cast(one).lanewise(VectorOperators.SUB, f))));
             var s0 = sector.compare(VectorOperators.EQ, zero);
             var s1 = sector.compare(VectorOperators.EQ, one);
             var s2 = sector.compare(VectorOperators.EQ, two);

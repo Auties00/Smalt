@@ -1,0 +1,33 @@
+ISO/IEC 13818-5 MPEG-2 audio reference software (dist10), doc/readme.dp.01.txt:
+
+Disclaimer of Warranty
+        These software programs are available to the user without any
+license fee or royalty on an "as is" basis.  ISO disclaims any and all
+warranties,  whether express, implied, or statuary, including any
+implied warranties or merchantability or of fitness for a particular
+purpose.  In no event shall ISO be liable for any incidental, punitive,
+or consequential damages of any kind whatsoever arising from the
+use of these programs.
+
+        This disclaimer of warranty extends to the user of these
+programs and user's customers, employees, agents, transferees,
+successors, and assigns,
+
+        ISO does not represent or warrant that the programs furnished
+hereunder are free of infringement or any third-party patents,
+copyrights or trade secrets.
+
+        The purpose of this software is to provide a tool to help in the
+learning and understanding of the MPEG/audio compression and
+decompression algorithm.  It is not an efficient implementation.
+
+The source files carry the notice (mc/decoder/decode.c):
+
+/**********************************************************************
+ * ISO MPEG Audio Subgroup Software Simulation Group (1996)
+ * ISO 13818-3 MPEG-2 Audio Multichannel Decoder
+
+and the makefiles (mc/decoder/makefile):
+
+## Copyright (c) 1995 MPEG/audio software simulation group
+## All Rights Reserved

@@ -1,0 +1,78 @@
+# demux dump of wav/bext-cue.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 1000000
+seekable true
+metadata INAM="cue points"
+metadata chna="1 ATU_00000001 AT_00010001_01 AP_00010002"
+metadata coding_history="A=PCM,F=8000,W=16,M=mono"
+metadata description="A take"
+metadata ixml="<BWFXML><SCENE>12</SCENE></BWFXML>"
+metadata loudness_value="-23.00"
+metadata max_true_peak_level="-1.50"
+metadata origination_date="2026-10-24"
+metadata origination_time="08:09:10"
+metadata originator="Smalt"
+metadata originator_reference="REF123"
+metadata smpl:loop="0 0 100 7999 0 0"
+metadata smpl:manufacturer="71"
+metadata smpl:pitch_fraction="0"
+metadata smpl:product="2"
+metadata smpl:sample_period="125000"
+metadata smpl:smpte_format="25"
+metadata smpl:smpte_offset="01:02:03:04"
+metadata smpl:unity_note="60"
+metadata time_reference="172800000"
+metadata umid="0x0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20"
+chapter 0 125000 "Intro"
+chapter 250000 750000
+chapter 750000 1000000 "Fin\u00e9"
+track 0 AUDIO PCM_S16LE timebase=1/8000 duration=8000 config=none
+  audio rate=8000 bits=16 skip=0 layout=[FRONT_CENTER]
+packets 16
+0 t0 pts=0 dts=0 dur=512 flags=KEY size=1024 crc=8251209b
+1 t0 pts=512 dts=512 dur=512 flags=KEY size=1024 crc=01256dd8
+2 t0 pts=1024 dts=1024 dur=512 flags=KEY size=1024 crc=2bd1f90f
+3 t0 pts=1536 dts=1536 dur=512 flags=KEY size=1024 crc=887b33ca
+4 t0 pts=2048 dts=2048 dur=512 flags=KEY size=1024 crc=5a25767c
+5 t0 pts=2560 dts=2560 dur=512 flags=KEY size=1024 crc=0af535d1
+6 t0 pts=3072 dts=3072 dur=512 flags=KEY size=1024 crc=cd356624
+7 t0 pts=3584 dts=3584 dur=512 flags=KEY size=1024 crc=637e5205
+8 t0 pts=4096 dts=4096 dur=512 flags=KEY size=1024 crc=32c5368c
+9 t0 pts=4608 dts=4608 dur=512 flags=KEY size=1024 crc=bb17aa51
+10 t0 pts=5120 dts=5120 dur=512 flags=KEY size=1024 crc=b208aed3
+11 t0 pts=5632 dts=5632 dur=512 flags=KEY size=1024 crc=83168ed4
+12 t0 pts=6144 dts=6144 dur=512 flags=KEY size=1024 crc=7eb3c25c
+13 t0 pts=6656 dts=6656 dur=512 flags=KEY size=1024 crc=8cb8880f
+14 t0 pts=7168 dts=7168 dur=512 flags=KEY size=1024 crc=9d55291a
+15 t0 pts=7680 dts=7680 dur=320 flags=KEY size=640 crc=da935492
+seek 0: t0@0
+seek 333333: t0@pts=2666
+seek 666666: t0@pts=5333
+seek 1000000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format WAV
+  duration 1000000
+  seekable true
+  metadata chna="1 ATU_00000001 AT_00010001_01 AP_00010002"
+  metadata coding_history="A=PCM,F=8000,W=16,M=mono"
+  metadata description="A take"
+  metadata ixml="<BWFXML><SCENE>12</SCENE></BWFXML>"
+  metadata loudness_value="-23.00"
+  metadata max_true_peak_level="-1.50"
+  metadata origination_date="2026-10-24"
+  metadata origination_time="08:09:10"
+  metadata originator="Smalt"
+  metadata originator_reference="REF123"
+  metadata smpl:loop="0 0 100 7999 0 0"
+  metadata smpl:manufacturer="71"
+  metadata smpl:pitch_fraction="0"
+  metadata smpl:product="2"
+  metadata smpl:sample_period="125000"
+  metadata smpl:smpte_format="25"
+  metadata smpl:smpte_offset="01:02:03:04"
+  metadata smpl:unity_note="60"
+  metadata time_reference="172800000"
+  metadata umid="0x0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20"
+  track 0 AUDIO PCM_S16LE timebase=1/8000 duration=8000 config=none
+    audio rate=8000 bits=16 skip=0 layout=[FRONT_CENTER]

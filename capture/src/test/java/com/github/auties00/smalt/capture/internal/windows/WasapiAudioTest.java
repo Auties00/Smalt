@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.capture.internal.windows;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.capture.audio.AudioCaptureSession;
 import com.github.auties00.smalt.capture.audio.AudioDevice;
@@ -32,26 +33,27 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Lists and streams the audio endpoints of the machine running the tests through WASAPI. Tests
  * that need a microphone or an output skip when there is none. Tests that play a tone use only a
- * VB-Audio Virtual Cable ("CABLE Input" render endpoint, "CABLE Output" capture endpoint) and skip
+ * VB-Audio Virtual Cable ("CABLE Input" render endpoint, named "Speakers (VB-Audio Virtual Cable)" on some Windows
+ * versions, and "CABLE Output" capture endpoint) and skip
  * without one, so nothing is ever heard; the default output only ever receives silence. Measured
  * latencies are printed to the test output.
  */
-@EnabledOnOs(OS.WINDOWS)
+@EnabledOnOs(value = OS.WINDOWS, disabledReason = "[platform:windows] WASAPI runs only on Windows")
 @Timeout(60)
 @DisplayName("WASAPI audio devices on this machine")
 class WasapiAudioTest {
     private static Optional<AudioDevice.Output> cableInput() {
-        return AudioDevices.outputs().stream().filter(device -> device.name().startsWith("CABLE Input")).findFirst();
+        return AudioDevices.outputs().stream().filter(device -> device.name().startsWith("CABLE Input")
+                || device.name().contains("(VB-Audio Virtual Cable)")).findFirst();
     }
 
     private static Optional<AudioDevice.Input> cableOutput() {
-        return AudioDevices.inputs().stream().filter(device -> device.name().startsWith("CABLE Output")).findFirst();
+        return AudioDevices.inputs().stream().filter(device -> device.name().startsWith("CABLE Output")
+                || device.name().contains("(VB-Audio Virtual Cable)")).findFirst();
     }
 
     private static float[] tone(int frames, int rate, int channels, double frequency, double amplitude, long startFrame) {
@@ -151,7 +153,7 @@ class WasapiAudioTest {
         @DisplayName("finds a device again by its id, and nothing for an unknown id")
         void lookup() {
             var outputs = AudioDevices.outputs();
-            assumeFalse(outputs.isEmpty(), "no output");
+            Skip.unlessDevice(!outputs.isEmpty(), "audio-output", "no output");
             var first = outputs.getFirst();
             assertEquals(first.id(), AudioDevices.output(first.id()).orElseThrow().id());
             assertTrue(AudioDevices.output("{0.0.0.00000000}.{00000000-0000-0000-0000-000000000000}").isEmpty());
@@ -178,7 +180,7 @@ class WasapiAudioTest {
         void openCloseCycles() throws InterruptedException {
             var input = AudioDevices.defaultInput();
             var output = AudioDevices.defaultOutput();
-            assumeTrue(input.isPresent() || output.isPresent(), "no audio device");
+            Skip.unlessDevice(input.isPresent() || output.isPresent(), "audio", "no audio device");
             var start = System.nanoTime();
             for (var i = 0; i < 20; i++) {
                 if (input.isPresent()) {
@@ -203,7 +205,7 @@ class WasapiAudioTest {
         @DisplayName("a close from another thread ends a blocked read, and later reads report the end")
         void closeUnblocksRead() throws InterruptedException {
             var cable = cableInput();
-            assumeTrue(cable.isPresent(), "no VB-Audio Virtual Cable");
+            Skip.unlessDevice(cable.isPresent(), "audio-loopback", "no VB-Audio Virtual Cable");
             var session = AudioDevices.openLoopback(cable.get(), AudioStreamOptions.forVoice());
             var result = new AtomicInteger(Integer.MIN_VALUE);
             var reader = Thread.ofPlatform().start(() -> {
@@ -228,7 +230,7 @@ class WasapiAudioTest {
         @DisplayName("an interrupt ends a blocked read promptly and leaves the session usable")
         void interruptedRead() throws InterruptedException {
             var input = AudioDevices.defaultInput();
-            assumeTrue(input.isPresent(), "no input");
+            Skip.unlessDevice(input.isPresent(), "audio-input", "no input");
             try (var session = AudioDevices.openCapture(input.get(), AudioStreamOptions.forVoice())) {
                 var outcome = new AtomicReference<Object>();
                 var reader = Thread.ofPlatform().start(() -> {
@@ -254,7 +256,7 @@ class WasapiAudioTest {
         @DisplayName("opens the loopback of an output with the default options")
         void defaultLoopback() {
             var output = AudioDevices.defaultOutput();
-            assumeTrue(output.isPresent(), "no output");
+            Skip.unlessDevice(output.isPresent(), "audio-output", "no output");
             var defaults = AudioStreamOptions.defaults();
             try (var session = AudioDevices.openLoopback(output.get())) {
                 assertEquals(output.get(), session.device());
@@ -269,7 +271,7 @@ class WasapiAudioTest {
         @DisplayName("rejects an exclusive loopback")
         void exclusiveLoopback() {
             var output = AudioDevices.defaultOutput();
-            assumeTrue(output.isPresent(), "no output");
+            Skip.unlessDevice(output.isPresent(), "audio-output", "no output");
             assertThrows(MediaException.Unsupported.class,
                     () -> AudioDevices.openLoopback(output.get(),
                             AudioStreamOptions.forVoice().toBuilder().shareMode(AudioShareMode.EXCLUSIVE).build()));
@@ -298,7 +300,7 @@ class WasapiAudioTest {
         @DisplayName("captures 10 ms frames of 16 kHz mono with increasing timestamps and a plausible delay")
         void captureVoice() throws InterruptedException {
             var input = AudioDevices.defaultInput();
-            assumeTrue(input.isPresent(), "no input");
+            Skip.unlessDevice(input.isPresent(), "audio-input", "no input");
             try (var session = AudioDevices.openCapture(input.get(), AudioStreamOptions.forVoice())) {
                 assertEquals(16_000, session.sampleRate());
                 assertEquals(1, session.channels());
@@ -330,7 +332,7 @@ class WasapiAudioTest {
         @DisplayName("captures at the device's own format by default")
         void captureNative() throws InterruptedException {
             var input = AudioDevices.defaultInput();
-            assumeTrue(input.isPresent(), "no input");
+            Skip.unlessDevice(input.isPresent(), "audio-input", "no input");
             var mix = input.get().formats().getFirst();
             try (var session = AudioDevices.openCapture(input.get())) {
                 assertEquals(mix.sampleRate(), session.sampleRate());
@@ -343,7 +345,7 @@ class WasapiAudioTest {
         @DisplayName("asks for a short engine period at the native format")
         void lowLatency() throws InterruptedException {
             var input = AudioDevices.defaultInput();
-            assumeTrue(input.isPresent(), "no input");
+            Skip.unlessDevice(input.isPresent(), "audio-input", "no input");
             var options = AudioStreamOptions.forRealtime().toBuilder().period(Duration.ofMillis(3)).latency(Duration.ofMillis(3))
                     .build();
             try (var session = AudioDevices.openCapture(input.get(), options)) {
@@ -363,7 +365,7 @@ class WasapiAudioTest {
         @DisplayName("counts underruns once the writer stops, and reports a delay within the queue plus the device buffer")
         void underruns() throws InterruptedException {
             var output = cableInput().or(AudioDevices::defaultOutput);
-            assumeTrue(output.isPresent(), "no output");
+            Skip.unlessDevice(output.isPresent(), "audio-output", "no output");
             try (var session = AudioDevices.openPlayback(output.get(), AudioStreamOptions.forVoice())) {
                 var silence = new short[session.periodFrames()];
                 assertEquals(0, session.underruns());
@@ -385,7 +387,7 @@ class WasapiAudioTest {
         @DisplayName("blocks a write while the queue is full")
         void backpressure() throws InterruptedException {
             var output = cableInput().or(AudioDevices::defaultOutput);
-            assumeTrue(output.isPresent(), "no output");
+            Skip.unlessDevice(output.isPresent(), "audio-output", "no output");
             try (var session = AudioDevices.openPlayback(output.get(), AudioStreamOptions.forVoice())) {
                 var second = new short[16_000];
                 var start = System.nanoTime();
@@ -401,7 +403,7 @@ class WasapiAudioTest {
         @DisplayName("rejects a buffer of another format")
         void wrongBuffer() {
             var output = AudioDevices.defaultOutput();
-            assumeTrue(output.isPresent(), "no output");
+            Skip.unlessDevice(output.isPresent(), "audio-output", "no output");
             try (var session = AudioDevices.openPlayback(output.get(), AudioStreamOptions.forVoice())) {
                 var stereo = new com.github.auties00.smalt.audio.AudioBuffer(com.github.auties00.smalt.audio.ChannelLayout.STEREO, 16_000, 160);
                 assertThrows(IllegalArgumentException.class, () -> session.write(stereo));
@@ -417,7 +419,7 @@ class WasapiAudioTest {
         void tone() throws InterruptedException {
             var render = cableInput();
             var capture = cableOutput();
-            assumeTrue(render.isPresent() && capture.isPresent(), "no VB-Audio Virtual Cable");
+            Skip.unlessDevice(render.isPresent() && capture.isPresent(), "audio-loopback", "no VB-Audio Virtual Cable");
             var failure = new AtomicReference<Throwable>();
             var options = AudioStreamOptions.forVoice().toBuilder().bufferDuration(Duration.ofSeconds(1)).build();
             try (var player = AudioDevices.openPlayback(render.get(), AudioStreamOptions.forVoice());
@@ -452,7 +454,7 @@ class WasapiAudioTest {
         @DisplayName("captures the tone through the WASAPI loopback of the render endpoint")
         void loopbackTap() throws InterruptedException {
             var render = cableInput();
-            assumeTrue(render.isPresent(), "no VB-Audio Virtual Cable");
+            Skip.unlessDevice(render.isPresent(), "audio-loopback", "no VB-Audio Virtual Cable");
             var failure = new AtomicReference<Throwable>();
             var options = AudioStreamOptions.forVoice().toBuilder().bufferDuration(Duration.ofSeconds(1)).build();
             try (var player = AudioDevices.openPlayback(render.get(), AudioStreamOptions.forVoice());
@@ -480,10 +482,10 @@ class WasapiAudioTest {
         @DisplayName("captures the cable exclusively when the driver allows it")
         void exclusive() throws InterruptedException {
             var capture = cableOutput();
-            assumeTrue(capture.isPresent(), "no VB-Audio Virtual Cable");
+            Skip.unlessDevice(capture.isPresent(), "audio-loopback", "no VB-Audio Virtual Cable");
             var device = capture.get();
             var native_ = device.formats().stream().skip(1).findFirst();
-            assumeTrue(native_.isPresent(), "the cable lists no exclusive format");
+            Skip.unlessDevice(native_.isPresent(), "audio-exclusive", "the cable lists no exclusive format");
             var format = native_.get();
             var options = AudioStreamOptions.forRealtime().toBuilder().sampleRate(format.sampleRate()).channels(format.channels())
                     .shareMode(AudioShareMode.EXCLUSIVE).build();
@@ -493,7 +495,7 @@ class WasapiAudioTest {
                 }
                 System.out.println("exclusive capture at " + format + ": device buffer " + session.latencyMicros() + " us");
             } catch (MediaException.Unsupported exception) {
-                assumeTrue(false, exception.getMessage());
+                Skip.unlessDevice(false, "audio-exclusive", exception.getMessage());
             }
         }
 
@@ -502,7 +504,7 @@ class WasapiAudioTest {
         void latencyHarness() throws InterruptedException {
             var render = cableInput();
             var capture = cableOutput();
-            assumeTrue(render.isPresent() && capture.isPresent(), "no VB-Audio Virtual Cable");
+            Skip.unlessDevice(render.isPresent() && capture.isPresent(), "audio-loopback", "no VB-Audio Virtual Cable");
             var options = AudioStreamOptions.forVoice();
             var recorderOptions = options.toBuilder().bufferDuration(Duration.ofSeconds(1)).build();
             try (var player = AudioDevices.openPlayback(render.get(), options);
@@ -569,7 +571,7 @@ class WasapiAudioTest {
         @DisplayName("lists formats whose encodings are known")
         void formats() {
             var capture = cableOutput();
-            assumeTrue(capture.isPresent(), "no VB-Audio Virtual Cable");
+            Skip.unlessDevice(capture.isPresent(), "audio-loopback", "no VB-Audio Virtual Cable");
             for (var format : capture.get().formats()) {
                 assertNotNull(format.sampleFormat());
                 assertTrue(format.frameBytes() >= format.channels() * AudioSampleFormat.PCM_S16.bytes());

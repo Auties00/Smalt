@@ -1,6 +1,6 @@
 /* Ports libopus 1.5.2 (celt/mathops.h, celt/mathops.c, celt/float_cast.h), Copyright Xiph.Org Foundation, CSIRO and
-   Jean-Marc Valin, BSD 3-Clause License; and fdlibm 5.3 (k_cos.c, k_sin.c, e_rem_pio2.c), Copyright Sun Microsystems,
-   fdlibm notice. Modified for Smalt. */
+   Jean-Marc Valin, BSD 3-Clause License; and fdlibm 5.3 (k_cos.c, k_sin.c, s_sin.c, e_rem_pio2.c), Copyright Sun
+   Microsystems, fdlibm notice. Modified for Smalt. */
 package com.github.auties00.smalt.audio.opus.internal.celt;
 
 /**
@@ -37,6 +37,31 @@ public final class MathOps {
      * {@code pi / 2 - (PIO2_1 + PIO2_2)} (fdlibm {@code pio2_2t}).
      */
     private static final double PIO2_2T = 2.02226624879595063154e-21;
+
+    /**
+     * The third 33 bits of {@code pi / 2} (fdlibm {@code pio2_3}).
+     */
+    private static final double PIO2_3 = 2.02226624871116645580e-21;
+
+    /**
+     * {@code pi / 2 - (PIO2_1 + PIO2_2 + PIO2_3)} (fdlibm {@code pio2_3t}).
+     */
+    private static final double PIO2_3T = 8.47842766036889956997e-32;
+
+    /**
+     * {@code 2 / pi} to 53 bits (fdlibm {@code invpio2}).
+     */
+    private static final double INV_PIO2 = 6.36619772367581382433e-01;
+
+    /**
+     * The high words of the first 32 multiples of {@code pi / 2} (fdlibm {@code npio2_hw}).
+     */
+    private static final int[] NPIO2_HW = {
+        0x3FF921FB, 0x400921FB, 0x4012D97C, 0x401921FB, 0x401F6A7A, 0x4022D97C, 0x4025FDBB, 0x402921FB,
+        0x402C463A, 0x402F6A7A, 0x4031475C, 0x4032D97C, 0x40346B9C, 0x4035FDBB, 0x40378FDB, 0x403921FB,
+        0x403AB41B, 0x403C463A, 0x403DD85A, 0x403F6A7A, 0x40407E4C, 0x4041475C, 0x4042106C, 0x4042D97C,
+        0x4043A28C, 0x40446B9C, 0x404534AC, 0x4045FDBB, 0x4046C6CB, 0x40478FDB, 0x404858EB, 0x404921FB
+    };
 
     /**
      * The coefficients {@code C1} to {@code C6} of the fdlibm {@code __kernel_cos} polynomial.
@@ -217,6 +242,118 @@ public final class MathOps {
             y1 = (z - y0) - PIO2_2T;
         }
         return -kernelSin(y0, y1);
+    }
+
+    /**
+     * Returns {@link StrictMath#sin(double)} of an angle, bit for bit, without the temporary array the JDK's
+     * argument reduction allocates.
+     *
+     * <p>Angles of magnitude up to {@code 2^19 pi / 2} are evaluated here; larger and non-finite arguments are
+     * delegated to {@link StrictMath#sin(double)}.
+     *
+     * @implNote This implementation follows fdlibm 5.3 ({@code s_sin.c}), whose results {@link StrictMath} is
+     * specified to reproduce: {@code __kernel_sin} below {@code pi / 4}, otherwise the small and medium-size
+     * reductions of {@code __ieee754_rem_pio2} followed by the kernel of the quadrant.
+     *
+     * @param x the angle in radians
+     * @return the sine
+     */
+    public static double sin(double x) {
+        var hx = (int) (Double.doubleToRawLongBits(x) >>> 32);
+        var ix = hx & 0x7fffffff;
+        if (ix <= 0x3fe921fb) {
+            return kernelSin0(x);
+        }
+        if (ix > 0x413921fb) {
+            return StrictMath.sin(x);
+        }
+        double y0;
+        double y1;
+        int n;
+        if (ix < 0x4002d97c) {
+            double z;
+            if (hx > 0) {
+                z = x - PIO2_1;
+                if (ix != 0x3ff921fb) {
+                    y0 = z - PIO2_1T;
+                    y1 = (z - y0) - PIO2_1T;
+                } else {
+                    z -= PIO2_2;
+                    y0 = z - PIO2_2T;
+                    y1 = (z - y0) - PIO2_2T;
+                }
+                n = 1;
+            } else {
+                z = x + PIO2_1;
+                if (ix != 0x3ff921fb) {
+                    y0 = z + PIO2_1T;
+                    y1 = (z - y0) + PIO2_1T;
+                } else {
+                    z += PIO2_2;
+                    y0 = z + PIO2_2T;
+                    y1 = (z - y0) + PIO2_2T;
+                }
+                n = -1;
+            }
+        } else {
+            var t = Math.abs(x);
+            n = (int) (t * INV_PIO2 + 0.5);
+            var fn = (double) n;
+            var r = t - fn * PIO2_1;
+            var w = fn * PIO2_1T;
+            if (n < 32 && ix != NPIO2_HW[n - 1]) {
+                y0 = r - w;
+            } else {
+                var j = ix >> 20;
+                y0 = r - w;
+                var i = j - (((int) (Double.doubleToRawLongBits(y0) >>> 32) >> 20) & 0x7ff);
+                if (i > 16) {
+                    t = r;
+                    w = fn * PIO2_2;
+                    r = t - w;
+                    w = fn * PIO2_2T - ((t - r) - w);
+                    y0 = r - w;
+                    i = j - (((int) (Double.doubleToRawLongBits(y0) >>> 32) >> 20) & 0x7ff);
+                    if (i > 49) {
+                        t = r;
+                        w = fn * PIO2_3;
+                        r = t - w;
+                        w = fn * PIO2_3T - ((t - r) - w);
+                        y0 = r - w;
+                    }
+                }
+            }
+            y1 = (r - y0) - w;
+            if (hx < 0) {
+                y0 = -y0;
+                y1 = -y1;
+                n = -n;
+            }
+        }
+        return switch (n & 3) {
+            case 0 -> kernelSin(y0, y1);
+            case 1 -> kernelCos(y0, y1);
+            case 2 -> -kernelSin(y0, y1);
+            default -> -kernelCos(y0, y1);
+        };
+    }
+
+    /**
+     * Returns the sine of {@code x} for {@code |x| <= pi / 4} (fdlibm {@code __kernel_sin} with {@code y = 0} and
+     * {@code iy = 0}).
+     *
+     * @param x the angle
+     * @return the sine
+     */
+    private static double kernelSin0(double x) {
+        var ix = (int) (Double.doubleToRawLongBits(x) >>> 32) & 0x7fffffff;
+        if (ix < 0x3e400000 && (int) x == 0) {
+            return x;
+        }
+        var z = x * x;
+        var v = z * x;
+        var r = SIN_S2 + z * (SIN_S3 + z * (SIN_S4 + z * (SIN_S5 + z * SIN_S6)));
+        return x + v * (SIN_S1 + z * r);
     }
 
     /**

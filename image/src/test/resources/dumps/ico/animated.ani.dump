@@ -1,0 +1,18 @@
+# image dump of ico/animated.ani; regenerate with -Dsmalt.test.updateDumps=true
+format ANI
+info ImageInfo[format=ANI, width=32, height=32, hasAlpha=true, animated=true, frameCount=4, orientation=NORMAL]
+decode
+picture 32x32 rgba8 alpha=true crc=ed760d98
+  format=ANI orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 8x8
+picture 32x32 rgba8 alpha=true crc=ed760d98
+  format=ANI orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+animation 32x32 loops=0 frames=4
+frame 0 ts=0 dur=100000 32x32 rgba8 alpha=true crc=ed760d98
+frame 1 ts=100000 dur=50000 32x32 rgba8 alpha=true crc=2ce2daed
+frame 2 ts=150000 dur=150000 32x32 rgba8 alpha=true crc=b0b6635f
+frame 3 ts=300000 dur=50000 32x32 rgba8 alpha=true crc=2ce2daed

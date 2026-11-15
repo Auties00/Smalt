@@ -16,7 +16,8 @@ import java.util.Map;
 /**
  * Reads the metadata of a HEIC or AVIF file: the {@code Exif} and XMP ({@code mime} item of type
  * {@code application/rdf+xml}) items that describe the primary item, and its ICC color
- * property; edits replace or remove the EXIF and XMP items through {@link HeifMetaEditor}.
+ * property; edits replace or remove the EXIF and XMP items and the ICC property through
+ * {@link HeifMetaEditor}, in still images and in image sequences alike.
  */
 final class HeifImageFile implements ImageFile {
     /**
@@ -83,20 +84,21 @@ final class HeifImageFile implements ImageFile {
 
     @Override
     public EditPlan plan(Resolved target) {
-        var name = format.name().toLowerCase(Locale.ROOT);
-        if (!(target.icc() instanceof ImageMetadataEdit.Change.Keep)) {
-            // TODO: rewrite the colr property of the primary item to replace or remove its ICC profile.
-            throw new MediaException.Unsupported(name, "the ICC profile of " + format.name() + " files cannot be edited");
-        }
         if ((target.iptc() instanceof ImageMetadataEdit.Change.Replace && target.iptcData() != null && !target.iptcData().isEmpty())
                 || (target.comments() instanceof ImageMetadataEdit.Change.Replace && !target.commentList().isEmpty())
                 || (target.text() instanceof ImageMetadataEdit.Change.Replace && !target.textEntries().isEmpty())) {
             throw ImageFiles.unsupported(format, "IPTC data, comments or text");
         }
-        if (target.exif() instanceof ImageMetadataEdit.Change.Keep && target.xmp() instanceof ImageMetadataEdit.Change.Keep) {
+        var replaceExif = !(target.exif() instanceof ImageMetadataEdit.Change.Keep);
+        var replaceXmp = !(target.xmp() instanceof ImageMetadataEdit.Change.Keep);
+        var replaceIcc = !(target.icc() instanceof ImageMetadataEdit.Change.Keep);
+        if (replaceIcc && target.iccProfile() == null && metadata().iccProfile().isEmpty()) {
+            replaceIcc = false;
+        }
+        if (!replaceExif && !replaceXmp && !replaceIcc) {
             return EditPlan.builder().copy(0, source.size()).build();
         }
-        return new HeifMetaEditor(source, limits).plan(!(target.exif() instanceof ImageMetadataEdit.Change.Keep), target.exifBytes(),
-                !(target.xmp() instanceof ImageMetadataEdit.Change.Keep), target.xmpPacket() != null ? target.xmpPacket().toBytes() : null);
+        return new HeifMetaEditor(source, limits).plan(replaceExif, target.exifBytes(), replaceXmp,
+                target.xmpPacket() != null ? target.xmpPacket().toBytes() : null, replaceIcc, target.iccProfile());
     }
 }

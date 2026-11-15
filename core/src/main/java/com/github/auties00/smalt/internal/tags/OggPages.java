@@ -115,7 +115,8 @@ final class OggPages {
      * @param serial the serial number
      * @param firstSequence the sequence number of the first page
      * @param layout the number of lacing values of each page to reproduce, or {@code null} to fill pages with up to 255
-     * lacing values
+     * lacing values; a layout whose pages do not each hold 1 to 255 of the packets' lacing values, all of them in
+     * total, is not reproduced either
      * @return the pages
      */
     static List<byte[]> paginate(List<byte[]> packets, int serial, long firstSequence, int[] layout) {
@@ -129,6 +130,9 @@ final class OggPages {
             }
             lacing.add(remaining);
             data.writeBytes(packet);
+        }
+        if (layout != null && !covers(layout, lacing.size())) {
+            layout = null;
         }
         var body = data.toByteArray();
         var pages = new ArrayList<byte[]>();
@@ -165,6 +169,24 @@ final class OggPages {
             pageIndex++;
         }
         return pages;
+    }
+
+    /**
+     * Returns whether a page layout lays out exactly a number of lacing values, each page holding 1 to 255.
+     *
+     * @param layout the number of lacing values of each page
+     * @param values the number of lacing values to lay out
+     * @return {@code true} when the layout fits
+     */
+    private static boolean covers(int[] layout, int values) {
+        var total = 0L;
+        for (var count : layout) {
+            if (count < 1 || count > 255) {
+                return false;
+            }
+            total += count;
+        }
+        return total == values;
     }
 
     /**

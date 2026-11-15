@@ -1,0 +1,28 @@
+# demux dump of mp4/ambisonic.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 250000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+track 1 AUDIO PCM_S16LE timebase=1/48000 duration=12000 config=none
+  audio rate=48000 bits=16 skip=0 layout=[UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, FRONT_LEFT, FRONT_RIGHT] ambisonics=SN3D[0, 1, 2, 3]
+packets 12
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=12288 crc=1253435d
+1 t1 pts=1024 dts=1024 dur=1024 flags=KEY size=12288 crc=ba50bdd1
+2 t1 pts=2048 dts=2048 dur=1024 flags=KEY size=12288 crc=ae1cb5ee
+3 t1 pts=3072 dts=3072 dur=1024 flags=KEY size=12288 crc=34718507
+4 t1 pts=4096 dts=4096 dur=1024 flags=KEY size=12288 crc=5a7d825f
+5 t1 pts=5120 dts=5120 dur=1024 flags=KEY size=12288 crc=891b57e7
+6 t1 pts=6144 dts=6144 dur=1024 flags=KEY size=12288 crc=616d19c9
+7 t1 pts=7168 dts=7168 dur=1024 flags=KEY size=12288 crc=d73e5f33
+8 t1 pts=8192 dts=8192 dur=1024 flags=KEY size=12288 crc=2c5e2fc3
+9 t1 pts=9216 dts=9216 dur=1024 flags=KEY size=12288 crc=df16efa9
+10 t1 pts=10240 dts=10240 dur=1024 flags=KEY size=12288 crc=fca7be87
+11 t1 pts=11264 dts=11264 dur=736 flags=KEY size=8832 crc=4b27a45a
+seek 0: t1@0
+seek 83333: t1@3
+seek 166666: t1@7
+seek 250000: end
+seek -1000000: t1@0

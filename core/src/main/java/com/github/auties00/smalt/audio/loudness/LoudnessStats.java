@@ -37,7 +37,7 @@ public record LoudnessStats(double integrated, double loudnessRange, double loud
      * @return the peak in dBFS, negative infinity for silence
      */
     public double samplePeakDb() {
-        return 20 * Math.log10(samplePeak);
+        return 20 * StrictMath.log10(samplePeak);
     }
 
     /**
@@ -46,6 +46,6 @@ public record LoudnessStats(double integrated, double loudnessRange, double loud
      * @return the peak in dBTP, negative infinity for silence, {@code NaN} when it was not measured
      */
     public double truePeakDb() {
-        return 20 * Math.log10(truePeak);
+        return 20 * StrictMath.log10(truePeak);
     }
 }

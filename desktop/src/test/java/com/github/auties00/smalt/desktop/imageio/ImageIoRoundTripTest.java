@@ -177,6 +177,64 @@ class ImageIoRoundTripTest {
     }
 
     @Nested
+    @DisplayName("JPEG XL writer")
+    class JxlWriter {
+        @Test
+        @DisplayName("ImageIO.write writes lossless and lossy files that read back")
+        void roundTrip(@TempDir Path directory) throws IOException {
+            var image = image(true);
+            var writer = ImageIO.getImageWritersByFormatName("jxl").next();
+            var param = writer.getDefaultWriteParam();
+            param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+            param.setCompressionType(SmaltImageWriteParam.LOSSLESS);
+            var out = new java.io.ByteArrayOutputStream();
+            try (var stream = ImageIO.createImageOutputStream(out)) {
+                writer.setOutput(stream);
+                writer.write(null, new javax.imageio.IIOImage(image, null, null), param);
+            }
+            writer.dispose();
+            var decoded = ImageIO.read(new ByteArrayInputStream(out.toByteArray()));
+            assertArrayEquals(pixels(image), pixels(decoded));
+            var file = directory.resolve("out.jxl");
+            assertTrue(ImageIO.write(image, "jxl", file.toFile()));
+            var expected = Images.encode(BufferedImages.toPicture(image), ImageFormat.JXL,
+                    ImageEncoderOptions.defaults());
+            assertArrayEquals(expected, Files.readAllBytes(file));
+        }
+    }
+
+    @Nested
+    @DisplayName("JPEG XS writer")
+    class JpegXsWriter {
+        @Test
+        @DisplayName("ImageIO.write writes lossless and default JXS files that the JPEG XS reader reads back")
+        void roundTrip(@TempDir Path directory) throws IOException {
+            var image = image(true);
+            var writer = ImageIO.getImageWritersBySuffix("jxs").next();
+            var param = writer.getDefaultWriteParam();
+            param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+            param.setCompressionType(SmaltImageWriteParam.LOSSLESS);
+            var out = new java.io.ByteArrayOutputStream();
+            try (var stream = ImageIO.createImageOutputStream(out)) {
+                writer.setOutput(stream);
+                writer.write(null, new javax.imageio.IIOImage(image, null, null), param);
+            }
+            writer.dispose();
+            var bytes = out.toByteArray();
+            assertEquals(java.util.Optional.of(ImageFormat.JPEG_XS), ImageFormat.detect(bytes, bytes.length));
+            var reader = ImageIO.getImageReadersBySuffix("jxs").next();
+            assertInstanceOf(SmaltImageReader.class, reader);
+            var decoded = ImageIO.read(new ByteArrayInputStream(bytes));
+            assertArrayEquals(pixels(image), pixels(decoded));
+            var file = directory.resolve("out.jxs");
+            assertTrue(ImageIO.write(image, "jxs", file.toFile()));
+            var expected = Images.encode(BufferedImages.toPicture(image), ImageFormat.JPEG_XS,
+                    ImageEncoderOptions.defaults());
+            assertArrayEquals(expected, Files.readAllBytes(file));
+        }
+    }
+
+    @Nested
     @DisplayName("WebP reader")
     class Reader {
         @Test
@@ -314,7 +372,7 @@ class ImageIoRoundTripTest {
             var result = new ArrayList<int[]>();
             try (var animation = Images.openAnimation(MediaSource.of(data))) {
                 for (var frame = animation.read(); frame != null; frame = animation.read()) {
-                    result.add(pixels(frame.picture()));
+                    result.add(pixels((RgbaPicture) frame.picture()));
                 }
             }
             return result;

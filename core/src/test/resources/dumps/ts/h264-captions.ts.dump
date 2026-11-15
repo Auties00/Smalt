@@ -1,0 +1,110 @@
+# demux dump of ts/h264-captions.ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration 3003000
+seekable true
+track 256 VIDEO H264 timebase=1/90000 duration=? config=42:dac8559b
+  video 64x48 orientation=NORMAL rate=30000/1001 sar=1/1
+packets 90
+0 t256 pts=0 dts=0 dur=3003 flags=KEY size=1392 crc=8af4e807
+1 t256 pts=3003 dts=3003 dur=3003 flags=- size=114 crc=bc48ac5d
+2 t256 pts=6006 dts=6006 dur=3003 flags=- size=130 crc=77edbb7c
+3 t256 pts=9009 dts=9009 dur=3003 flags=- size=135 crc=f429f39e
+4 t256 pts=12012 dts=12012 dur=3003 flags=- size=141 crc=91a77611
+5 t256 pts=15015 dts=15015 dur=3003 flags=- size=125 crc=421d0227
+6 t256 pts=18018 dts=18018 dur=3003 flags=- size=150 crc=5b5009d3
+7 t256 pts=21021 dts=21021 dur=3003 flags=- size=136 crc=c3362d35
+8 t256 pts=24024 dts=24024 dur=3003 flags=- size=145 crc=456ff0f1
+9 t256 pts=27027 dts=27027 dur=3003 flags=- size=140 crc=c5799478
+10 t256 pts=30030 dts=30030 dur=3003 flags=- size=140 crc=c7762a5e
+11 t256 pts=33033 dts=33033 dur=3003 flags=- size=137 crc=ff065fbe
+12 t256 pts=36036 dts=36036 dur=3003 flags=- size=148 crc=4e9240cd
+13 t256 pts=39039 dts=39039 dur=3003 flags=- size=130 crc=04d8dee0
+14 t256 pts=42042 dts=42042 dur=3003 flags=- size=144 crc=81dda564
+15 t256 pts=45045 dts=45045 dur=3003 flags=- size=142 crc=94c3bd05
+16 t256 pts=48048 dts=48048 dur=3003 flags=- size=143 crc=f58aafe1
+17 t256 pts=51051 dts=51051 dur=3003 flags=- size=128 crc=ea499924
+18 t256 pts=54054 dts=54054 dur=3003 flags=- size=149 crc=53407416
+19 t256 pts=57057 dts=57057 dur=3003 flags=- size=143 crc=b22026e9
+20 t256 pts=60060 dts=60060 dur=3003 flags=- size=132 crc=f983e49f
+21 t256 pts=63063 dts=63063 dur=3003 flags=- size=143 crc=f7fc520f
+22 t256 pts=66066 dts=66066 dur=3003 flags=- size=126 crc=555f486c
+23 t256 pts=69069 dts=69069 dur=3003 flags=- size=131 crc=947879ac
+24 t256 pts=72072 dts=72072 dur=3003 flags=- size=138 crc=68bad4a1
+25 t256 pts=75075 dts=75075 dur=3003 flags=- size=132 crc=136859d6
+26 t256 pts=78078 dts=78078 dur=3003 flags=- size=134 crc=a0221e79
+27 t256 pts=81081 dts=81081 dur=3003 flags=- size=134 crc=e936ef21
+28 t256 pts=84084 dts=84084 dur=3003 flags=- size=140 crc=d5e00f62
+29 t256 pts=87087 dts=87087 dur=3003 flags=- size=128 crc=61577c74
+30 t256 pts=90090 dts=90090 dur=3003 flags=KEY size=842 crc=80aeb1cc
+31 t256 pts=93093 dts=93093 dur=3003 flags=- size=103 crc=a6d2fd73
+32 t256 pts=96096 dts=96096 dur=3003 flags=- size=116 crc=16627700
+33 t256 pts=99099 dts=99099 dur=3003 flags=- size=139 crc=e0b00709
+34 t256 pts=102102 dts=102102 dur=3003 flags=- size=137 crc=826d4ecf
+35 t256 pts=105105 dts=105105 dur=3003 flags=- size=136 crc=fb9e949e
+36 t256 pts=108108 dts=108108 dur=3003 flags=- size=124 crc=da0ee5fb
+37 t256 pts=111111 dts=111111 dur=3003 flags=- size=138 crc=495ab79f
+38 t256 pts=114114 dts=114114 dur=3003 flags=- size=133 crc=f384a58a
+39 t256 pts=117117 dts=117117 dur=3003 flags=- size=136 crc=2a1d3271
+40 t256 pts=120120 dts=120120 dur=3003 flags=- size=131 crc=1ca4889a
+41 t256 pts=123123 dts=123123 dur=3003 flags=- size=145 crc=aec85b20
+42 t256 pts=126126 dts=126126 dur=3003 flags=- size=136 crc=b3bd3c4c
+43 t256 pts=129129 dts=129129 dur=3003 flags=- size=136 crc=e79df971
+44 t256 pts=132132 dts=132132 dur=3003 flags=- size=155 crc=7aa41175
+45 t256 pts=135135 dts=135135 dur=3003 flags=- size=135 crc=5dd3af57
+46 t256 pts=138138 dts=138138 dur=3003 flags=- size=146 crc=c51b5d2a
+47 t256 pts=141141 dts=141141 dur=3003 flags=- size=137 crc=967d92d1
+48 t256 pts=144144 dts=144144 dur=3003 flags=- size=141 crc=31576155
+49 t256 pts=147147 dts=147147 dur=3003 flags=- size=148 crc=f340ce1f
+50 t256 pts=150150 dts=150150 dur=3003 flags=- size=140 crc=39bef9f7
+51 t256 pts=153153 dts=153153 dur=3003 flags=- size=141 crc=568101c4
+52 t256 pts=156156 dts=156156 dur=3003 flags=- size=150 crc=4f1afa0b
+53 t256 pts=159159 dts=159159 dur=3003 flags=- size=143 crc=09f41dc2
+54 t256 pts=162162 dts=162162 dur=3003 flags=- size=141 crc=336f13f7
+55 t256 pts=165165 dts=165165 dur=3003 flags=- size=138 crc=38a7c0aa
+56 t256 pts=168168 dts=168168 dur=3003 flags=- size=148 crc=8e2386ae
+57 t256 pts=171171 dts=171171 dur=3003 flags=- size=136 crc=86bebea4
+58 t256 pts=174174 dts=174174 dur=3003 flags=- size=149 crc=cf83c27d
+59 t256 pts=177177 dts=177177 dur=3003 flags=- size=136 crc=1d610a7b
+60 t256 pts=180180 dts=180180 dur=3003 flags=KEY size=860 crc=80bfe582
+61 t256 pts=183183 dts=183183 dur=3003 flags=- size=117 crc=1f9a438c
+62 t256 pts=186186 dts=186186 dur=3003 flags=- size=126 crc=6b80de2b
+63 t256 pts=189189 dts=189189 dur=3003 flags=- size=141 crc=d850d48d
+64 t256 pts=192192 dts=192192 dur=3003 flags=- size=135 crc=efbd43ae
+65 t256 pts=195195 dts=195195 dur=3003 flags=- size=138 crc=66c01e93
+66 t256 pts=198198 dts=198198 dur=3003 flags=- size=132 crc=f94bb6f1
+67 t256 pts=201201 dts=201201 dur=3003 flags=- size=127 crc=50d0e936
+68 t256 pts=204204 dts=204204 dur=3003 flags=- size=132 crc=27693885
+69 t256 pts=207207 dts=207207 dur=3003 flags=- size=151 crc=c8b7c33a
+70 t256 pts=210210 dts=210210 dur=3003 flags=- size=122 crc=2a4bbd72
+71 t256 pts=213213 dts=213213 dur=3003 flags=- size=141 crc=9d7640bb
+72 t256 pts=216216 dts=216216 dur=3003 flags=- size=135 crc=646334a2
+73 t256 pts=219219 dts=219219 dur=3003 flags=- size=135 crc=5b71ae0b
+74 t256 pts=222222 dts=222222 dur=3003 flags=- size=133 crc=a23d3999
+75 t256 pts=225225 dts=225225 dur=3003 flags=- size=134 crc=d472685d
+76 t256 pts=228228 dts=228228 dur=3003 flags=- size=133 crc=b1e6d8c2
+77 t256 pts=231231 dts=231231 dur=3003 flags=- size=130 crc=4a49c924
+78 t256 pts=234234 dts=234234 dur=3003 flags=- size=128 crc=068cdc8d
+79 t256 pts=237237 dts=237237 dur=3003 flags=- size=126 crc=b1b6ea5b
+80 t256 pts=240240 dts=240240 dur=3003 flags=- size=129 crc=eeaf39d0
+81 t256 pts=243243 dts=243243 dur=3003 flags=- size=137 crc=fff94a31
+82 t256 pts=246246 dts=246246 dur=3003 flags=- size=140 crc=a474e081
+83 t256 pts=249249 dts=249249 dur=3003 flags=- size=111 crc=51034407
+84 t256 pts=252252 dts=252252 dur=3003 flags=- size=116 crc=4c1ca2ea
+85 t256 pts=255255 dts=255255 dur=3003 flags=- size=133 crc=958f0984
+86 t256 pts=258258 dts=258258 dur=3003 flags=- size=121 crc=0e3f40e2
+87 t256 pts=261261 dts=261261 dur=3003 flags=- size=122 crc=6fb6d23a
+88 t256 pts=264264 dts=264264 dur=3003 flags=- size=107 crc=6079fb52
+89 t256 pts=267267 dts=267267 dur=3003 flags=- size=114 crc=a248b86f
+seek 0: t256@0
+seek 1001000: t256@30
+seek 2002000: t256@60
+seek 3003000: end
+seek -1000000: t256@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 256 VIDEO H264 timebase=1/90000 duration=? config=42:dac8559b
+    video 64x48 orientation=NORMAL rate=30000/1001 sar=1/1
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

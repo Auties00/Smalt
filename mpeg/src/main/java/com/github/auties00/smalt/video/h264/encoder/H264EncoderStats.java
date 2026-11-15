@@ -15,7 +15,9 @@ package com.github.auties00.smalt.video.h264.encoder;
  * @param targetBitrate the bitrate rate control currently aims at, in bits per second, after the
  * last {@link H264Encoder#setTargetBitrate(long)} that reached a frame boundary, or 0 for constant
  * quality
+ * @param lastTemporalLayer the temporal layer of the last packet, from 0 to
+ * {@link H264EncoderOptions#temporalLayers()} minus 1, or 0 before the first packet
  */
 public record H264EncoderStats(long framesEncoded, long keyframesEncoded, long keyframeRequests, long bytesEncoded,
-                               int lastQuantizer, long targetBitrate) {
+                               int lastQuantizer, long targetBitrate, int lastTemporalLayer) {
 }

@@ -79,6 +79,10 @@ public final class TiffTags {
     public static final int SUB_IFDS = 330;
     /** InkSet. */
     public static final int INK_SET = 332;
+    /** InkNames. */
+    public static final int INK_NAMES = 333;
+    /** NumberOfInks. */
+    public static final int NUMBER_OF_INKS = 334;
     /** ExtraSamples. */
     public static final int EXTRA_SAMPLES = 338;
     /** SampleFormat. */
@@ -107,12 +111,16 @@ public final class TiffTags {
     public static final int Y_CB_CR_COEFFICIENTS = 529;
     /** YCbCrSubSampling. */
     public static final int Y_CB_CR_SUBSAMPLING = 530;
+    /** YCbCrPositioning. */
+    public static final int Y_CB_CR_POSITIONING = 531;
     /** ReferenceBlackWhite. */
     public static final int REFERENCE_BLACK_WHITE = 532;
     /** XMP packet. */
     public static final int XMP = 700;
     /** Copyright. */
     public static final int COPYRIGHT = 33432;
+    /** IPTC-NAA. */
+    public static final int IPTC = 33723;
     /** EXIF IFD pointer. */
     public static final int EXIF_IFD = 34665;
     /** ICC profile. */
@@ -121,6 +129,8 @@ public final class TiffTags {
     public static final int GPS_IFD = 34853;
     /** Interoperability IFD pointer, inside the EXIF IFD. */
     public static final int INTEROPERABILITY_IFD = 40965;
+    /** LercParameters: the LERC version and the compression around each blob (GDAL and libtiff). */
+    public static final int LERC_PARAMETERS = 50674;
 
     /**
      * Prevents instantiation.

@@ -19,6 +19,9 @@ final class DjpegEmulator {
     static byte[] decode(byte[] jpeg, int scaleShift) {
         var reader = new JpegReader(jpeg, 0, jpeg.length, MediaLimits.DEFAULT);
         var coefficients = reader.decodeCoefficients();
+        if (coefficients.frame().precision() == 12) {
+            return decode12(reader, coefficients, scaleShift);
+        }
         var colorSpace = reader.colorSpace();
         var frame = coefficients.frame();
         var components = frame.components;
@@ -82,6 +85,66 @@ final class DjpegEmulator {
             rgb[3 * i + 2] = (byte) b;
         }
         out.writeBytes(rgb);
+        return out.toByteArray();
+    }
+
+    // djpeg writes a 12-bit image as a PNM of maxval 4095 with two big-endian bytes per sample
+    private static byte[] decode12(JpegReader reader, JpegCoefficients coefficients, int scaleShift) {
+        var colorSpace = reader.colorSpace();
+        var frame = coefficients.frame();
+        var components = frame.components;
+        var minSize = 8 >> scaleShift;
+        var width = JpegFrame.ceilDiv(frame.width, 1 << scaleShift);
+        var height = JpegFrame.ceilDiv(frame.height, 1 << scaleShift);
+        var full = new short[components.length][];
+        for (var c = 0; c < components.length; c++) {
+            var component = components[c];
+            var size = minSize;
+            while (size < 8 && (frame.hMax * minSize) % (component.h * size * 2) == 0
+                    && (frame.vMax * minSize) % (component.v * size * 2) == 0) {
+                size *= 2;
+            }
+            var shift = Integer.numberOfTrailingZeros(8 / size);
+            var stride = component.paddedBlocksWide * size;
+            var plane = new short[stride * component.paddedBlocksHigh * size];
+            var block = new int[64];
+            var quant = coefficients.quantization(c);
+            for (var by = 0; by < component.paddedBlocksHigh; by++) {
+                for (var bx = 0; bx < component.paddedBlocksWide; bx++) {
+                    Idct12.transformBlock(coefficients.coefficients(c), (by * component.paddedBlocksWide + bx) * 64,
+                            quant, block, plane, by * size * stride + bx * size, stride, shift);
+                }
+            }
+            var planeWidth = JpegFrame.ceilDiv((long) frame.width * component.h * size, frame.hMax * 8);
+            var planeHeight = JpegFrame.ceilDiv((long) frame.height * component.v * size, frame.vMax * 8);
+            var hIn = component.h * size / minSize;
+            var vIn = component.v * size / minSize;
+            full[c] = Upsampler.upsample(plane, stride, planeWidth, planeHeight, hIn, vIn, frame.hMax, frame.vMax,
+                    width, height, minSize > 1);
+        }
+        var out = new ByteArrayOutputStream();
+        var gray = colorSpace == JpegColorSpace.GRAY;
+        out.writeBytes(((gray ? "P5" : "P6") + "\n" + width + " " + height + "\n4095\n")
+                .getBytes(StandardCharsets.US_ASCII));
+        var channels = gray ? 1 : 3;
+        var samples = new byte[width * height * channels * 2];
+        for (var i = 0; i < width * height; i++) {
+            int[] values;
+            switch (colorSpace) {
+                case GRAY -> values = new int[]{full[0][i]};
+                case YCBCR -> {
+                    var packed = JpegOutput.yccToRgb12(full[0][i], full[1][i], full[2][i]);
+                    values = new int[]{(int) (packed >>> 24), (int) ((packed >>> 12) & 0xFFF), (int) (packed & 0xFFF)};
+                }
+                case RGB -> values = new int[]{full[0][i], full[1][i], full[2][i]};
+                default -> throw new IllegalArgumentException(colorSpace.toString());
+            }
+            for (var c = 0; c < channels; c++) {
+                samples[2 * (i * channels + c)] = (byte) (values[c] >>> 8);
+                samples[2 * (i * channels + c) + 1] = (byte) values[c];
+            }
+        }
+        out.writeBytes(samples);
         return out.toByteArray();
     }
 }

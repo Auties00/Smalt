@@ -19,8 +19,8 @@ import java.util.Objects;
  * new picture for every call: the result, and the RGBA picture a conversion through RGBA passes
  * through, are allocated for the first picture of a size and kind and overwritten by the
  * conversions of later pictures of that size and kind, so a stream of 8-bit pictures of one size
- * converts without allocating pictures after the first. A 16-bit picture is first reduced to 8
- * bits, which allocates.
+ * converts without allocating pictures after the first. A 16-bit picture is converted at its full
+ * precision into a new picture, which allocates.
  *
  * <p>A result is either the argument itself, when it is already a {@link YuvPicture} with this
  * converter's layout and color description, or a picture this converter owns. An owned picture is
@@ -121,7 +121,6 @@ public final class YuvConverter {
      * @param picture the picture to convert
      * @return {@code picture} itself if it already has the layout and color description, otherwise
      * a picture this converter owns, valid until the next call
-     * @throws MediaException.Unsupported if a matrix is not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public YuvPicture convert(Picture picture) {

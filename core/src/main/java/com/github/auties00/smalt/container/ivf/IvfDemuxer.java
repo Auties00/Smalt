@@ -29,9 +29,14 @@ import java.util.Optional;
  * 64-bit timestamp) and the frame data. FourCC {@code VP80}, {@code VP90} and {@code AV01} map to
  * {@link Codec#VP8}, {@link Codec#VP9} and {@link Codec#AV1}; any other FourCC yields
  * {@link Codec#UNKNOWN_VIDEO}. Packets carry the stored timestamps, in the header's time base, and
- * {@link Packet#UNKNOWN_DURATION} (IVF does not record durations). A packet is flagged as a keyframe
- * when its data starts a VP8 or VP9 key frame or, for AV1, carries a sequence header OBU. A truncated
- * last frame ends the stream.
+ * {@link Packet#UNKNOWN_DURATION} (IVF does not record durations). The track's frame rate is the
+ * header's time base inverted, as the reference tools count frames in it; a time base finer than a
+ * millisecond is a clock rate instead, and the frame rate is then that rate divided by the step between
+ * the first two frame timestamps. A packet is flagged as a keyframe
+ * when its data starts a VP8 or VP9 key frame or, for AV1, carries a sequence header OBU, its temporal unit
+ * read in the length-delimited format of the AV1 specification's Annex B, which aomenc writes into IVF files on
+ * request, when its size fields describe exactly its bytes, and in the low-overhead format otherwise. A
+ * truncated last frame ends the stream.
  *
  * <p>A source that reads its input once, front to back (a stream), is told after every frame which
  * bytes are no longer needed.
@@ -160,7 +165,11 @@ public final class IvfDemuxer implements Demuxer {
                 codec = Codec.UNKNOWN_VIDEO;
             }
             var timeBase = rate > 0 && scale > 0 ? new Rational(scale, rate) : new Rational(1, 1000);
-            Optional<Rational> frameRate = rate > 0 && scale > 0 ? Optional.of(new Rational(rate, scale))
+            var firstFrame = reader.position();
+            var step = rate > 1000L * scale ? firstStep() : 1;
+            reader.seek(firstFrame);
+            Optional<Rational> frameRate = rate > 0 && scale > 0
+                    ? Optional.of(new Rational(rate, (long) scale * step))
                     : Optional.empty();
             this.track = VideoTrack.builder().codec(codec).timeBase(timeBase).width(width).height(height)
                     .frameRate(frameRate.orElse(null))
@@ -169,13 +178,36 @@ public final class IvfDemuxer implements Demuxer {
             if (frames < 0) {
                 throw new MediaException.Malformed("invalid IVF frame count");
             }
-            this.firstFrame = reader.position();
+            this.firstFrame = firstFrame;
             this.declaredFrames = frames;
         } catch (MediaException exception) {
             throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("invalid IVF file", exception);
         }
+    }
+
+    /**
+     * Reads the timestamps of the first two frame headers from the reader's position and returns
+     * their difference.
+     *
+     * @return the step, in time base units, or 1 when the file has fewer than two frames or their
+     * timestamps do not increase
+     */
+    private long firstStep() {
+        if (reader.remaining(FRAME_HEADER_SIZE) < FRAME_HEADER_SIZE) {
+            return 1;
+        }
+        var size = reader.u32le();
+        var first = reader.u64le();
+        if (reader.remaining(size + FRAME_HEADER_SIZE) < size + FRAME_HEADER_SIZE) {
+            return 1;
+        }
+        reader.skip(size);
+        reader.u32le();
+        var second = reader.u64le();
+        var step = second - first;
+        return step > 0 && step <= Integer.MAX_VALUE ? step : 1;
     }
 
     /**
@@ -393,12 +425,25 @@ public final class IvfDemuxer implements Demuxer {
     }
 
     /**
-     * Returns whether an AV1 temporal unit carries a sequence header OBU.
+     * Returns whether an AV1 temporal unit carries a sequence header OBU, in the format of Annex B
+     * when it is a well-formed length-delimited unit (every size field consistent with the unit's
+     * length), in the low-overhead format otherwise.
      *
      * @param data the temporal unit
      * @return {@code true} when one of its OBUs is a sequence header
      */
     private static boolean av1HasSequenceHeader(byte[] data) {
+        var annexB = annexBSequenceHeader(data);
+        return annexB < 0 ? lowOverheadSequenceHeader(data) : annexB == 1;
+    }
+
+    /**
+     * Returns whether a temporal unit of low-overhead OBUs carries a sequence header OBU.
+     *
+     * @param data the temporal unit
+     * @return {@code true} when one of its OBUs is a sequence header
+     */
+    private static boolean lowOverheadSequenceHeader(byte[] data) {
         var pos = 0;
         while (pos < data.length) {
             var header = data[pos] & 0xFF;
@@ -426,5 +471,68 @@ public final class IvfDemuxer implements Demuxer {
             pos += (int) size;
         }
         return false;
+    }
+
+    /**
+     * Returns whether a length-delimited temporal unit ({@code temporal_unit_size}, then frame units
+     * of OBUs, each preceded by its size) carries a sequence header OBU; data whose size fields do not
+     * add up to its length is not such a unit.
+     *
+     * @param data the temporal unit
+     * @return 1 when the data is a length-delimited unit with a sequence header OBU, 0 when it is one
+     * without, or -1 when it is not such a unit
+     */
+    private static int annexBSequenceHeader(byte[] data) {
+        var field = leb128(data, 0, data.length);
+        if (field < 0 || field >>> 4 != data.length - (field & 15)) {
+            return -1;
+        }
+        var found = false;
+        var pos = (int) (field & 15);
+        while (pos < data.length) {
+            field = leb128(data, pos, data.length);
+            if (field < 0) {
+                return -1;
+            }
+            pos += (int) (field & 15);
+            if (field >>> 4 > data.length - pos) {
+                return -1;
+            }
+            var frameEnd = pos + (int) (field >>> 4);
+            while (pos < frameEnd) {
+                field = leb128(data, pos, frameEnd);
+                if (field < 0) {
+                    return -1;
+                }
+                pos += (int) (field & 15);
+                if (field >>> 4 == 0 || field >>> 4 > frameEnd - pos) {
+                    return -1;
+                }
+                found |= ((data[pos] >> 3) & 15) == 1;
+                pos += (int) (field >>> 4);
+            }
+        }
+        return found ? 1 : 0;
+    }
+
+    /**
+     * Reads a {@code leb128()} value of at most 8 bytes.
+     *
+     * @param data the buffer
+     * @param pos the first byte of the value
+     * @param end the end of the readable bytes
+     * @return the value shifted left by 4 bits with the number of bytes it took in the low 4 bits, or
+     * {@code -1} when it runs past {@code end} or past 8 bytes
+     */
+    private static long leb128(byte[] data, int pos, int end) {
+        long value = 0;
+        for (var i = 0; i < 8 && pos + i < end; i++) {
+            var b = data[pos + i] & 0xFF;
+            value |= (long) (b & 0x7F) << (7 * i);
+            if ((b & 0x80) == 0) {
+                return value << 4 | (i + 1);
+            }
+        }
+        return -1;
     }
 }

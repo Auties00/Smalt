@@ -1,0 +1,12 @@
+# audio decode dump of mp4/gsm.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 600000
+seekable true
+track 1 GSM rate=8000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=c0f2e63e
+1 frames=704 crc16=0b77183b
+seek 0: @sample 0
+seek 200000: @sample 1600
+seek 400000: @sample 3200
+seek 600000: end
+seek -1000000: @sample 0

@@ -1,0 +1,16 @@
+# demux dump of avi/ms-adpcm.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 763500
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 1 AUDIO ADPCM_MS timebase=1/8000 duration=6108 config=32:2cc0bb8e
+  audio rate=8000 bits=4 skip=0 layout=[FRONT_CENTER]
+packets 3
+0 t1 pts=0 dts=0 dur=2036 flags=KEY size=1024 crc=2988cbde
+1 t1 pts=2036 dts=2036 dur=2036 flags=KEY size=1024 crc=47c9ac05
+2 t1 pts=4072 dts=4072 dur=2036 flags=KEY size=1024 crc=63cfe410
+seek 0: t1@0
+seek 254500: t1@1
+seek 509000: t1@2
+seek 763500: end
+seek -1000000: t1@0

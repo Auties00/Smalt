@@ -159,6 +159,12 @@ final class Pictures {
             case YUV420 -> alpha ? "yuva420p" : "yuv420p";
             case YUV422 -> alpha ? "yuva422p" : "yuv422p";
             case YUV444 -> alpha ? "yuva444p" : "yuv444p";
+            case YUV440 -> {
+                if (alpha) {
+                    throw new IllegalArgumentException("ffmpeg has no 4:4:0 layout with alpha");
+                }
+                yield "yuv440p";
+            }
         };
     }
 

@@ -10,9 +10,11 @@ import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
 import com.github.auties00.smalt.internal.resize.SizePlan;
+import com.github.auties00.smalt.track.Rational;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -116,5 +118,100 @@ class PictureOpsTest {
         assertThrows(IllegalArgumentException.class, () -> PictureOps.plan(40, 30, Orientation.ROTATE_90, true,
                 new Region(0, 0, 40, 30), (width, height) -> SizePlan.of(width, height, 0, 0, ScaleMode.FIT, false, 0, 0, false),
                 ResizeFilter.BILINEAR, -1, null, null));
+    }
+
+    static PictureOps.SizePlanner box(int width, int height, ScaleMode mode) {
+        return (displayWidth, displayHeight) -> SizePlan.of(displayWidth, displayHeight, width, height, mode, false, 0, 0,
+                false);
+    }
+
+    /**
+     * Returns the displayed aspect ratio of a coded picture under a sample aspect ratio and an
+     * orientation.
+     */
+    static double displayAspect(int codedWidth, int codedHeight, Rational sampleAspect, Orientation orientation) {
+        var aspect = sampleAspect == null ? 1.0 : sampleAspect.toDouble();
+        var width = codedWidth * aspect;
+        double height = codedHeight;
+        return orientation.swapsDimensions() ? height / width : width / height;
+    }
+
+    @ParameterizedTest(name = "{0} {1} kept {2}")
+    @CsvSource({"NORMAL, FIT, 0, 0, 176, 144, 16/11", "NORMAL, EXACT, 88, 144, 88, 144, 32/11",
+            "NORMAL, FIT, 88, 72, 88, 72, 16/11", "ROTATE_90, EXACT, 72, 176, 176, 72, 8/11",
+            "ROTATE_90, FIT, 0, 0, 176, 144, 16/11", "NORMAL, FILL, 100, 100, 100, 100, 800/549"})
+    @DisplayName("keeping non-square samples declares the ratio that keeps the displayed shape")
+    void preserveAspect(Orientation orientation, ScaleMode mode, int boxWidth, int boxHeight, int width, int height,
+                        String expected) {
+        var sar = new Rational(16, 11);
+        var ops = PictureOps.plan(176, 144, orientation, false, null, box(boxWidth, boxHeight, mode),
+                ResizeFilter.BILINEAR, -1, null, null, sar, false);
+        assertEquals(width, ops.outputWidth());
+        assertEquals(height, ops.outputHeight());
+        var parts = expected.split("/");
+        var aspect = new Rational(Long.parseLong(parts[0]), Long.parseLong(parts[1]));
+        assertEquals(aspect, ops.outputSampleAspect());
+        if (mode != ScaleMode.FILL) {
+            assertEquals(displayAspect(176, 144, sar, orientation), displayAspect(width, height, aspect, orientation), 1e-9);
+        }
+    }
+
+    @ParameterizedTest(name = "{0} {1} applied {2}x{3}")
+    @CsvSource({"NORMAL, FIT, 0, 0, 256, 144", "NORMAL, FIT, 128, 128, 128, 72", "ROTATE_90, FIT, 0, 0, 176, 99",
+            "ROTATE_90, FIT, 128, 128, 128, 72"})
+    @DisplayName("applying non-square samples resamples to square pixels before the box and declares none")
+    void applyAspect(Orientation orientation, ScaleMode mode, int boxWidth, int boxHeight, int width, int height) {
+        var ops = PictureOps.plan(176, 144, orientation, false, null, box(boxWidth, boxHeight, mode),
+                ResizeFilter.BILINEAR, -1, null, null, new Rational(16, 11), true);
+        assertEquals(width, ops.outputWidth());
+        assertEquals(height, ops.outputHeight());
+        assertNull(ops.outputSampleAspect());
+        var result = ops.apply(pattern(176, 144));
+        assertEquals(width, result.width());
+        assertEquals(height, result.height());
+    }
+
+    @Test
+    @DisplayName("applying stretches the pixels as a plain resize to the display size does")
+    void appliedPixels() {
+        var stored = pattern(40, 30);
+        var ops = PictureOps.plan(40, 30, Orientation.NORMAL, true, null, box(0, 0, ScaleMode.FIT), ResizeFilter.AREA, -1,
+                null, null, new Rational(3, 2), true);
+        assertSamePixels(ImageOps.resize(stored, 60, 30, ResizeFilter.AREA), ops.apply(stored));
+    }
+
+    @Test
+    @DisplayName("declares nothing for a stream without a ratio, and square samples change nothing")
+    void noAspect() {
+        var plain = PictureOps.plan(64, 48, Orientation.NORMAL, true, null, box(32, 32, ScaleMode.EXACT),
+                ResizeFilter.BILINEAR, -1, null, null, null, true);
+        assertNull(plain.outputSampleAspect());
+        assertEquals(32, plain.outputWidth());
+        var square = PictureOps.plan(64, 48, Orientation.NORMAL, true, null, box(0, 0, ScaleMode.FIT),
+                ResizeFilter.BILINEAR, -1, null, null, new Rational(1, 1), true);
+        assertEquals(64, square.outputWidth());
+        assertNull(square.outputSampleAspect());
+        var kept = PictureOps.plan(64, 48, Orientation.NORMAL, true, null, box(0, 0, ScaleMode.FIT),
+                ResizeFilter.BILINEAR, -1, null, null, new Rational(1, 1), false);
+        assertEquals(new Rational(1, 1), kept.outputSampleAspect());
+    }
+
+    @ParameterizedTest(name = "{0} {1}x{2}")
+    @CsvSource({"EXACT, 32, 32", "FIT, 47, 0", "FILL, 40, 20"})
+    @DisplayName("keeping square samples declares them square whatever the scaling")
+    void squareKept(ScaleMode mode, int boxWidth, int boxHeight) {
+        var ops = PictureOps.plan(64, 48, Orientation.ROTATE_90, false, null, (width, height) -> SizePlan.of(width,
+                height, boxWidth, boxHeight, mode, false, 0, 0, true), ResizeFilter.BILINEAR, -1, null, null,
+                new Rational(1, 1), false);
+        assertEquals(new Rational(1, 1), ops.outputSampleAspect());
+    }
+
+    @Test
+    @DisplayName("crops in stored samples before stretching")
+    void cropThenStretch() {
+        var ops = PictureOps.plan(176, 144, Orientation.NORMAL, true, new Region(0, 0, 88, 144), box(0, 0, ScaleMode.FIT),
+                ResizeFilter.BILINEAR, -1, null, null, new Rational(16, 11), true);
+        assertEquals(128, ops.outputWidth());
+        assertEquals(144, ops.outputHeight());
     }
 }

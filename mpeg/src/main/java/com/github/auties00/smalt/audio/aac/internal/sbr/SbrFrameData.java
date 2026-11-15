@@ -1,7 +1,11 @@
+/* Ports libxaac (decoder/ixheaacd_env_extr.c: the LD_TRAN envelope tables of low delay SBR).
+   Copyright (C) 2018 The Android Open Source Project, Ittiam Systems; Apache License 2.0. Modified for Smalt. */
 package com.github.auties00.smalt.audio.aac.internal.sbr;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
+
+import java.util.Arrays;
 
 /**
  * Holds the spectral band replication data of one channel for one frame: the time grid, the
@@ -10,7 +14,8 @@ import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
  *
  * <p>The reading methods store the scalefactors as coded (start values and deltas); the channel
  * resolves the deltas against its previous values once the whole extension payload parsed.
- * Every method throws {@link MediaException.Malformed} for a value the syntax does not allow.
+ * Every method throws {@link MediaException.Malformed} for a value the syntax does not allow. The
+ * low delay spectral band replication of AAC-ELD codes its time grid with {@link #readLowDelayGrid}.
  */
 final class SbrFrameData {
     /**
@@ -39,6 +44,26 @@ final class SbrFrameData {
     static final int MAX_ENVELOPES = 5;
 
     /**
+     * The envelope count and borders of each transient position of a low delay {@code LD_TRAN} grid of
+     * 16 time slots: {number of envelopes, border 1, border 2, transient envelope}.
+     */
+    private static final int[][] LOW_DELAY_TRANSIENTS_16 = {
+            {2, 4, -1, 0}, {2, 5, -1, 0}, {3, 2, 6, 1}, {3, 3, 7, 1}, {3, 4, 8, 1}, {3, 5, 9, 1}, {3, 6, 10, 1},
+            {3, 7, 11, 1}, {3, 8, 12, 1}, {3, 9, 13, 1}, {3, 10, 14, 1}, {2, 11, -1, 1}, {2, 12, -1, 1},
+            {2, 13, -1, 1}, {2, 14, -1, 1}, {2, 15, -1, 1}
+    };
+
+    /**
+     * The envelope count and borders of each transient position of a low delay {@code LD_TRAN} grid of
+     * 15 time slots, laid out like {@link #LOW_DELAY_TRANSIENTS_16}.
+     */
+    private static final int[][] LOW_DELAY_TRANSIENTS_15 = {
+            {2, 4, -1, 0}, {2, 5, -1, 0}, {3, 2, 6, 1}, {3, 3, 7, 1}, {3, 4, 8, 1}, {3, 5, 9, 1}, {3, 6, 10, 1},
+            {3, 7, 11, 1}, {3, 8, 12, 1}, {3, 9, 13, 1}, {2, 10, -1, 1}, {2, 11, -1, 1}, {2, 12, -1, 1},
+            {2, 13, -1, 1}, {2, 14, -1, 1}
+    };
+
+    /**
      * The frame class.
      */
     int frameClass;
@@ -49,7 +74,7 @@ final class SbrFrameData {
     int envelopes;
 
     /**
-     * The envelope borders {@code t_E}, in time slots of two QMF slots each.
+     * The envelope borders {@code t_E}, in time slots of two QMF slots each (one in low delay SBR).
      */
     final int[] borders = new int[MAX_ENVELOPES + 1];
 
@@ -89,6 +114,12 @@ final class SbrFrameData {
      * The amplitude resolution of the envelope data: 0 for 1.5 dB, 1 for 3 dB.
      */
     int ampResolution;
+
+    /**
+     * The amplitude resolution a low delay grid of one envelope codes ({@code bs_amp_res}), or {@code -1}
+     * when the frame's grid does not code one.
+     */
+    int gridAmpResolution = -1;
 
     /**
      * Whether each envelope is coded as a delta in time rather than in frequency.
@@ -144,6 +175,7 @@ final class SbrFrameData {
      * @throws MediaException.Malformed if the grid is invalid
      */
     void readGrid(AacBitReader reader, int timeSlots) {
+        gridAmpResolution = -1;
         frameClass = reader.read(2);
         var pointer = 0;
         switch (frameClass) {
@@ -253,6 +285,99 @@ final class SbrFrameData {
     }
 
     /**
+     * Reads the time grid of a low delay frame, {@code sbr_ld_grid}: a fixed grid of one, two or four
+     * envelopes (the single envelope coding its amplitude resolution), or a transient grid
+     * ({@code LD_TRAN}) whose envelopes the transient position selects.
+     *
+     * @param reader    the bit source
+     * @param timeSlots the number of time slots of the frame, 16 or 15
+     * @throws MediaException.Malformed if the grid is invalid
+     */
+    void readLowDelayGrid(AacBitReader reader, int timeSlots) {
+        gridAmpResolution = -1;
+        if (!reader.readFlag()) {
+            frameClass = FIXFIX;
+            envelopes = 1 << reader.read(2);
+            if (envelopes > 4) {
+                throw new MediaException.Malformed("SBR FIXFIX frame with " + envelopes + " envelopes");
+            }
+            if (envelopes == 1) {
+                gridAmpResolution = reader.read(1);
+            }
+            var res = reader.read(1);
+            var step = (timeSlots + (envelopes >> 1)) / envelopes;
+            for (var l = 0; l < envelopes; l++) {
+                resolution[l] = res;
+                borders[l] = l * step;
+            }
+            borders[envelopes] = timeSlots;
+            transientEnvelope = -1;
+        } else {
+            frameClass = FIXFIX;
+            var position = reader.read(4);
+            var table = timeSlots == 16 ? LOW_DELAY_TRANSIENTS_16 : LOW_DELAY_TRANSIENTS_15;
+            if (position >= table.length) {
+                throw new MediaException.Malformed("SBR low delay transient position " + position + " beyond "
+                        + timeSlots + " slots");
+            }
+            var entry = table[position];
+            envelopes = entry[0];
+            for (var l = 0; l < envelopes; l++) {
+                resolution[l] = reader.read(1);
+            }
+            borders[0] = 0;
+            for (var l = 1; l < envelopes; l++) {
+                borders[l] = entry[l];
+            }
+            borders[envelopes] = timeSlots;
+            transientEnvelope = entry[3];
+        }
+        noiseBorders[0] = 0;
+        if (envelopes > 1) {
+            noiseEnvelopes = 2;
+            noiseBorders[1] = borders[transientEnvelope >= 0 ? 1 : envelopes >> 1];
+            noiseBorders[2] = timeSlots;
+        } else {
+            noiseEnvelopes = 1;
+            noiseBorders[1] = timeSlots;
+        }
+    }
+
+    /**
+     * Fills the data of a frame that conceals a lost one: a single envelope over the whole frame, coded as time
+     * deltas from the last envelope of {@code channel}, keeping the amplitude resolution, the noise floors and the
+     * inverse filtering of the last frame and adding no sinusoid.
+     *
+     * @param channel the channel whose last envelope the deltas refer to
+     * @param tables the frequency tables
+     * @param timeSlots the number of time slots of the frame
+     * @param balanceChannel whether this channel carries the balance of a coupled pair, whose deltas are zero
+     * @param attenuate whether the envelope is 6 dB below the last one rather than equal to it
+     */
+    void conceal(SbrChannel channel, SbrFrequencies tables, int timeSlots, boolean balanceChannel, boolean attenuate) {
+        frameClass = FIXFIX;
+        envelopes = 1;
+        borders[0] = 0;
+        borders[1] = timeSlots;
+        resolution[0] = channel.previousResolution();
+        transientEnvelope = -1;
+        noiseEnvelopes = 1;
+        noiseBorders[0] = 0;
+        noiseBorders[1] = timeSlots;
+        envelopeTime[0] = true;
+        noiseTime[0] = true;
+        // 6 dB is four steps of 1.5 dB or two of 3 dB
+        var step = attenuate && !balanceChannel ? (ampResolution == 0 ? 4 : 2) : 0;
+        var bands = tables.bands(resolution[0]);
+        for (var k = 0; k < bands; k++) {
+            envelope[0][k] = -Math.min(step, channel.previousEnvelope(k));
+        }
+        Arrays.fill(noise[0], 0);
+        harmonics = false;
+        Arrays.fill(harmonic, false);
+    }
+
+    /**
      * Copies the time grid of another channel, for a coupled pair.
      *
      * @param other the channel whose grid is copied
@@ -260,6 +385,7 @@ final class SbrFrameData {
     void copyGrid(SbrFrameData other) {
         frameClass = other.frameClass;
         envelopes = other.envelopes;
+        gridAmpResolution = other.gridAmpResolution;
         System.arraycopy(other.borders, 0, borders, 0, borders.length);
         System.arraycopy(other.resolution, 0, resolution, 0, resolution.length);
         transientEnvelope = other.transientEnvelope;
@@ -322,7 +448,8 @@ final class SbrFrameData {
      */
     void readEnvelope(AacBitReader reader, SbrFrequencies tables, int ampResolution, boolean balance) {
         this.balance = balance;
-        this.ampResolution = frameClass == FIXFIX && envelopes == 1 ? 0 : ampResolution;
+        this.ampResolution = gridAmpResolution >= 0 ? gridAmpResolution
+                : frameClass == FIXFIX && envelopes == 1 ? 0 : ampResolution;
         var shift = balance ? 1 : 0;
         byte[] time;
         byte[] frequency;

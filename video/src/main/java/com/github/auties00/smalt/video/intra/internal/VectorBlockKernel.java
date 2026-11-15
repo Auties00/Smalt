@@ -95,6 +95,11 @@ public final class VectorBlockKernel implements BlockKernel {
     private static final VectorSpecies<Short> S = ShortVector.SPECIES_128;
 
     /**
+     * The concrete class of the vectors of {@link #S}.
+     */
+    private static final Class<ShortVector> SHORT_VECTOR = vectorClass(S);
+
+    /**
      * The index map that gathers one column of eight rows stored one after the other.
      */
     private static final int[] ROW_GATHER = {0, 8, 16, 24, 32, 40, 48, 56};
@@ -186,7 +191,7 @@ public final class VectorBlockKernel implements BlockKernel {
         for (var row = 0; row < 8; row++) {
             for (var lane = 0; lane < LANES; lane++) {
                 if (lane < lanes) {
-                    var shorts = ShortVector.fromArray(S, sources[lane], offsets[lane] + row * strides[lane]);
+                    var shorts = SHORT_VECTOR.cast(ShortVector.fromArray(S, sources[lane], offsets[lane] + row * strides[lane]));
                     var ints = INT_VECTOR.cast(shorts.convertShape(VectorOperators.ZERO_EXTEND_S2I, I, 0));
                     var floats = FLOAT_VECTOR.cast(ints.convert(VectorOperators.I2F, 0));
                     FLOAT_VECTOR.cast(floats.lanewise(VectorOperators.SUB, subtractVector)

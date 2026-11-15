@@ -135,6 +135,21 @@ public final class IfdBuilder {
     }
 
     /**
+     * Adds a RATIONAL entry with several values.
+     *
+     * @param tag the tag number
+     * @param values the numerator and denominator of each value, alternating, each from 0 to
+     * {@code 2^32 - 1}
+     */
+    public void rationals(int tag, long... values) {
+        var bytes = new byte[values.length * 4];
+        for (var i = 0; i < values.length; i++) {
+            put(bytes, i * 4, values[i], 4);
+        }
+        raw(tag, TiffTypes.RATIONAL, values.length / 2, bytes);
+    }
+
+    /**
      * Adds an ASCII entry.
      *
      * @param tag the tag number

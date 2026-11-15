@@ -28,11 +28,13 @@ public final class HeifBuilder {
         int id;
         String type;
         String contentType;
+        String contentEncoding;
         byte[] data;
         int method;
         List<Property> properties = new ArrayList<>();
         List<Extent> extents;
         boolean hidden;
+        int dataReference;
     }
 
     private String majorBrand = "avif";
@@ -69,6 +71,13 @@ public final class HeifBuilder {
         return id;
     }
 
+    /** Adds a {@code mime} item whose {@code infe} entry names a content encoding. */
+    public int mimeItem(String contentType, String contentEncoding, byte[] data) {
+        var id = mimeItem(contentType, data);
+        items.get(id - 1).contentEncoding = contentEncoding;
+        return id;
+    }
+
     private int add(String type, byte[] data, int method, Property... properties) {
         var item = new Item();
         item.id = items.size() + 1;
@@ -85,6 +94,15 @@ public final class HeifBuilder {
         var item = items.get(id - 1);
         item.method = method;
         item.extents = List.of(extents);
+        return this;
+    }
+
+    /**
+     * Sets the data reference index of an item ({@code 0}, the default, for this file), an index into the
+     * {@code dref} box of a {@code dinf} added with {@link #metaBox}; the item's extents then count in that file.
+     */
+    public HeifBuilder dataReference(int id, int index) {
+        items.get(id - 1).dataReference = index;
         return this;
     }
 
@@ -193,6 +211,10 @@ public final class HeifBuilder {
             if (item.contentType != null) {
                 infe.writeBytes(item.contentType.getBytes(StandardCharsets.UTF_8));
                 infe.write(0);
+                if (item.contentEncoding != null) {
+                    infe.writeBytes(item.contentEncoding.getBytes(StandardCharsets.UTF_8));
+                    infe.write(0);
+                }
             }
             iinf.writeBytes(fullBox("infe", 2, item.hidden ? 1 : 0, infe.toByteArray()));
         }
@@ -257,7 +279,7 @@ public final class HeifBuilder {
             if (ilocVersion != 0) {
                 u16(out, item.method);
             }
-            u16(out, 0);
+            u16(out, item.dataReference);
             var extents = item.extents != null ? item.extents
                     : List.of(new Extent((item.method == 0 ? mdatStart : 0) + offsets[item.id - 1], item.data.length, 1));
             u16(out, extents.size());
@@ -270,6 +292,27 @@ public final class HeifBuilder {
             }
         }
         return fullBox("iloc", ilocVersion, 0, out.toByteArray());
+    }
+
+    /** Builds a {@code dinf} box holding a {@code dref} box of the given entries. */
+    public static byte[] dinf(byte[]... entries) {
+        var out = new ByteArrayOutputStream();
+        u32(out, entries.length);
+        for (var entry : entries) {
+            out.writeBytes(entry);
+        }
+        return box("dinf", fullBox("dref", 0, 0, out.toByteArray()));
+    }
+
+    /** Builds a {@code url } data reference entry naming another file. */
+    public static byte[] urlEntry(String location) {
+        var bytes = location.getBytes(StandardCharsets.UTF_8);
+        return fullBox("url ", 0, 0, java.util.Arrays.copyOf(bytes, bytes.length + 1));
+    }
+
+    /** Builds a self-contained {@code url } data reference entry. */
+    public static byte[] selfEntry() {
+        return fullBox("url ", 0, 1, new byte[0]);
     }
 
     /** Builds a {@code hdlr} box. */
@@ -408,6 +451,77 @@ public final class HeifBuilder {
             u16(out, height);
         }
         return out.toByteArray();
+    }
+
+    /** Builds an image overlay payload with 16-bit or, when {@code wide}, 32-bit sizes and offsets. */
+    public static byte[] overlay(boolean wide, int[] fill, int width, int height, int[]... offsets) {
+        var out = new ByteArrayOutputStream();
+        out.write(0);
+        out.write(wide ? 1 : 0);
+        for (var value : fill) {
+            u16(out, value);
+        }
+        for (var value : new int[]{width, height}) {
+            if (wide) {
+                u32(out, value & 0xFFFFFFFFL);
+            } else {
+                u16(out, value);
+            }
+        }
+        for (var offset : offsets) {
+            for (var value : offset) {
+                if (wide) {
+                    u32(out, value & 0xFFFFFFFFL);
+                } else {
+                    u16(out, value & 0xFFFF);
+                }
+            }
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Builds a sample transform payload ({@code sato}) of version 0. {@code tokens} lists the token values in
+     * order; each constant token, value 0, is followed in the array by its constant, written with
+     * {@code 8 << bitDepthCode} bits.
+     */
+    public static byte[] sato(int bitDepthCode, long... tokens) {
+        var body = new ByteArrayOutputStream();
+        var count = 0;
+        for (var i = 0; i < tokens.length; i++, count++) {
+            body.write((int) tokens[i]);
+            if (tokens[i] == 0) {
+                var constant = tokens[++i];
+                for (var shift = (8 << bitDepthCode) - 8; shift >= 0; shift -= 8) {
+                    body.write((int) (constant >>> shift));
+                }
+            }
+        }
+        var out = new ByteArrayOutputStream();
+        out.write(bitDepthCode & 3);
+        out.write(count);
+        out.writeBytes(body.toByteArray());
+        return out.toByteArray();
+    }
+
+    /** Builds a {@code grpl} box holding entity groups built with {@link #entityGroup}. */
+    public static byte[] grpl(byte[]... groups) {
+        var out = new ByteArrayOutputStream();
+        for (var group : groups) {
+            out.writeBytes(group);
+        }
+        return box("grpl", out.toByteArray());
+    }
+
+    /** Builds an {@code EntityToGroupBox}, such as an {@code altr} group. */
+    public static byte[] entityGroup(String type, long groupId, int... entities) {
+        var out = new ByteArrayOutputStream();
+        u32(out, groupId);
+        u32(out, entities.length);
+        for (var entity : entities) {
+            u32(out, entity);
+        }
+        return fullBox(type, 0, 0, out.toByteArray());
     }
 
     /** Writes a big-endian 16-bit value. */

@@ -90,6 +90,22 @@ public final class H264BitReader {
     }
 
     /**
+     * Makes this reader read the payload of another from the other's read position, leaving the
+     * other unchanged.
+     *
+     * @param other the reader to copy
+     */
+    public void copyFrom(H264BitReader other) {
+        this.data = other.data;
+        this.start = other.start;
+        this.end = other.end;
+        this.next = other.next;
+        this.loadLimit = other.loadLimit;
+        this.cache = other.cache;
+        this.count = other.count;
+    }
+
+    /**
      * Tops the cache up to at least 57 valid bits.
      */
     private void refill() {

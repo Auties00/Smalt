@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.ops;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.VectorMask;
@@ -48,9 +49,9 @@ final class VectorTransformKernel implements TransformKernel {
     private static final VectorSpecies<Byte> B = ByteVector.SPECIES_PREFERRED;
 
     /**
-     * The integer species of pixel tiles: 256 bits when the hardware has them, else 128 bits.
+     * The integer species of pixel tiles: 256 bits where {@link Simd#WIDE} holds, else 128 bits.
      */
-    private static final VectorSpecies<Integer> I = IntVector.SPECIES_PREFERRED.vectorBitSize() >= 256
+    private static final VectorSpecies<Integer> I = Simd.WIDE
             ? IntVector.SPECIES_256 : IntVector.SPECIES_128;
 
     /**
@@ -331,7 +332,7 @@ final class VectorTransformKernel implements TransformKernel {
                 for (var ty = by; ty < yEnd; ty += L) {
                     for (var tx = bx; tx < xEnd; tx += L) {
                         if (ty + L <= height && tx + L <= width) {
-                            if (L == 8) {
+                            if (Simd.WIDE) {
                                 tile32x8(src, sOff, sStride, width, height, dst, dOff, dStride, reverseRows, reverseColumns, tx, ty);
                             } else {
                                 tile32x4(src, sOff, sStride, width, height, dst, dOff, dStride, reverseRows, reverseColumns, tx, ty);

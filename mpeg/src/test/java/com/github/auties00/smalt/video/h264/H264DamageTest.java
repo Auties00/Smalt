@@ -29,6 +29,7 @@ import java.util.Random;
 import java.util.stream.Stream;
 import java.util.zip.ZipFile;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -116,6 +117,17 @@ class H264DamageTest {
 
     static List<byte[]> stream(String name) {
         return name.equals("java-realtime") ? javaStream() : x264Stream();
+    }
+
+    /**
+     * A CABAC picture parameter set 7 referring to sequence parameter set 0 and a slice data partition A
+     * referring to it, which the decoder rejects as Unsupported.
+     */
+    static List<byte[]> cabacPartition() {
+        var pps = H264BitWriter.nal(3, 8, new H264BitWriter().ue(7).ue(0).bit(1).bit(0).ue(0).ue(0).ue(0).bit(0)
+                .bits(0, 2).se(0).se(0).se(0).bit(1).bit(0).bit(0).trailing());
+        var partition = H264BitWriter.nal(2, 2, new H264BitWriter().ue(0).ue(0).ue(7).trailing());
+        return List.of(pps, partition);
     }
 
     private static Packet packet(byte[] data, int index) {
@@ -294,6 +306,17 @@ class H264DamageTest {
                     "%s loss=%.0f%% markerGated=%s: shown intact %.1f%% of slots; without the incomplete flag %d corrupt frames would be shown over 5 seeds",
                     name, loss * 100, requireMarker, 100.0 * shown / slots, unflagged));
             assertTrue(shown > 0);
+        }
+
+        // MR4_TANDBERG_C holds long-term references, whose staleness must be judged in stream
+        // order; CAPM3_Sony_D, CABA3_SVA_B and CVBS3_Sony_C have B pictures whose lists skip the
+        // stand-ins of lost reference pictures.
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"MR4_TANDBERG_C", "CAPM3_Sony_D", "CABA3_SVA_B",
+                "CVBS3_Sony_C"})
+        @DisplayName("conformance streams missing whole pictures show only exact frames as intact, the same with four threads")
+        void droppedPictures(String name) throws IOException {
+            H264InterlacedTest.assertDroppedPictures(name);
         }
     }
 
@@ -541,6 +564,76 @@ class H264DamageTest {
             assertEquals(lossy, decoderOnly, "reportLoss marks the same loss");
         }
 
+        /**
+         * A 32x32 Main profile CAVLC stream with {@code pic_order_cnt_type} 0 that allows {@code frame_num}
+         * gaps, in decoding order: an I_PCM IDR picture (POC 0), a P picture of I_PCM macroblocks (POC 8),
+         * a non-reference B picture of B_Skip macroblocks between them (POC 4), whose spatial direct
+         * prediction averages its first entries of both lists, and a P picture of P_Skip macroblocks
+         * (POC 12).
+         */
+        static List<byte[]> bGapStream() {
+            var sps = new H264BitWriter().bits(77, 8).bits(0, 8).bits(10, 8).ue(0).ue(0).ue(0).ue(0).ue(2).bit(1)
+                    .ue(1).ue(1).bit(1).bit(1).bit(0).bit(0).trailing();
+            var pps = new H264BitWriter().ue(0).ue(0).bit(0).bit(0).ue(0).ue(0).ue(0).bit(0).bits(0, 2).se(0).se(0).se(0)
+                    .bit(0).bit(0).bit(0).trailing();
+            var idr = new H264BitWriter().ue(0).ue(7).ue(0).bits(0, 4).ue(0).bits(0, 4).bit(0).bit(0).se(0);
+            var p = new H264BitWriter().ue(0).ue(5).ue(0).bits(1, 4).bits(8, 4).bit(0).bit(0).bit(0).se(0);
+            for (var mb = 0; mb < 4; mb++) {
+                idr.ue(25);
+                p.ue(0).ue(30);
+                for (var writer : List.of(idr, p)) {
+                    while (!writer.aligned()) {
+                        writer.bit(0);
+                    }
+                }
+                for (var k = 0; k < 384; k++) {
+                    idr.bits(16 + ((k * 7 + mb * 31) % 220), 8);
+                    p.bits(236 - ((k * 13 + mb * 17) % 200), 8);
+                }
+            }
+            var b = new H264BitWriter().ue(0).ue(6).ue(0).bits(2, 4).bits(4, 4).bit(1).bit(0).bit(0).bit(0).se(0)
+                    .ue(4);
+            var last = new H264BitWriter().ue(0).ue(5).ue(0).bits(2, 4).bits(12, 4).bit(0).bit(0).bit(0).se(0).ue(4);
+            return List.of(
+                    H264TestStreams.annexB(List.of(H264BitWriter.nal(3, 7, sps), H264BitWriter.nal(3, 8, pps),
+                            H264BitWriter.nal(3, 5, idr.trailing()))),
+                    H264TestStreams.annexB(List.of(H264BitWriter.nal(2, 1, p.trailing()))),
+                    H264TestStreams.annexB(List.of(H264BitWriter.nal(0, 1, b.trailing()))),
+                    H264TestStreams.annexB(List.of(H264BitWriter.nal(2, 1, last.trailing()))));
+        }
+
+        /** Decodes the stream without access unit {@code lost} and returns the damage flag of each frame, by index. */
+        static Boolean[] damageWithout(List<byte[]> units, int lost, boolean incompleteAfter, boolean report) {
+            var damage = new Boolean[units.size()];
+            try (var decoder = new H264Decoder(TRACK, H264DecoderOptions.defaults())) {
+                H264Decoder.FrameConsumer sink = (frame, damaged) -> damage[(int) (frame.pts() / TICKS)] = damaged;
+                for (var i = 0; i < units.size(); i++) {
+                    if (i == lost) {
+                        if (report) {
+                            decoder.reportLoss();
+                        }
+                        continue;
+                    }
+                    decode(decoder, packet(units.get(i), i), incompleteAfter && i == lost + 1, sink);
+                }
+                decoder.flush(sink);
+            }
+            return damage;
+        }
+
+        @Test
+        @DisplayName("after a loss, a B picture whose lists leave out the stand-in for the lost picture is damaged")
+        void lostPictureLeftOutOfBLists() {
+            var units = bGapStream();
+            assertArrayEquals(new Boolean[]{false, false, false, false}, damageWithout(units, -1, false, false));
+            assertArrayEquals(new Boolean[]{false, null, true, true}, damageWithout(units, 1, true, false),
+                    "the loss is declared with the packet after it");
+            assertArrayEquals(new Boolean[]{false, null, true, true}, damageWithout(units, 1, false, true),
+                    "the loss is reported on its own");
+            // a stream that allows frame_num gaps may skip pictures on purpose: only a reported loss tells
+            assertArrayEquals(new Boolean[]{false, null, false, true}, damageWithout(units, 1, false, false));
+        }
+
         @Test
         @DisplayName("the consumer's own exception propagates unchanged")
         void consumerFailure() {
@@ -558,10 +651,11 @@ class H264DamageTest {
         @Test
         @DisplayName("the consumer's exception thrown while a failed packet is abandoned propagates unchanged")
         void consumerFailureWhileAbandoning() {
-            // a data partition NAL unit after a cut slice fails the packet with Unsupported while the
-            // picture is still open, so the low-delay decoder outputs it while abandoning the packet
+            // a slice data partition of a CABAC picture parameter set after a cut slice fails the packet
+            // with Unsupported while the picture is still open, so the low-delay decoder outputs it while
+            // abandoning the packet
             var units = javaStream();
-            var partition = new byte[]{0, 0, 1, 0x62, (byte) 0x80};
+            var partition = H264TestStreams.annexB(cabacPartition());
             var partial = Arrays.copyOf(units.get(1), Math.max(8, units.get(1).length / 3));
             var data = Arrays.copyOf(partial, partial.length + partition.length);
             System.arraycopy(partition, 0, data, partial.length, partition.length);
@@ -598,11 +692,15 @@ class H264DamageTest {
         @DisplayName("unsupported streams still raise Unsupported")
         void unsupported() {
             var file = Fixtures.ffmpeg("h264", List.of("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30:duration=0.1"),
-                    List.of("-c:v", "libx264", "-pix_fmt", "yuv422p", "-f", "h264"));
+                    List.of("-c:v", "libx264", "-pix_fmt", "yuv420p", "-f", "h264"));
             var units = H264TestStreams.accessUnits(H264TestStreams.nalUnits(Fixtures.read(file)));
+            // a slice data partition A of a CABAC picture parameter set, which belongs to no profile, ahead of
+            // the first picture's slices
+            var first = new ArrayList<>(units.getFirst());
+            first.addAll(first.size() - 1, cabacPartition());
             try (var decoder = new H264Decoder(TRACK, H264DecoderOptions.forRealtime())) {
                 assertThrows(MediaException.Unsupported.class,
-                        () -> decoder.decode(packet(H264TestStreams.annexB(units.getFirst()), 0), (frame, damaged) -> {
+                        () -> decoder.decode(packet(H264TestStreams.annexB(first), 0), (frame, damaged) -> {
                         }));
             }
         }

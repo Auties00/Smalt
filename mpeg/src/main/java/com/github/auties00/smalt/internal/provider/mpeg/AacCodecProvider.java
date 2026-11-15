@@ -10,6 +10,7 @@ import com.github.auties00.smalt.audio.aac.AacDecoder;
 import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
 import com.github.auties00.smalt.audio.aac.AacEncoder;
 import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
+import com.github.auties00.smalt.audio.aac.AacProfile;
 import com.github.auties00.smalt.spi.AudioCodecProvider;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -31,7 +32,9 @@ import com.github.auties00.smalt.track.Codec;
  *           <tr><th scope="row">encoder bitrate</th><td>{@link AacEncoderOptions.Builder#bitrate(int)}, or
  *           {@value #DEFAULT_CHANNEL_BITRATE} bits per second per channel when the options leave it to the
  *           codec</td></tr>
- *           <tr><th scope="row">real time</th><td>ignored: AAC-LC has no low-delay mode</td></tr>
+ *           <tr><th scope="row">real time</th><td>{@link AacEncoderOptions.Builder#profile(AacProfile)} AAC-ELD,
+ *           with 512-sample frames and three quarters of a frame of delay, when the layout has a channel
+ *           configuration from 1 to 7; AAC-LC otherwise</td></tr>
  *           <tr><th scope="row">everything else</th><td>{@link AacEncoderOptions#defaults()}: constant bitrate,
  *           automatic bandwidth</td></tr>
  *           </tbody>
@@ -67,6 +70,14 @@ public final class AacCodecProvider implements AudioCodecProvider {
     @Override
     public AudioEncoder createEncoder(Codec codec, AudioEncoderOptions options) {
         var bitrate = options.bitrate().orElse(DEFAULT_CHANNEL_BITRATE * options.layout().channels());
-        return new AacEncoder(AacEncoderOptions.of(options.sampleRate(), options.layout(), bitrate));
+        var lowComplexity = AacEncoderOptions.of(options.sampleRate(), options.layout(), bitrate);
+        if (options.realtime()) {
+            try {
+                return new AacEncoder(lowComplexity.toBuilder().profile(AacProfile.ELD).build());
+            } catch (IllegalArgumentException exception) {
+                return new AacEncoder(lowComplexity);
+            }
+        }
+        return new AacEncoder(lowComplexity);
     }
 }

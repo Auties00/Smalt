@@ -1,0 +1,58 @@
+# Nightly: a long ClusterFuzzLite batch run of every fuzz target (tools/fuzz/README.md), which grows the corpus the
+# pull request runs start from, then a prune run that keeps only the inputs adding coverage. Crashes are uploaded
+# as artifacts with their reproducers; tools/fuzz/README.md describes how to reproduce and save one.
+name: ClusterFuzzLite batch fuzzing
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions: read-all
+
+concurrency:
+  group: cflite-batch
+  cancel-in-progress: false
+
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: Build the fuzz targets
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: jvm
+          sanitizer: address
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fuzz
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          mode: batch
+          sanitizer: address
+          fuzz-seconds: 14400
+          output-sarif: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  prune:
+    needs: batch
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Build the fuzz targets
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: jvm
+          sanitizer: address
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prune the corpus
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          mode: prune
+          sanitizer: address
+          fuzz-seconds: 3600
+          github-token: ${{ secrets.GITHUB_TOKEN }}

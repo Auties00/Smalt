@@ -1,0 +1,62 @@
+# image dump of vectors/avif-Netflix-avis-alpha_video.avif; regenerate with -Dsmalt.test.updateDumps=true
+format AVIF
+info ImageInfo[format=AVIF, width=640, height=480, hasAlpha=true, animated=true, frameCount=48, orientation=NORMAL]
+decode
+picture 640x480 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=e1fb34fa u=0b08fd33 v=a8660763 a=6032c053
+  format=AVIF orientation=NORMAL source=640x480
+  icc=none exif=none xmp=none
+  profile=none
+scaled 160x120
+picture 640x480 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=e1fb34fa u=0b08fd33 v=a8660763 a=6032c053
+  format=AVIF orientation=NORMAL source=640x480
+  icc=none exif=none xmp=none
+  profile=none
+animation 640x480 loops=0 frames=48
+frame 0 ts=0 dur=40000 640x480 rgba8 alpha=true crc=7f11e171
+frame 1 ts=40000 dur=40000 640x480 rgba8 alpha=true crc=b37d53f5
+frame 2 ts=80000 dur=40000 640x480 rgba8 alpha=true crc=1373df81
+frame 3 ts=120000 dur=40000 640x480 rgba8 alpha=true crc=0cda9713
+frame 4 ts=160000 dur=40000 640x480 rgba8 alpha=true crc=ebc59648
+frame 5 ts=200000 dur=40000 640x480 rgba8 alpha=true crc=9cec3e1b
+frame 6 ts=240000 dur=40000 640x480 rgba8 alpha=true crc=f2deebce
+frame 7 ts=280000 dur=40000 640x480 rgba8 alpha=true crc=6869a8ee
+frame 8 ts=320000 dur=40000 640x480 rgba8 alpha=true crc=035d66a3
+frame 9 ts=360000 dur=40000 640x480 rgba8 alpha=true crc=e621ccd2
+frame 10 ts=400000 dur=40000 640x480 rgba8 alpha=true crc=28ee29b0
+frame 11 ts=440000 dur=40000 640x480 rgba8 alpha=true crc=ec45e176
+frame 12 ts=480000 dur=40000 640x480 rgba8 alpha=true crc=2485cf51
+frame 13 ts=520000 dur=40000 640x480 rgba8 alpha=true crc=08e95140
+frame 14 ts=560000 dur=40000 640x480 rgba8 alpha=true crc=7ea4b464
+frame 15 ts=600000 dur=40000 640x480 rgba8 alpha=true crc=08cd2e8a
+frame 16 ts=640000 dur=40000 640x480 rgba8 alpha=true crc=e27c25a2
+frame 17 ts=680000 dur=40000 640x480 rgba8 alpha=true crc=e17cbe85
+frame 18 ts=720000 dur=40000 640x480 rgba8 alpha=true crc=6b3a5e82
+frame 19 ts=760000 dur=40000 640x480 rgba8 alpha=true crc=47865f54
+frame 20 ts=800000 dur=40000 640x480 rgba8 alpha=true crc=afe27386
+frame 21 ts=840000 dur=40000 640x480 rgba8 alpha=true crc=3e1a431d
+frame 22 ts=880000 dur=40000 640x480 rgba8 alpha=true crc=0c264f4a
+frame 23 ts=920000 dur=40000 640x480 rgba8 alpha=true crc=3322f0d0
+frame 24 ts=960000 dur=40000 640x480 rgba8 alpha=true crc=cfd42f60
+frame 25 ts=1000000 dur=40000 640x480 rgba8 alpha=true crc=4f6d592b
+frame 26 ts=1040000 dur=40000 640x480 rgba8 alpha=true crc=dd2a2697
+frame 27 ts=1080000 dur=40000 640x480 rgba8 alpha=true crc=d6226d7f
+frame 28 ts=1120000 dur=40000 640x480 rgba8 alpha=true crc=94933129
+frame 29 ts=1160000 dur=40000 640x480 rgba8 alpha=true crc=49d2bc32
+frame 30 ts=1200000 dur=40000 640x480 rgba8 alpha=true crc=e5e8d03f
+frame 31 ts=1240000 dur=40000 640x480 rgba8 alpha=true crc=a3c8b7a9
+frame 32 ts=1280000 dur=40000 640x480 rgba8 alpha=true crc=c0f2ae3e
+frame 33 ts=1320000 dur=40000 640x480 rgba8 alpha=true crc=bcec0053
+frame 34 ts=1360000 dur=40000 640x480 rgba8 alpha=true crc=0ef57354
+frame 35 ts=1400000 dur=40000 640x480 rgba8 alpha=true crc=dbdc927c
+frame 36 ts=1440000 dur=40000 640x480 rgba8 alpha=true crc=5cd62e83
+frame 37 ts=1480000 dur=40000 640x480 rgba8 alpha=true crc=4685b900
+frame 38 ts=1520000 dur=40000 640x480 rgba8 alpha=true crc=28e426d6
+frame 39 ts=1560000 dur=40000 640x480 rgba8 alpha=true crc=db27730b
+frame 40 ts=1600000 dur=40000 640x480 rgba8 alpha=true crc=dbebc723
+frame 41 ts=1640000 dur=40000 640x480 rgba8 alpha=true crc=3854d61d
+frame 42 ts=1680000 dur=40000 640x480 rgba8 alpha=true crc=6e9229fd
+frame 43 ts=1720000 dur=40000 640x480 rgba8 alpha=true crc=dc2e9bdf
+frame 44 ts=1760000 dur=40000 640x480 rgba8 alpha=true crc=150ebaa2
+frame 45 ts=1800000 dur=40000 640x480 rgba8 alpha=true crc=1dd5bed6
+frame 46 ts=1840000 dur=40000 640x480 rgba8 alpha=true crc=ef265b8b
+frame 47 ts=1880000 dur=40000 640x480 rgba8 alpha=true crc=6105451a

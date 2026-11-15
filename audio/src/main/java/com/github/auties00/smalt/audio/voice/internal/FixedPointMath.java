@@ -42,7 +42,7 @@ public final class FixedPointMath {
      * @param value the 32-bit value
      * @return {@code value} clamped to {@code [-32768, 32767]}
      */
-    private static short satW32ToW16(int value) {
+    public static short satW32ToW16(int value) {
         if (value > Short.MAX_VALUE) {
             return Short.MAX_VALUE;
         }
@@ -158,7 +158,7 @@ public final class FixedPointMath {
      * @param c the accumulator
      * @return the scaled sum, wrapped to 32 bits
      */
-    private static int scaleDiff32(int a, int b, int c) {
+    public static int scaleDiff32(int a, int b, int c) {
         return c + (b >> 16) * a + (((b & 0xFFFF) * a) >>> 16);
     }
 

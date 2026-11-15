@@ -26,7 +26,9 @@ import java.util.OptionalLong;
  * {@link #scaleMode()}, {@link #upscale()}, {@link #maxLongEdge()}, {@link #maxShortEdge()},
  * resampled with {@link #filter()}), flattened on {@link #background()} when the output format has
  * no transparency (or {@link #flatten()} asks for it), and encoded through
- * {@link com.github.auties00.smalt.image.Images} with {@link #encoderOptions()}.
+ * {@link com.github.auties00.smalt.image.Images} with {@link #encoderOptions()}. The output records the
+ * color profile of the input or holds its pixels converted to sRGB ({@link #color()}), and keeps, strips
+ * or keeps without the location the EXIF block and XMP packet of the input ({@link #metadata()}).
  */
 public final class ImageTranscodeOptions {
     /**
@@ -54,6 +56,8 @@ public final class ImageTranscodeOptions {
 
     private final boolean passthrough;
     private final MediaLimits limits;
+    private final MetadataMode metadata;
+    private final ColorMode color;
 
     private ImageTranscodeOptions(Builder builder, ResizeSettings resize, long maxBytes) {
         this.format = builder.format;
@@ -65,6 +69,8 @@ public final class ImageTranscodeOptions {
         this.maxBytes = maxBytes;
         this.passthrough = builder.passthrough;
         this.limits = builder.limits;
+        this.metadata = builder.metadata;
+        this.color = builder.color;
     }
 
     /**
@@ -115,6 +121,9 @@ public final class ImageTranscodeOptions {
 
     /**
      * {@return the encoder settings; {@link ImageEncoderOptions#defaults()} by default}
+     *
+     * <p>The transcode replaces their color profile, EXIF block, XMP packet and orientation with those
+     * {@link #color()} and {@link #metadata()} derive from the input.
      */
     public ImageEncoderOptions encoderOptions() {
         return encoderOptions;
@@ -213,7 +222,11 @@ public final class ImageTranscodeOptions {
      * default}
      *
      * <p>A lossy encoding steps its quality down, then the picture is scaled down by a quarter at a
-     * time, until the output fits.
+     * time, until the output fits. An animated output steps the same way with every frame kept;
+     * when even its smallest size does not fit, the steps are repeated keeping every second frame,
+     * then every fourth and so on, each kept frame shown for the time of the frames it replaces, so
+     * the animation keeps its duration. A budget no encoding fits fails the transcode with a
+     * {@link com.github.auties00.smalt.MediaException.LimitExceeded}.
      */
     public OptionalLong maxBytes() {
         return maxBytes == 0 ? OptionalLong.empty() : OptionalLong.of(maxBytes);
@@ -223,7 +236,9 @@ public final class ImageTranscodeOptions {
      * {@return whether an input that needs no change is copied byte for byte; {@code true} by default}
      *
      * <p>An input needs no change when it already has the output format, needs no operation, fits the
-     * budget and the encoder settings are the defaults.
+     * budget, the encoder settings are the defaults, {@link #metadata()} is {@link MetadataMode#KEEP} and
+     * {@link #color()} is {@link ColorMode#KEEP_PROFILE}. A copied input keeps its orientation, its EXIF
+     * thumbnail and every byte of its metadata.
      */
     public boolean passthrough() {
         return passthrough;
@@ -234,6 +249,22 @@ public final class ImageTranscodeOptions {
      */
     public MediaLimits limits() {
         return limits;
+    }
+
+    /**
+     * {@return what happens to the EXIF block and the XMP packet of the input; {@link MetadataMode#KEEP} by
+     * default}
+     */
+    public MetadataMode metadata() {
+        return metadata;
+    }
+
+    /**
+     * {@return whether the output records the color profile of the input or holds its pixels converted to
+     * sRGB; {@link ColorMode#KEEP_PROFILE} by default}
+     */
+    public ColorMode color() {
+        return color;
     }
 
     /**
@@ -253,7 +284,8 @@ public final class ImageTranscodeOptions {
      * @return the field values
      */
     private Object[] state() {
-        return new Object[]{format, encoderOptions, resize, background, flatten, animation, maxBytes, passthrough, limits};
+        return new Object[]{format, encoderOptions, resize, background, flatten, animation, maxBytes, passthrough, limits,
+                metadata, color};
     }
 
     @Override
@@ -271,7 +303,7 @@ public final class ImageTranscodeOptions {
         return "ImageTranscodeOptions[format=" + format() + ", encoderOptions=" + encoderOptions + ", " + resize.describe()
                 + ", filter=" + resize.filter() + ", crop=" + crop() + ", background=0x" + Integer.toHexString(background)
                 + ", flatten=" + flatten + ", animation=" + animation + ", maxBytes=" + maxBytes() + ", passthrough="
-                + passthrough + ", limits=" + limits + "]";
+                + passthrough + ", limits=" + limits + ", metadata=" + metadata + ", color=" + color + "]";
     }
 
     /**
@@ -315,6 +347,8 @@ public final class ImageTranscodeOptions {
 
         private boolean passthrough = true;
         private MediaLimits limits = MediaLimits.DEFAULT;
+        private MetadataMode metadata = MetadataMode.KEEP;
+        private ColorMode color = ColorMode.KEEP_PROFILE;
 
         private Builder() {
         }
@@ -340,6 +374,8 @@ public final class ImageTranscodeOptions {
             this.budgeted = options.maxBytes != 0;
             this.passthrough = options.passthrough;
             this.limits = options.limits;
+            this.metadata = options.metadata;
+            this.color = options.color;
         }
 
         /**
@@ -568,6 +604,28 @@ public final class ImageTranscodeOptions {
          */
         public Builder limits(MediaLimits limits) {
             this.limits = Objects.requireNonNull(limits, "limits");
+            return this;
+        }
+
+        /**
+         * Sets what happens to the EXIF block and the XMP packet; see {@link ImageTranscodeOptions#metadata()}.
+         *
+         * @param metadata the value
+         * @return this builder
+         */
+        public Builder metadata(MetadataMode metadata) {
+            this.metadata = Objects.requireNonNull(metadata, "metadata");
+            return this;
+        }
+
+        /**
+         * Sets how the color space of the input is treated; see {@link ImageTranscodeOptions#color()}.
+         *
+         * @param color the value
+         * @return this builder
+         */
+        public Builder color(ColorMode color) {
+            this.color = Objects.requireNonNull(color, "color");
             return this;
         }
 

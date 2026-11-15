@@ -29,72 +29,72 @@ public final class ReducedIdct {
     /**
      * {@code FIX(0.211164243)}.
      */
-    private static final int FIX_0_211164243 = 1730;
+    static final int FIX_0_211164243 = 1730;
 
     /**
      * {@code FIX(0.509795579)}.
      */
-    private static final int FIX_0_509795579 = 4176;
+    static final int FIX_0_509795579 = 4176;
 
     /**
      * {@code FIX(0.601344887)}.
      */
-    private static final int FIX_0_601344887 = 4926;
+    static final int FIX_0_601344887 = 4926;
 
     /**
      * {@code FIX(0.720959822)}.
      */
-    private static final int FIX_0_720959822 = 5906;
+    static final int FIX_0_720959822 = 5906;
 
     /**
      * {@code FIX(0.765366865)}.
      */
-    private static final int FIX_0_765366865 = 6270;
+    static final int FIX_0_765366865 = 6270;
 
     /**
      * {@code FIX(0.850430095)}.
      */
-    private static final int FIX_0_850430095 = 6967;
+    static final int FIX_0_850430095 = 6967;
 
     /**
      * {@code FIX(0.899976223)}.
      */
-    private static final int FIX_0_899976223 = 7373;
+    static final int FIX_0_899976223 = 7373;
 
     /**
      * {@code FIX(1.061594337)}.
      */
-    private static final int FIX_1_061594337 = 8697;
+    static final int FIX_1_061594337 = 8697;
 
     /**
      * {@code FIX(1.272758580)}.
      */
-    private static final int FIX_1_272758580 = 10426;
+    static final int FIX_1_272758580 = 10426;
 
     /**
      * {@code FIX(1.451774981)}.
      */
-    private static final int FIX_1_451774981 = 11893;
+    static final int FIX_1_451774981 = 11893;
 
     /**
      * {@code FIX(1.847759065)}.
      */
-    private static final int FIX_1_847759065 = 15137;
+    static final int FIX_1_847759065 = 15137;
 
     /**
      * {@code FIX(2.172734803)}.
      */
-    private static final int FIX_2_172734803 = 17799;
+    static final int FIX_2_172734803 = 17799;
 
     /**
      * {@code FIX(2.562915447)}.
      */
-    private static final int FIX_2_562915447 = 20995;
+    static final int FIX_2_562915447 = 20995;
 
     /**
      * {@code FIX(3.624509785)}.
      */
-    private static final int FIX_3_624509785 = 29692;
+    static final int FIX_3_624509785 = 29692;
 
     /**
      * Prevents instantiation.

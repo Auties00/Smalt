@@ -7,7 +7,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.jxl.internal.JxlCodestream;
 import com.github.auties00.smalt.image.jxl.internal.bitstream.JxlBitReader;
-import com.github.auties00.smalt.image.jxl.internal.brotli.BrotliDecoder;
+import com.github.auties00.smalt.internal.compress.BrotliDecoder;
 import com.github.auties00.smalt.image.jxl.internal.header.FrameHeader;
 import com.github.auties00.smalt.image.jxl.internal.vardct.HfPass;
 import com.github.auties00.smalt.image.jxl.internal.vardct.VarDctFrame;
@@ -260,6 +260,20 @@ public final class JpegReconstructor {
     }
 
     /**
+     * Returns the lengths of the metadata payloads a reconstruction box takes from the container:
+     * the {@code Exif} box payload after its four-byte offset field, and the {@code xml } box.
+     *
+     * @param jbrd the payload of the {@code jbrd} box
+     * @return the EXIF and XMP lengths, in that order, 0 for a kind the original JPEG file did not
+     * hold
+     * @throws MediaException.Malformed if the box header is invalid
+     */
+    public static long[] metadataLengths(byte[] jbrd) {
+        var header = new JbrdHeader(new JxlBitReader(jbrd, 0, jbrd.length));
+        return new long[]{header.expectedExifLength(), header.expectedXmpLength()};
+    }
+
+    /**
      * Rebuilds the JPEG file from the reconstruction box and the codestream coefficients.
      *
      * @param codestream the opened codestream, whose container has a {@code jbrd} box
@@ -434,8 +448,8 @@ public final class JpegReconstructor {
             case 0xFE -> {
                 var length = header.comLengths[comIndex++];
                 var start = appDataLength() + comData;
+                // the stored comment starts with its marker byte, as a verbatim application segment does
                 out.write(0xFF);
-                out.write(0xFE);
                 out.write(data, start, length);
                 comData += length;
             }
@@ -774,7 +788,7 @@ public final class JpegReconstructor {
      * Reads padding bits for the end of an entropy-coded segment.
      *
      * @param count the number of bits, 1 to 7
-     * @return the bits
+     * @return the bits, the first stored one in the most significant position, as they are written
      * @throws MediaException.Malformed if the stored padding bits run out
      */
     int paddingBits(int count) {
@@ -784,7 +798,11 @@ public final class JpegReconstructor {
         if (padding.bitPosition() + count > header.padding.length * 8L) {
             throw JbrdHeader.malformed("padding bits exhausted");
         }
-        return padding.readBits(count);
+        var bits = 0;
+        for (var i = 0; i < count; i++) {
+            bits = bits << 1 | padding.readBits(1);
+        }
+        return bits;
     }
 
     /**

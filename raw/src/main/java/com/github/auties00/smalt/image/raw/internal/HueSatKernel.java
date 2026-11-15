@@ -13,6 +13,16 @@ package com.github.auties00.smalt.image.raw.internal;
  */
 interface HueSatKernel {
     /**
+     * Builds what this kernel caches on a table, so that {@link #apply} allocates nothing; a table that was not
+     * prepared is prepared on its first use.
+     *
+     * @implSpec The default implementation does nothing.
+     * @param table the table the kernel will apply
+     */
+    default void prepare(HueSatTable table) {
+    }
+
+    /**
      * Applies the table to a row in place.
      *
      * @param table the hue, saturation and value table to apply

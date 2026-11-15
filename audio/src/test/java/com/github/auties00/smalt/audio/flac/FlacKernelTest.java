@@ -1,9 +1,9 @@
 package com.github.auties00.smalt.audio.flac;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -32,7 +32,7 @@ class FlacKernelTest {
     @DisplayName("SIMD equivalence")
     class Equivalence {
         static FlacKernel vector() {
-            Assumptions.assumeTrue(Simd.ENABLED, "Vector API disabled");
+            Skip.unlessVector(Simd.ENABLED);
             return VectorFlacKernel.create();
         }
 
