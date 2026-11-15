@@ -17,18 +17,19 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 /**
  * Compares the decoded channels with {@code opj_decompress}'s output sample for sample, at full
  * and reduced resolution and with a layer limit, on every conformance file whose components
- * OpenJPEG writes without a color conversion.
+ * OpenJPEG writes without a color conversion. The files it converts to RGB (three components whose
+ * chroma {@code opj_decompress} takes for subsampled sYCC: p0_10, e2_colr, subsampling_2 and zoo2) are left
+ * out: their components are compared with the conformance references by {@link Jp2ConformanceTest}.
  */
 @DisplayName("JPEG 2000 decoding matches opj_decompress bit for bit")
 class Jp2OracleTest {
     private static final String[] INPUTS = {"p0_01.j2k", "p0_02.j2k", "p0_03.j2k", "p0_04.j2k", "p0_05.j2k",
-            "p0_06.j2k", "p0_07.j2k", "p0_08.j2k", "p0_09.j2k", "p0_10.j2k", "p0_11.j2k", "p0_12.j2k", "p0_13.j2k",
+            "p0_06.j2k", "p0_07.j2k", "p0_08.j2k", "p0_09.j2k", "p0_11.j2k", "p0_12.j2k", "p0_13.j2k",
             "p0_14.j2k", "p0_15.j2k", "p0_16.j2k", "p1_01.j2k", "p1_02.j2k", "p1_03.j2k", "p1_04.j2k", "p1_05.j2k",
             "p1_06.j2k", "p1_07.j2k", "a1_mono.j2c", "a2_colr.j2c", "a3_mono.j2c", "a4_colr.j2c", "a5_mono.j2c",
             "a6_mono_colr.j2c", "b1_mono.j2c", "b2_mono.j2c", "b3_mono.j2c", "c1_mono.j2c", "c2_mono.j2c",
-            "d1_colr.j2c", "d2_colr.j2c", "e1_colr.j2c", "e2_colr.j2c", "f1_mono.j2c", "f2_mono.j2c", "g1_colr.j2c",
-            "g2_colr.j2c", "g3_colr.j2c", "g4_colr.j2c", "file1.jp2", "file4.jp2", "file6.jp2", "file9.jp2",
-            "subsampling_2.jp2", "zoo2.jp2"};
+            "d1_colr.j2c", "d2_colr.j2c", "e1_colr.j2c", "f1_mono.j2c", "f2_mono.j2c", "g1_colr.j2c",
+            "g2_colr.j2c", "g3_colr.j2c", "g4_colr.j2c", "file1.jp2", "file4.jp2", "file6.jp2", "file9.jp2"};
 
     static Stream<Arguments> cases() {
         return Stream.of(INPUTS).flatMap(name -> Stream.of(Arguments.of(name, 0, 0), Arguments.of(name, 1, 0),
@@ -48,9 +49,6 @@ class Jp2OracleTest {
         }
         var image = Jp2Decoder.decodeChannels(MediaSource.of(data), options);
         var channels = image.channels();
-        Assumptions.assumeFalse(channels.size() == 3 && channels.get(1).subsamplingX() != 1
-                && channels.get(0).subsamplingX() == channels.get(0).subsamplingY(),
-                "opj_decompress converts this image to RGB");
         var extension = name.endsWith(".jp2") ? "jp2" : "j2k";
         var expected = OpenJpeg.decode(data, extension, image.reduction(), layers);
         assertNotNull(expected, "opj_decompress rejected " + name);

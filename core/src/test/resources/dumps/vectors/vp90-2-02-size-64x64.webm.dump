@@ -1,0 +1,23 @@
+# demux dump of vectors/vp90-2-02-size-64x64.webm; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 333000
+seekable true
+track 1 VIDEO VP9 timebase=1/1000 duration=333 language=eng config=none
+  video 64x64 orientation=NORMAL stereo=MONO
+packets 10
+0 t1 pts=0 dts=0 dur=? flags=KEY size=347 crc=c3473428
+1 t1 pts=33 dts=33 dur=? flags=- size=25 crc=001337a5
+2 t1 pts=66 dts=66 dur=? flags=- size=29 crc=22a81948
+3 t1 pts=100 dts=100 dur=? flags=- size=25 crc=f5962442
+4 t1 pts=133 dts=133 dur=? flags=- size=31 crc=f9caa753
+5 t1 pts=166 dts=166 dur=? flags=- size=34 crc=bcc9066b
+6 t1 pts=200 dts=200 dur=? flags=- size=31 crc=4476891b
+7 t1 pts=233 dts=233 dur=? flags=- size=48 crc=9e252cb6
+8 t1 pts=266 dts=266 dur=? flags=- size=44 crc=e2bb3d34
+9 t1 pts=300 dts=300 dur=? flags=- size=45 crc=9b1a078c
+seek 0: t1@0
+seek 111000: t1@0
+seek 222000: t1@0
+seek 334000: end
+seek 333000: t1@0
+seek -1000000: t1@0

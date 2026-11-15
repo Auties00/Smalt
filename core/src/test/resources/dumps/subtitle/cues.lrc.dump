@@ -1,0 +1,16 @@
+# demux dump of subtitle/cues.lrc; regenerate with -Dsmalt.test.updateDumps=true
+format LRC
+duration 2000000
+seekable true
+metadata artist="Smalt"
+metadata title="Behavior"
+track 1 DATA WEBVTT timebase=1/1000 duration=2000 config=6:dba781dc
+packets 3
+0 t1 pts=0 dts=0 dur=400 flags=KEY size=5 crc=f7d18982
+1 t1 pts=500 dts=500 dur=400 flags=KEY size=39 crc=1219ad15
+2 t1 pts=1250 dts=1250 dur=750 flags=KEY size=9 crc=3a64f8bc
+seek 0: t1@0
+seek 666666: t1@1
+seek 1333333: t1@2
+seek 2000000: end
+seek -1000000: t1@0

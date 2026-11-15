@@ -1,0 +1,26 @@
+# demux dump of wav/gsm.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 500000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 0 AUDIO GSM_MS timebase=1/8000 duration=4000 config=none
+  audio rate=8000 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 13
+0 t0 pts=0 dts=0 dur=320 flags=KEY size=65 crc=10e0b325
+1 t0 pts=320 dts=320 dur=320 flags=KEY size=65 crc=b8a6a2ec
+2 t0 pts=640 dts=640 dur=320 flags=KEY size=65 crc=8f6ea23a
+3 t0 pts=960 dts=960 dur=320 flags=KEY size=65 crc=8c4a9fe2
+4 t0 pts=1280 dts=1280 dur=320 flags=KEY size=65 crc=274d79e9
+5 t0 pts=1600 dts=1600 dur=320 flags=KEY size=65 crc=32404651
+6 t0 pts=1920 dts=1920 dur=320 flags=KEY size=65 crc=81e5e2d7
+7 t0 pts=2240 dts=2240 dur=320 flags=KEY size=65 crc=4c33c289
+8 t0 pts=2560 dts=2560 dur=320 flags=KEY size=65 crc=60e244e7
+9 t0 pts=2880 dts=2880 dur=320 flags=KEY size=65 crc=87bdf020
+10 t0 pts=3200 dts=3200 dur=320 flags=KEY size=65 crc=efae2675
+11 t0 pts=3520 dts=3520 dur=320 flags=KEY size=65 crc=b825dc1b
+12 t0 pts=3840 dts=3840 dur=160 flags=KEY size=65 crc=ce7736bf
+seek 0: t0@0
+seek 166666: t0@4
+seek 333333: t0@8
+seek 500000: end
+seek -1000000: t0@0

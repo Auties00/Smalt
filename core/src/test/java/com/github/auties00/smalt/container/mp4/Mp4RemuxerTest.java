@@ -147,12 +147,35 @@ class Mp4RemuxerTest {
             for (var input : List.of(Mp4Fixtures.h264Aac(true, List.of(), "mp4"),
                     Mp4Fixtures.h264Aac(true, List.of("-movflags", "+negative_cts_offsets"), "mp4"),
                     Mp4Fixtures.copy(Mp4Fixtures.h264Aac(true, List.of(), "mp4"), "mp4", List.of("-ss", "0.7"), List.of()))) {
-                var planned = remux(input, "planned", RemuxOptions.video());
+                // the muxer that spools writes no tags
+                var planned = remux(input, "planned", RemuxOptions.video().toBuilder().noTags().build());
                 var spooled = Mp4MuxerTest.remux(input, "spooled", Mp4MuxerOptions.mp4(), muxer -> {
                 });
                 org.junit.jupiter.api.Assertions.assertArrayEquals(Files.readAllBytes(spooled), Files.readAllBytes(planned.file()));
+                var taggedPlan = remux(input, "planned-tagged", RemuxOptions.video().toBuilder().tags(TAGS).build());
+                var taggedSpool = Mp4MuxerTest.remux(input, "spooled-tagged", Mp4MuxerOptions.mp4(),
+                        muxer -> muxer.setTags(TAGS));
+                org.junit.jupiter.api.Assertions.assertArrayEquals(Files.readAllBytes(taggedSpool),
+                        Files.readAllBytes(taggedPlan.file()));
+                var read = com.github.auties00.smalt.metadata.TagEditor.read(taggedPlan.file());
+                assertEquals(List.of("One", "Two"), read.chapters().stream().map(chapter -> chapter.title().orElse(""))
+                        .toList());
+                org.junit.jupiter.api.Assertions.assertArrayEquals(TAGS.pictures().getFirst().data(),
+                        read.pictures().getFirst().data());
             }
         }
+
+        /**
+         * Tags with a cover and chapters, which add a chapter track and a user data box to the planned header.
+         */
+        static final com.github.auties00.smalt.metadata.MediaTags TAGS = com.github.auties00.smalt.metadata.MediaTags.builder()
+                .set(com.github.auties00.smalt.metadata.StandardTag.TITLE, "Planned")
+                .addPicture(com.github.auties00.smalt.container.AttachedPicture.of(
+                        com.github.auties00.smalt.container.AttachedPicture.Type.FRONT_COVER, "image/png", "",
+                        new byte[]{1, 2, 3, 4, 5}))
+                .chapters(List.of(com.github.auties00.smalt.container.Chapter.of(0, 500_000, "One"),
+                        com.github.auties00.smalt.container.Chapter.of(500_000, 1_000_000, "Two")))
+                .build();
 
         @Test
         @DisplayName("honors explicit track identifiers and the M4A brand")
@@ -197,15 +220,16 @@ class Mp4RemuxerTest {
         @Test
         @DisplayName("rejects codecs MP4 cannot carry, naming them")
         void unsupported() {
-            var vp9 = Fixtures.ffmpeg("mp4", Mp4Fixtures.both(96, 64, 1, 48000),
-                    List.of("-c:v", "libvpx-vp9", "-b:v", "200k", "-deadline", "realtime", "-c:a", "libopus"));
-            var failure = assertThrows(MediaException.Unsupported.class, () -> remux(vp9, "vp9", RemuxOptions.video()));
-            assertEquals("vp9", failure.format());
-            var audioOnly = remux(vp9, "vp9-audio", RemuxOptions.video().toBuilder().noVideo().build());
-            assertEquals(Codec.OPUS, audioOnly.result().tracks().getFirst().codec());
+            var prores = Fixtures.ffmpeg("mov", Mp4Fixtures.both(96, 64, 1, 48000),
+                    List.of("-c:v", "prores_ks", "-c:a", "aac"));
+            var failure = assertThrows(MediaException.Unsupported.class, () -> remux(prores, "prores", RemuxOptions.video()));
+            assertEquals("prores", failure.format());
+            assertTrue(failure.getMessage().contains("QuickTime"), failure.getMessage());
+            var audioOnly = remux(prores, "prores-audio", RemuxOptions.video().toBuilder().noVideo().build());
+            assertEquals(Codec.AAC, audioOnly.result().tracks().getFirst().codec());
             Oracle.assertDecodesCleanly(audioOnly.file());
-            var pcm = Fixtures.ffmpeg("mov", Mp4Fixtures.audio(22050, 0.5), List.of("-c:a", "pcm_s16le"));
-            assertEquals("pcm_s16le", assertThrows(MediaException.Unsupported.class, () -> remux(pcm, "pcm", RemuxOptions.audio())).format());
+            var pcm = Fixtures.ffmpeg("mov", Mp4Fixtures.audio(22050, 0.5), List.of("-c:a", "pcm_u8"));
+            assertEquals("pcm_u8", assertThrows(MediaException.Unsupported.class, () -> remux(pcm, "pcm", RemuxOptions.audio())).format());
         }
     }
 
@@ -244,17 +268,29 @@ class Mp4RemuxerTest {
         @DisplayName("remuxes a large Matroska input that is not local in one read, byte for byte like a local one")
         void largeNotLocal() throws IOException {
             var input = largeMatroska();
-            var local = remux(input, "mkv-large-local", RemuxOptions.video());
+            // a source that is not local takes its tags from the demuxer rather than from its tag structure
+            var options = RemuxOptions.video().toBuilder().noTags().build();
+            var local = remux(input, "mkv-large-local", options);
             var data = Files.readAllBytes(input);
             var source = new CountingSource(data, 64 * 1024);
             var output = new MemoryChannel();
-            var result = Mp4Remuxer.remux(source, MediaSink.of(output), RemuxOptions.video());
+            var result = Mp4Remuxer.remux(source, MediaSink.of(output), options);
             org.junit.jupiter.api.Assertions.assertArrayEquals(Files.readAllBytes(local.file()), output.toByteArray());
             assertEquals(local.result().packets(), result.packets());
             assertEquals(local.result().durationMicros(), result.durationMicros());
             assertEquals(local.result().outputSize(), result.outputSize());
             assertEquals(1, source.requests, source.toString());
             assertTrue(source.bytes <= data.length + 64 * 1024, source.toString());
+            // the same given tags planned in a first reading pass and spooled from a single read
+            var given = RemuxOptions.video().toBuilder().tags(Iso.TAGS).build();
+            var localTagged = remux(input, "mkv-large-local-tagged", given);
+            var spooledTagged = new MemoryChannel();
+            Mp4Remuxer.remux(new CountingSource(data, 64 * 1024), MediaSink.of(spooledTagged), given);
+            org.junit.jupiter.api.Assertions.assertArrayEquals(Files.readAllBytes(localTagged.file()),
+                    spooledTagged.toByteArray());
+            var tagged = new CountingSource(data, 64 * 1024);
+            Mp4Remuxer.remux(tagged, MediaSink.of(new MemoryChannel()), RemuxOptions.video());
+            assertEquals(1, tagged.requests, "carrying the tags reads the input once: " + tagged);
         }
 
         @Test
@@ -300,11 +336,11 @@ class Mp4RemuxerTest {
         }
 
         @Test
-        @DisplayName("rejects VP9 video in WebM and non-media input")
+        @DisplayName("rejects Vorbis audio in WebM and non-media input")
         void rejects() {
             var webm = Fixtures.ffmpeg("webm", Mp4Fixtures.both(96, 64, 1, 48000),
-                    List.of("-c:v", "libvpx-vp9", "-b:v", "200k", "-deadline", "realtime", "-c:a", "libopus"));
-            assertEquals("vp9", assertThrows(MediaException.Unsupported.class, () -> remux(webm, "webm-vp9", RemuxOptions.video())).format());
+                    List.of("-c:v", "libvpx-vp9", "-b:v", "200k", "-deadline", "realtime", "-c:a", "libvorbis"));
+            assertEquals("vorbis", assertThrows(MediaException.Unsupported.class, () -> remux(webm, "webm-vorbis", RemuxOptions.video())).format());
             assertFalse(fastStart(webm));
             try (var source = MediaSource.of("this is not a media file".getBytes())) {
                 assertFalse(Mp4Remuxer.isFastStart(source));

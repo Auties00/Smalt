@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.auties00</groupId>
+        <artifactId>smalt-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>smalt-kernel-lint</artifactId>
+    <packaging>jar</packaging>
+    <name>${project.groupId}:${project.artifactId}</name>
+    <description>Smalt kernel lint: the static checks of the Vector API kernels, run by the it module in verify (not published)</description>
+
+    <!-- Not published: a build tool of this repository -->
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <gpg.skip>true</gpg.skip>
+        <japicmp.skip>true</japicmp.skip>
+        <smalt.skipTestJar>true</smalt.skipTestJar>
+        <!-- ASM 9.9 is the first release that reads the class files of Java 26 -->
+        <asm.version>9.9.1</asm.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm</artifactId>
+            <version>${asm.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm-tree</artifactId>
+            <version>${asm.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm-analysis</artifactId>
+            <version>${asm.version}</version>
+        </dependency>
+        <!-- The checker the build's forbidden-apis plugin runs, to test its signatures -->
+        <dependency>
+            <groupId>de.thetaphi</groupId>
+            <artifactId>forbiddenapis</artifactId>
+            <version>${forbiddenapis.plugin.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

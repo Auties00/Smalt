@@ -1,0 +1,22 @@
+# image dump of resources/tiff/codecs/jxl-rgb8-tiles.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=72, height=56, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 72x56 rgba8 alpha=false crc=b10d709d
+  format=TIFF orientation=NORMAL source=72x56
+  icc=none exif=none xmp=none
+  profile=none
+  density=ASPECT_RATIO 1.0x1.0
+scaled 18x14
+picture 72x56 rgba8 alpha=false crc=b10d709d
+  format=TIFF orientation=NORMAL source=72x56
+  icc=none exif=none xmp=none
+  profile=none
+  density=ASPECT_RATIO 1.0x1.0
+pages 1
+page 0 ImageInfo[format=TIFF, width=72, height=56, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 72x56 rgba8 alpha=false crc=b10d709d
+  format=TIFF orientation=NORMAL source=72x56
+  icc=none exif=none xmp=none
+  profile=none
+  density=ASPECT_RATIO 1.0x1.0

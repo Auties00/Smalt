@@ -1,5 +1,7 @@
 /**
- * Writing raw elementary streams ({@link RawMuxer}).
+ * Reading and writing raw elementary streams: {@link RawMuxer} writes them; {@link AnnexBDemuxer} reads H.264 and
+ * HEVC Annex B streams, {@link ObuDemuxer} AV1 OBU streams, {@link Mpeg4VideoDemuxer} MPEG-4 Part 2 and H.263
+ * streams, and {@link PcmDemuxer} headerless PCM.
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

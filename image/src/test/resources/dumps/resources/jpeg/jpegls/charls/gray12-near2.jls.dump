@@ -1,0 +1,13 @@
+# image dump of resources/jpeg/jpegls/charls/gray12-near2.jls; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=45, height=31, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 45x31 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=ecb82d3b
+  format=JPEG orientation=NORMAL source=45x31
+  icc=none exif=none xmp=none
+  profile=none
+scaled 11x7
+picture 45x31 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=ecb82d3b
+  format=JPEG orientation=NORMAL source=45x31
+  icc=none exif=none xmp=none
+  profile=none

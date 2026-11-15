@@ -1,11 +1,13 @@
 package com.github.auties00.smalt.probe;
 
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.TrackDisposition;
 
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 /**
  * Describes a stream of a probed file that is neither audio nor video: subtitles, chapters text,
@@ -75,6 +77,11 @@ public final class DataStreamInfo implements StreamInfo {
     @Override
     public Map<String, String> tags() {
         return fields.tags();
+    }
+
+    @Override
+    public Set<TrackDisposition> disposition() {
+        return fields.disposition();
     }
 
     /**

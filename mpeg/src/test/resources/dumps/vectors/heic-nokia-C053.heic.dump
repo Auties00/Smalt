@@ -1,0 +1,25 @@
+# image dump of vectors/heic-nokia-C053.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=1024, height=512, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1024x512 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=e5ea52ee u=2d3d5dc7 v=1727be9f
+  format=HEIC orientation=NORMAL source=1024x512
+  icc=none exif=none xmp=none
+  profile=none
+scaled 256x128
+picture 1024x512 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=e5ea52ee u=2d3d5dc7 v=1727be9f
+  format=HEIC orientation=NORMAL source=1024x512
+  icc=none exif=none xmp=none
+  profile=none
+pages 2
+group ster [0, 1]
+page 0 ImageInfo[format=HEIC, width=1024, height=512, hasAlpha=false, animated=false, frameCount=2, orientation=NORMAL]
+picture 1024x512 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=e5ea52ee u=2d3d5dc7 v=1727be9f
+  format=HEIC orientation=NORMAL source=1024x512
+  icc=none exif=none xmp=none
+  profile=none
+page 1 ImageInfo[format=HEIC, width=1024, height=512, hasAlpha=false, animated=false, frameCount=2, orientation=NORMAL]
+picture 1024x512 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=237c6cc6 u=49af9586 v=87226f20
+  format=HEIC orientation=NORMAL source=1024x512
+  icc=none exif=none xmp=none
+  profile=none

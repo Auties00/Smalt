@@ -1,5 +1,6 @@
 /**
- * Reading and writing MPEG-2 transport streams ({@link TsDemuxer}, {@link TsMuxer}).
+ * Reading and writing the MPEG-2 systems streams: transport streams ({@link TsDemuxer}, {@link TsMuxer}) and program
+ * streams, MPEG-1 system streams and DVD-Video objects ({@link PsDemuxer}, {@link PsMuxer}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

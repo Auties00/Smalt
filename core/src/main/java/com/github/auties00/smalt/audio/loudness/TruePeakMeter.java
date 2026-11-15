@@ -109,9 +109,9 @@ final class TruePeakMeter {
             var m = j - (TAPS - 1) / 2.0;
             var c = 1.0;
             if (Math.abs(m) > ALMOST_ZERO) {
-                c = Math.sin(m * Math.PI / factor) / (m * Math.PI / factor);
+                c = StrictMath.sin(m * Math.PI / factor) / (m * Math.PI / factor);
             }
-            c *= 0.5 * (1 - Math.cos(2 * Math.PI * j / (TAPS - 1)));
+            c *= 0.5 * (1 - StrictMath.cos(2 * Math.PI * j / (TAPS - 1)));
             if (Math.abs(c) > ALMOST_ZERO) {
                 phaseCoefficients.get(j % factor).add(c);
                 phaseIndexes.get(j % factor).add(j / factor);

@@ -20,6 +20,7 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <gpg.skip>true</gpg.skip>
         <japicmp.skip>true</japicmp.skip>
+        <smalt.lint.skip>false</smalt.lint.skip>
     </properties>
 
     <!-- Runs on the class path: every artifact, its test classes and the test kit are visible. -->
@@ -101,5 +102,250 @@
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
+        <!-- The kernel JIT guard runs the fixture kernels' tests in its child JVMs through the launcher -->
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- The kernel lint, run in verify over every artifact's classes -->
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-kernel-lint</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                One JVM, whatever smalt.test.forks says: the JIT stress test and the guard self-test measure their
+                child JVMs' compilation and allocation, which other test JVMs on the same cores would disturb.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <forkCount>1</forkCount>
+                </configuration>
+            </plugin>
+            <!--
+                The kernel lint (smalt-kernel-lint, its rules in Rule) over the main classes of every artifact on the
+                test class path, against the shrink-only tools/lint/kernel-baseline.tsv. It fails the build on any
+                finding; -Dsmalt.lint.skip=true skips it.
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>kernel-lint</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${smalt.lint.skip}</skip>
+                            <executable>${java.home}/bin/java</executable>
+                            <arguments>
+                                <argument>-cp</argument>
+                                <classpath/>
+                                <argument>com.github.auties00.smalt.lint.KernelLint</argument>
+                                <argument>--baseline</argument>
+                                <argument>${project.basedir}/../tools/lint/kernel-baseline.tsv</argument>
+                                <argument>--scan-classpath</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!--
+            The coverage of every artifact's tests and of these tests, together: target/site/jacoco-aggregate. The
+            aggregate reads the classes of compile, runtime and provided dependencies only, so the profile declares
+            the artifacts provided; they stay on the test class path.
+        -->
+        <profile>
+            <id>coverage</id>
+            <dependencies>
+                <dependency>
+                    <groupId>${project.groupId}</groupId>
+                    <artifactId>smalt-core</artifactId>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>${project.groupId}</groupId>
+                    <artifactId>smalt-image</artifactId>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>${project.groupId}</groupId>
+                    <artifactId>smalt-audio</artifactId>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>${project.groupId}</groupId>
+                    <artifactId>smalt-video</artifactId>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>${project.groupId}</groupId>
+                    <artifactId>smalt-mpeg</artifactId>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>${project.groupId}</groupId>
+                    <artifactId>smalt-capture</artifactId>
+                    <scope>provided</scope>
+                </dependency>
+                <dependency>
+                    <groupId>${project.groupId}</groupId>
+                    <artifactId>smalt-raw</artifactId>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>coverage-aggregate</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>report-aggregate</goal>
+                                </goals>
+                                <configuration>
+                                    <includeCurrentProject>true</includeCurrentProject>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+            The jcstress tests of the concurrent structures (src/jcstress/java), run in forked JVMs by the
+            jcstress harness: those of a single computation with one shared thread, so that no helper takes
+            part, and the shared-pool test with four:
+                mvn -Pjcstress -pl it -am verify -DskipTests -Djcstress.mode=quick
+        -->
+        <profile>
+            <id>jcstress</id>
+            <properties>
+                <jcstress.version>0.16</jcstress.version>
+                <jcstress.mode>quick</jcstress.mode>
+                <jcstress.jvm>${java.home}/bin/java</jcstress.jvm>
+            </properties>
+            <dependencies>
+                <dependency>
+                    <groupId>org.openjdk.jcstress</groupId>
+                    <artifactId>jcstress-core</artifactId>
+                    <version>${jcstress.version}</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>jcstress-sources</id>
+                                <phase>generate-test-sources</phase>
+                                <goals>
+                                    <goal>add-test-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <source>src/jcstress/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>default-testCompile</id>
+                                <configuration>
+                                    <annotationProcessorPaths combine.children="append">
+                                        <annotationProcessorPath>
+                                            <groupId>org.openjdk.jcstress</groupId>
+                                            <artifactId>jcstress-core</artifactId>
+                                            <version>${jcstress.version}</version>
+                                        </annotationProcessorPath>
+                                    </annotationProcessorPaths>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>jcstress-single</id>
+                                <phase>integration-test</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>${jcstress.jvm}</executable>
+                                    <!-- the harness writes its binary results file into the working directory -->
+                                    <workingDirectory>${project.build.directory}/jcstress</workingDirectory>
+                                    <arguments>
+                                        <argument>-classpath</argument>
+                                        <classpath/>
+                                        <argument>org.openjdk.jcstress.Main</argument>
+                                        <argument>-m</argument>
+                                        <argument>${jcstress.mode}</argument>
+                                        <argument>-t</argument>
+                                        <argument>PendingStress|RowProgressStress|RowWavefrontStress|WavefrontStress</argument>
+                                        <argument>-jvmArgsPrepend</argument>
+                                        <argument>--add-modules=jdk.incubator.vector -Dsmalt.threads=1</argument>
+                                        <argument>-r</argument>
+                                        <argument>${project.build.directory}/jcstress/single</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>jcstress-pool</id>
+                                <phase>integration-test</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>${jcstress.jvm}</executable>
+                                    <workingDirectory>${project.build.directory}/jcstress</workingDirectory>
+                                    <arguments>
+                                        <argument>-classpath</argument>
+                                        <classpath/>
+                                        <argument>org.openjdk.jcstress.Main</argument>
+                                        <argument>-m</argument>
+                                        <argument>${jcstress.mode}</argument>
+                                        <argument>-t</argument>
+                                        <argument>BandsStress</argument>
+                                        <argument>-jvmArgsPrepend</argument>
+                                        <argument>--add-modules=jdk.incubator.vector -Dsmalt.threads=4</argument>
+                                        <argument>-r</argument>
+                                        <argument>${project.build.directory}/jcstress/pool</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

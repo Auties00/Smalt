@@ -166,6 +166,19 @@ class AdtsDemuxerTest {
         }
 
         @Test
+        @DisplayName("rejects a raw data block position past the end of its frame")
+        void blockPastFrame() {
+            var length = 7 + 2 + 2 + 4 + 2 + 4 + 2;
+            var stream = new ByteArrayOutputStream();
+            stream.writeBytes(withLength(new byte[]{(byte) 0xFF, (byte) 0xF1, (byte) (1 << 6 | 3 << 2), 0, 0, 0, 0},
+                    length, 2, true));
+            // the second block claims to start at offset 0x0200 of a 23-byte frame
+            stream.writeBytes(new byte[]{0x02, 0x00, 0x11, 0x22, 1, 2, 3, 4, 0x33, 0x44, 5, 6, 7, 8, 0x55, 0x66});
+            var failure = assertThrows(MediaException.Malformed.class, () -> packets(stream.toByteArray()));
+            assertNull(failure.getCause(), "the position is checked, not caught");
+        }
+
+        @Test
         @DisplayName("passes CRC-less multi-block frames through as one packet of 1024 samples per block")
         void multiBlockWithoutCrc() {
             var original = frames(ffmpegAdts(1, 48000, 0.3));

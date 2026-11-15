@@ -5,8 +5,11 @@ import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
+import com.github.auties00.smalt.container.internal.DiscardedFrames;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.internal.codec.DecodeOrderTimestamps;
 import com.github.auties00.smalt.internal.plane.PictureCopy;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Packet;
@@ -24,8 +27,14 @@ import java.util.Objects;
  * pulled with {@link #read()}, which returns {@code null} at the end. Frames the container places
  * before the start of the presentation (a negative presentation timestamp, as an MP4 edit list
  * produces for the frames preceding its first key frame) are decoded, because later frames
- * reference them, but not returned. A packet the decoder rejects as corrupt is skipped, as players
- * do; a run of {@value #MAX_CONSECUTIVE_FAILURES} corrupt packets in a row fails the read. The
+ * reference them, but not returned, and so are the frames of packets flagged
+ * {@link com.github.auties00.smalt.track.PacketFlag#DISCARD}. A packet whose side data carries a
+ * {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig() new codec configuration}
+ * that differs from the one in use drains the decoder and continues with a decoder created from
+ * the new configuration, so frames may change size. A packet the decoder rejects as corrupt is
+ * skipped, as players do; a run of {@value #MAX_CONSECUTIVE_FAILURES} corrupt packets in a row
+ * fails the read. A track that {@linkplain VideoTrack#hasAlpha() carries alpha} as a second coded
+ * stream decodes to pictures with an alpha plane, as {@link VideoDecoders} describes. The
  * track's {@link VideoTrack#orientation()} is reported but not applied: frames are returned as
  * coded. {@link #seek(long)} follows the contract shared by every Smalt reader: the next
  * {@link #read()} returns the frame displayed at the requested time.
@@ -69,9 +78,25 @@ public final class VideoReader implements AutoCloseable {
     private final ArrayDeque<Picture> spare;
 
     /**
-     * The decoder of {@link #track}, replaced by every seek.
+     * The decoder of {@link #track}, replaced by every seek and every codec configuration change.
      */
     private VideoDecoder decoder;
+
+    /**
+     * The codec configuration of {@link #decoder}, or {@code null} when it has none.
+     */
+    private byte[] config;
+
+    /**
+     * The timestamps of the discarded packets whose frames have not been dropped yet.
+     */
+    private final DiscardedFrames discarded = new DiscardedFrames();
+
+    /**
+     * The presentation timestamps restored for decoding-order stamped packets, or {@code null} when
+     * the codec does not reorder frames.
+     */
+    private final DecodeOrderTimestamps reordered;
 
     /**
      * The picture of the frame returned last, recycled by the next call.
@@ -96,6 +121,16 @@ public final class VideoReader implements AutoCloseable {
     private int failures;
 
     /**
+     * The presentation timestamp of the last frame decoded, or {@link Long#MIN_VALUE}.
+     */
+    private long previousPts = Long.MIN_VALUE;
+
+    /**
+     * The interval between the last two frames decoded, in track time base units, or 0 before two.
+     */
+    private long observedInterval;
+
+    /**
      * Whether the input ended and the decoder was flushed.
      */
     private boolean ended;
@@ -116,6 +151,8 @@ public final class VideoReader implements AutoCloseable {
         this.ready = new ArrayDeque<>();
         this.spare = new ArrayDeque<>();
         this.dropBefore = Long.MIN_VALUE;
+        this.config = track.codecConfig().orElse(null);
+        this.reordered = DecodeOrderTimestamps.of(track.codec());
     }
 
     /**
@@ -173,12 +210,34 @@ public final class VideoReader implements AutoCloseable {
     }
 
     /**
+     * {@return the short name of the container the input was recognized as, which identifies a container that
+     * {@link ContainerFormat} does not name; see {@link com.github.auties00.smalt.container.Demuxer#formatName()}}
+     */
+    public String formatName() {
+        return demuxer.formatName();
+    }
+
+    /**
      * Returns the track being decoded.
      *
      * @return the track
      */
     public VideoTrack track() {
         return track;
+    }
+
+    /**
+     * {@return the duration of the video in microseconds as the file declares it: the track's
+     * duration, else the container's, or {@code -1} when it declares neither}
+     *
+     * <p>Nothing is read to find it.
+     */
+    public long durationMicros() {
+        if (track.duration() > 0) {
+            return track.timeBase().toMicros(track.duration());
+        }
+        var container = demuxer.durationMicros();
+        return container > 0 ? container : -1;
     }
 
     /**
@@ -232,6 +291,11 @@ public final class VideoReader implements AutoCloseable {
         var replacement = VideoDecoders.create(track, options);
         decoder.close();
         decoder = replacement;
+        config = track.codecConfig().orElse(null);
+        discarded.clear();
+        if (reordered != null) {
+            reordered.clear();
+        }
         if (lent != null) {
             spare.add(lent);
             lent = null;
@@ -246,6 +310,7 @@ public final class VideoReader implements AutoCloseable {
         }
         failures = 0;
         ended = false;
+        previousPts = Long.MIN_VALUE;
         dropBefore = SeekTimes.floor(Math.max(0, micros), track.timeBase());
     }
 
@@ -270,10 +335,25 @@ public final class VideoReader implements AutoCloseable {
         if (packet.trackId() != track.id()) {
             return;
         }
+        var newConfig = ConfigChanges.changed(packet, config);
+        if (newConfig != null) {
+            decoder.flush(this::accept);
+            var replacement = VideoDecoders.create(track.toBuilder().codecConfig(newConfig).build(), options);
+            decoder.close();
+            decoder = replacement;
+            config = newConfig;
+        }
+        discarded.note(packet);
+        if (reordered != null) {
+            reordered.note(packet);
+        }
         try {
             decoder.decode(packet, this::accept);
             failures = 0;
         } catch (MediaException.Malformed exception) {
+            if (reordered != null) {
+                reordered.discard(packet.pts());
+            }
             if (++failures >= MAX_CONSECUTIVE_FAILURES) {
                 throw new MediaException.Malformed(failures + " consecutive corrupt video packets", exception);
             }
@@ -286,9 +366,13 @@ public final class VideoReader implements AutoCloseable {
      * @param frame the decoded frame, valid only during the call
      */
     private void accept(VideoFrame frame) {
-        var pts = frame.pts();
+        var pts = reordered != null ? reordered.presentation(frame.pts()) : frame.pts();
         if (pts != Packet.NO_TIMESTAMP) {
-            if (pts < 0) {
+            if (previousPts != Long.MIN_VALUE && pts > previousPts) {
+                observedInterval = pts - previousPts;
+            }
+            previousPts = pts;
+            if (discarded.drop(pts) || pts < 0) {
                 return;
             }
             if (dropBefore != Long.MIN_VALUE) {
@@ -298,7 +382,7 @@ public final class VideoReader implements AutoCloseable {
                 if (frame.duration() <= 0 && pts <= dropBefore) {
                     var recycle = candidate != null ? candidate.picture() : spare.poll();
                     var held = PictureCopy.copy(frame.picture(), recycle);
-                    candidate = new VideoFrame(held, pts, frame.duration(), frame.keyframe());
+                    candidate = new VideoFrame(held, pts, frame.duration(), frame.keyframe(), frame.sideData());
                     return;
                 }
                 if (candidate != null) {
@@ -313,19 +397,20 @@ public final class VideoReader implements AutoCloseable {
             }
         }
         var copy = PictureCopy.copy(frame.picture(), spare.poll());
-        ready.add(new VideoFrame(copy, pts, frame.duration(), frame.keyframe()));
+        ready.add(new VideoFrame(copy, pts, frame.duration(), frame.keyframe(), frame.sideData()));
     }
 
     /**
      * Returns the nominal interval between frames, which a frame without a duration is taken to
-     * last when it is the last frame of the track.
+     * last when it is the last frame of the track: that of the track's frame rate, else the interval
+     * between the last two frames decoded.
      *
      * @return the interval in track time base units, at least one
      */
     private long frameInterval() {
         var rate = track.frameRate();
         if (rate.isEmpty() || rate.get().numerator() <= 0) {
-            return 1;
+            return Math.max(1, observedInterval);
         }
         try {
             return Math.max(1, new Rational(rate.get().denominator(), rate.get().numerator()).rescale(1, track.timeBase()));

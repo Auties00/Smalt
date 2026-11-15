@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.image.heic;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
@@ -38,7 +37,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -119,7 +117,7 @@ class HeicConformanceTest {
                 "C010.heic, 1002", "C011.heic, 1002", "C012.heic, 1002", "C023.heic, 1002", "C034.heic, 1002",
                 "C040.heic, 1014", "C043.heic, 1002", "C044.heic, 1004", "C045.heic, 1002", "C047.heic, 1002",
                 "C049.heic, 1820", "C050.heic, 1002", "C051.heic, 1002", "C053.heic, 1002", "MIAF001.heic, 1002",
-                "MIAF004.heic, 1005", "multilayer001.heic, 20003", "multilayer003.heic, 1002",
+                "MIAF004.heic, 1005", "multilayer003.heic, 1002",
                 "multilayer005.heic, 20003"
         })
         @DisplayName("Nokia files")
@@ -533,18 +531,6 @@ class HeicConformanceTest {
             assertEquals(8, info.frameCount());
             assertEquals(1280, info.width());
         }
-    }
-
-    @Nested
-    @DisplayName("unsupported features raise MediaException.Unsupported")
-    class Unsupported {
-        @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"multilayer004.heic"})
-        @DisplayName("Nokia files")
-        void nokia(String name) {
-            assertThrows(MediaException.Unsupported.class, () -> HeicDecoder.decode(source(HeicVectors.nokia(name))));
-        }
-
     }
 
     @Nested

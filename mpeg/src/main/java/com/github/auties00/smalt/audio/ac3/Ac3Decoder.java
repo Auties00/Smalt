@@ -11,7 +11,9 @@ import com.github.auties00.smalt.audio.ac3.internal.ChannelMap;
 import com.github.auties00.smalt.audio.ac3.internal.Downmix;
 import com.github.auties00.smalt.audio.ac3.internal.FrameDecoder;
 import com.github.auties00.smalt.audio.ac3.internal.FrameHeader;
+import com.github.auties00.smalt.audio.ac3.internal.OutputHoldback;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
+import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -53,7 +55,9 @@ import java.util.function.Consumer;
  * repeating the last good spectrum with a fade, so the output keeps its timing. {@link #layout()}
  * and {@link #sampleRate()} report the track's declared format until the first frame is decoded,
  * and that frame's output format afterwards; every buffer carries its own layout. Every access
- * unit is emitted by the {@link #decode(Packet, Consumer)} call that delivers it.
+ * unit is emitted by the {@link #decode(Packet, Consumer)} call that delivers it, unless
+ * {@link Ac3DecoderOptions#preNoiseHoldback()} holds the output of an E-AC-3 track back by
+ * {@link #delay()} samples.
  *
  * <p>Instances are not thread-safe.
  */
@@ -185,6 +189,55 @@ public final class Ac3Decoder implements AudioDecoder {
     private boolean closed;
 
     /**
+     * The output held back for the transient pre-noise processing, or {@code null} when the output
+     * is not held back.
+     */
+    private final OutputHoldback holdback;
+
+    /**
+     * The plane of the frame rendered last that each coded channel of each substream feeds, by
+     * substream slot (the independent substream, then each dependent one by identifier plus one).
+     */
+    private final int[][] planeMap = OutputHoldback.newMap();
+
+    /**
+     * Whether the frame rendered last was downmixed: its coded channels are in {@link #scratch} and
+     * its coefficients in {@link #mix}.
+     */
+    private boolean mixed;
+
+    /**
+     * The number of output channels of the frame rendered last, when it was downmixed.
+     */
+    private int mixedOutputs;
+
+    /**
+     * The number of coded channels of the frame rendered last, when it was downmixed.
+     */
+    private int mixedCoded;
+
+    /**
+     * Whether an access unit was decoded since the last one whose header could not be read, so a lost one can be
+     * concealed from it.
+     */
+    private boolean concealable;
+
+    /**
+     * The substream identifiers of the dependent substreams of the last decoded access unit.
+     */
+    private final int[] lastDependentIds = new int[8];
+
+    /**
+     * The number of entries of {@link #lastDependentIds}.
+     */
+    private int lastDependentCount;
+
+    /**
+     * The entries {@link #pendingDependents} takes while a lost access unit is concealed.
+     */
+    private final int[][] dependentSlots = new int[8][3];
+
+    /**
      * Constructs a decoder for a track under {@link Ac3DecoderOptions#defaults()}.
      *
      * @param track the AC-3 or E-AC-3 track
@@ -211,6 +264,8 @@ public final class Ac3Decoder implements AudioDecoder {
         }
         this.codec = track.codec();
         this.independent = new FrameDecoder(kernel);
+        this.holdback = options.preNoiseHoldback() && codec == Codec.EAC3 ? new OutputHoldback(kernel) : null;
+        independent.holdBack(holdback != null);
         this.sampleRate = track.sampleRate() > 0 ? track.sampleRate() : 48000;
         this.layout = switch (options.downmix()) {
             case MONO -> ChannelLayout.MONO;
@@ -244,6 +299,25 @@ public final class Ac3Decoder implements AudioDecoder {
     }
 
     /**
+     * {@return the number of samples per channel the output is held back by}
+     *
+     * <p>This is 512 for an E-AC-3 track decoded with {@link Ac3DecoderOptions#preNoiseHoldback()}
+     * and 0 otherwise. A held back output is the same sequence of samples, emitted later: the first
+     * {@link #decode(Packet, Consumer)} or {@link #conceal(int, Consumer)} after construction,
+     * {@link #reset()} or {@link #flush(Consumer)} emits this many samples fewer than its access unit
+     * holds (nothing for an access unit shorter than that, whose samples later calls emit), every later
+     * one emits as many samples as its access unit holds, the first of them lying this many samples
+     * before the access unit's first sample, and {@link #flush(Consumer)} emits the samples still
+     * held. A caller that places the output by the timestamps of the packets subtracts this delay.
+     * A transient pre-noise correction does not outlive a break in its substream's samples (an access
+     * unit missing the substream or repeating it, an AC-3 frame in the track, a silent concealment):
+     * it is dropped, since the samples it would copy and correct are no longer adjacent.
+     */
+    public int delay() {
+        return holdback != null ? OutputHoldback.SAMPLES : 0;
+    }
+
+    /**
      * {@return the dialogue level ({@code dialnorm}) of the last decoded frame in dBFS, from -31 to
      * -1, or empty before the first frame}
      */
@@ -266,7 +340,8 @@ public final class Ac3Decoder implements AudioDecoder {
      * {@inheritDoc}
      *
      * <p>Each AC-3 frame or E-AC-3 access unit of the packet yields one buffer of 256 samples per
-     * audio block. Bytes that do not start a valid sync frame are skipped up to the next sync word,
+     * audio block; an output held back by {@link #delay()} samples yields as many samples, one buffer
+     * per run of one format. Bytes that do not start a valid sync frame are skipped up to the next sync word,
      * and so is a frame of the reserved E-AC-3 stream type 3; a frame cut short by the end of the
      * packet is dropped. An exception thrown by {@code output} propagates unchanged.
      *
@@ -354,6 +429,7 @@ public final class Ac3Decoder implements AudioDecoder {
         var checkCrc = options.crcCheck();
         if (!independent.parse(unitData, offset, unitLength, unitCorrupt, checkCrc)) {
             pendingDependents.clear();
+            concealable = false;
             return;
         }
         var header = independent.header();
@@ -365,6 +441,7 @@ public final class Ac3Decoder implements AudioDecoder {
                 var decoder = dependents[frame[2]];
                 if (decoder == null) {
                     decoder = new FrameDecoder(kernel);
+                    decoder.holdBack(holdback != null);
                     dependents[frame[2]] = decoder;
                 }
                 if (!decoder.parse(unitData, frame[0], frame[1], unitCorrupt, checkCrc)
@@ -382,17 +459,16 @@ public final class Ac3Decoder implements AudioDecoder {
             }
         }
         independent.reconstruct();
-        var blocks = header.blocks;
-        var samples = 256 * blocks;
-        computeGains(header, lastDependent);
-        var scale = options.dialogueNormalization()
-                ? (float) Math.pow(10, (normalizedDialnorm(header.dialogueNormalization[0]) - 31) / 20.0) : 1.0f;
-        AudioBuffer buffer;
-        if (options.downmix() == Ac3Downmix.NONE) {
-            buffer = nativeOutput(header, samples, scale, dependentCount > 0);
-        } else {
-            buffer = downmixOutput(header, samples, scale);
+        var buffer = render(header, lastDependent, dependentCount > 0);
+        lastDependentCount = 0;
+        if (extensions) {
+            for (var frame : pendingDependents) {
+                if (frame[2] >= 0 && !lastDependent(frame[2])) {
+                    lastDependentIds[lastDependentCount++] = frame[2];
+                }
+            }
         }
+        concealable = true;
         sampleRate = header.sampleRate;
         layout = buffer.layout();
         started = true;
@@ -405,8 +481,205 @@ public final class Ac3Decoder implements AudioDecoder {
             }
         }
         objectAudio = objects;
+        emit(buffer, dependentCount > 0, output);
         pendingDependents.clear();
-        output.accept(buffer);
+    }
+
+    /**
+     * Emits the output of the access unit rendered last, or holds it back and emits the oldest
+     * samples held, after replacing the held samples the unit's transient pre-noise processing
+     * corrected.
+     *
+     * @param buffer the rendered output
+     * @param extensions whether the dependent substreams of {@link #pendingDependents} were synthesized
+     * @param output receives the emitted buffers
+     */
+    private void emit(AudioBuffer buffer, boolean extensions, Consumer<AudioBuffer> output) {
+        if (holdback == null) {
+            output.accept(buffer);
+            return;
+        }
+        interruptBrokenSubstreams(extensions);
+        correctHeld(independent, 0);
+        if (extensions) {
+            for (var frame : pendingDependents) {
+                if (frame[2] >= 0) {
+                    correctHeld(dependents[frame[2]], frame[2] + 1);
+                }
+            }
+        }
+        if (mixed) {
+            holdback.pushMixed(scratch, mixedCoded, mix, mixedOutputs, buffer.layout(), buffer.sampleRate(),
+                    buffer.frames());
+        } else {
+            holdback.push(buffer, planeMap);
+        }
+        holdback.release(output);
+    }
+
+    /**
+     * Interrupts the transient pre-noise processing of every dependent substream the access unit did
+     * not synthesize exactly once: its samples before the next frame are then not those the held
+     * output holds for it.
+     *
+     * @param extensions whether the dependent substreams of {@link #pendingDependents} were synthesized
+     */
+    private void interruptBrokenSubstreams(boolean extensions) {
+        for (var id = 0; id < dependents.length; id++) {
+            var decoder = dependents[id];
+            if (decoder == null) {
+                continue;
+            }
+            var synthesized = 0;
+            if (extensions) {
+                for (var frame : pendingDependents) {
+                    synthesized += frame[2] == id ? 1 : 0;
+                }
+            }
+            if (synthesized != 1) {
+                decoder.interruptPreNoise();
+            }
+        }
+    }
+
+    /**
+     * Replaces the held samples that the transient pre-noise processing of a substream's frame
+     * synthesized last corrected.
+     *
+     * @param decoder the substream's decoder
+     * @param slot the substream slot of {@link #planeMap}
+     */
+    private void correctHeld(FrameDecoder decoder, int slot) {
+        for (var ch = 0; ch < decoder.header().channels; ch++) {
+            var from = decoder.lateStart(ch);
+            if (from < FrameDecoder.HOLDBACK) {
+                holdback.correct(slot, ch, decoder.lateValues(ch), from);
+            }
+        }
+    }
+
+    /**
+     * Synthesizes the access unit whose substreams were parsed, or marked lost, into the output format.
+     *
+     * @param header the independent frame header
+     * @param lastDependent the last dependent substream of the unit, or {@code null}
+     * @param extensions whether dependent substreams take part
+     * @return the buffer
+     */
+    private AudioBuffer render(FrameHeader header, FrameDecoder lastDependent, boolean extensions) {
+        var samples = 256 * header.blocks;
+        for (var row : planeMap) {
+            Arrays.fill(row, -1);
+        }
+        mixed = false;
+        computeGains(header, lastDependent);
+        var scale = options.dialogueNormalization()
+                ? (float) StrictMath.pow(10, (normalizedDialnorm(header.dialogueNormalization[0]) - 31) / 20.0) : 1.0f;
+        if (options.downmix() == Ac3Downmix.NONE) {
+            return nativeOutput(header, samples, scale, extensions);
+        }
+        return downmixOutput(header, samples, scale);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The concealment unit is the access unit length of the last decoded frame, 256 samples per audio block
+     * (1536 for AC-3 and six-block E-AC-3), or 1536 before the first frame. Every lost access unit is concealed as a
+     * damaged frame is, with the configuration of the last decoded one: each block repeats the last good
+     * coefficients of its channel with a falling gain, dependent substreams included, so the output keeps its
+     * layout. An output held back by {@link #delay()} samples emits the concealed samples later, as it
+     * does decoded ones, so the call may hand over fewer samples than it conceals, or none.
+     *
+     * @return the number of samples per channel handed to {@code output}
+     * @throws IllegalArgumentException if {@code samples} is not positive
+     * @throws IllegalStateException if the decoder is closed
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        if (closed) {
+            throw new IllegalStateException("the decoder is closed");
+        }
+        var unit = concealable ? 256 * independent.header().blocks : 1536;
+        var units = Math.min(Math.max(1, (samples + unit / 2) / unit), Integer.MAX_VALUE / unit);
+        var handed = new int[1];
+        ConsumerFailure.<AudioBuffer>run("AC-3 concealment", output, emit -> {
+            Consumer<AudioBuffer> counted = buffer -> {
+                handed[0] += buffer.frames();
+                emit.accept(buffer);
+            };
+            for (var i = 0; i < units; i++) {
+                concealUnit(counted);
+            }
+        });
+        return handed[0];
+    }
+
+    /**
+     * Conceals one lost access unit with the substreams of the last decoded one, or with silence in the reported
+     * format before the first.
+     *
+     * @param output receives the emitted buffers
+     */
+    private void concealUnit(Consumer<AudioBuffer> output) {
+        if (!concealable) {
+            var silent = buffer(layout, sampleRate, 1536);
+            for (var plane : silent.planes()) {
+                Arrays.fill(plane, 0, 1536, 0);
+            }
+            silent.setFrames(1536);
+            for (var row : planeMap) {
+                Arrays.fill(row, -1);
+            }
+            mixed = false;
+            if (holdback != null) {
+                independent.interruptPreNoise();
+            }
+            emit(silent, false, output);
+            return;
+        }
+        independent.markLost();
+        pendingDependents.clear();
+        FrameDecoder lastDependent = null;
+        for (var i = 0; i < lastDependentCount; i++) {
+            var id = lastDependentIds[i];
+            lastDependent = dependents[id];
+            lastDependent.markLost();
+            var slot = dependentSlots[i];
+            slot[2] = id;
+            pendingDependents.add(slot);
+        }
+        var buffer = render(independent.header(), lastDependent, lastDependentCount > 0);
+        emit(buffer, lastDependentCount > 0, output);
+        pendingDependents.clear();
+    }
+
+    /**
+     * Returns whether a dependent substream is among those of the last decoded access unit, which lists each
+     * substream once however many frames of it a malformed unit repeats.
+     *
+     * @param id the substream identifier
+     * @return {@code true} when {@link #lastDependentIds} holds it
+     */
+    private boolean lastDependent(int id) {
+        for (var i = 0; i < lastDependentCount; i++) {
+            if (lastDependentIds[i] == id) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -459,7 +732,7 @@ public final class Ac3Decoder implements AudioDecoder {
         var mantissa = word & 0x1F;
         var gain = Math.scalb((32 + mantissa) / 64.0, exponent + 1);
         var scale = gain > 1 ? options.boostScale() : options.cutScale();
-        return (float) (scale == 1 ? gain : Math.pow(gain, scale));
+        return (float) (scale == 1 ? gain : StrictMath.pow(gain, scale));
     }
 
     /**
@@ -506,7 +779,9 @@ public final class Ac3Decoder implements AudioDecoder {
         var targets = new float[speakers.length][];
         var used = new boolean[ordered.size()];
         for (var ch = 0; ch < speakers.length; ch++) {
-            targets[ch] = planes[claim(ordered, used, speakers[ch])];
+            var index = claim(ordered, used, speakers[ch]);
+            targets[ch] = planes[index];
+            planeMap[0][ch] = index;
         }
         independent.synthesize(gains, scale, targets, 0);
         for (var frame : pendingDependents) {
@@ -522,11 +797,29 @@ public final class Ac3Decoder implements AudioDecoder {
                     index = claim(ordered, used, dependentSpeakers[ch]);
                 }
                 dependentTargets[ch] = planes[index];
+                unmap(index);
+                planeMap[frame[2] + 1][ch] = index;
             }
             decoder.synthesize(gains, scale, dependentTargets, 0);
         }
         buffer.setFrames(samples);
         return buffer;
+    }
+
+    /**
+     * Forgets the coded channels that fed an output plane, which a later substream's channel
+     * overwrites.
+     *
+     * @param plane the output plane
+     */
+    private void unmap(int plane) {
+        for (var row : planeMap) {
+            for (var ch = 0; ch < row.length; ch++) {
+                if (row[ch] == plane) {
+                    row[ch] = -1;
+                }
+            }
+        }
     }
 
     /**
@@ -558,6 +851,7 @@ public final class Ac3Decoder implements AudioDecoder {
         var targets = cachedTargets;
         for (var ch = 0; ch < targets.length; ch++) {
             independentTargets[ch] = planes[targets[ch]];
+            planeMap[0][ch] = targets[ch];
         }
         independent.synthesize(gains, scale, independentTargets, 0);
         buffer.setFrames(samples);
@@ -611,7 +905,12 @@ public final class Ac3Decoder implements AudioDecoder {
         var outputLayout = outputs == 1 ? ChannelLayout.MONO : ChannelLayout.STEREO;
         var buffer = buffer(outputLayout, header.sampleRate, samples);
         buffer.setFrames(samples);
-        mix(outputs, coded, buffer);
+        mixed = true;
+        mixedOutputs = outputs;
+        mixedCoded = coded;
+        if (holdback == null) {
+            mix(outputs, coded, buffer);
+        }
         return buffer;
     }
 
@@ -657,16 +956,23 @@ public final class Ac3Decoder implements AudioDecoder {
     /**
      * {@inheritDoc}
      *
-     * <p>Emits nothing: every access unit was emitted by the call that decoded it.
+     * <p>Emits the samples held back by {@link #delay()}, if any, and nothing otherwise: every access
+     * unit was emitted by the call that decoded it. Decoding may continue afterwards, the next call
+     * emitting {@link #delay()} samples fewer than its access unit holds. An exception thrown by
+     * {@code output} propagates unchanged.
      */
     @Override
     public void flush(Consumer<AudioBuffer> output) {
         Objects.requireNonNull(output, "output");
+        if (holdback != null && holdback.held() > 0) {
+            ConsumerFailure.<AudioBuffer>run("AC-3 flush", output, holdback::flush);
+        }
     }
 
     /**
      * Resets the decoder to its initial state, for example after a seek: the overlap and
-     * concealment state of every substream is cleared.
+     * concealment state of every substream is cleared, and the samples held back by
+     * {@link #delay()} are dropped.
      *
      * @throws IllegalStateException if the decoder is closed
      */
@@ -679,6 +985,9 @@ public final class Ac3Decoder implements AudioDecoder {
             if (decoder != null) {
                 decoder.reset();
             }
+        }
+        if (holdback != null) {
+            holdback.clear();
         }
     }
 

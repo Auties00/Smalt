@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 class SilkKernelsTest {
     private static SilkKernels vector() {
-        Assumptions.assumeTrue(Simd.ENABLED, "Vector API not enabled");
+        Skip.unlessVector(Simd.ENABLED);
         return VectorSilkKernels.createForTest();
     }
 

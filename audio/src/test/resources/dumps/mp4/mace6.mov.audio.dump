@@ -1,0 +1,12 @@
+# audio decode dump of mp4/mace6.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 600272
+seekable true
+track 1 MACE6 rate=11025 layout=[FRONT_CENTER]
+0 frames=4096 crc16=bf6a8ca2
+1 frames=2522 crc16=86efa159
+seek 0: @sample 0
+seek 200090: @sample 2206
+seek 400181: @sample 4412
+seek 600272: end
+seek -1000000: @sample 0

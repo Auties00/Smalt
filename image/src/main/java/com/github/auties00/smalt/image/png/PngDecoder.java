@@ -14,6 +14,7 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
@@ -43,17 +44,24 @@ import java.util.Optional;
  * Pixels are returned as stored, without color management unless
  * {@link ImageDecoderOptions#convertToSrgb()} asks for sRGB: {@link DecodedImage#colorProfile()}
  * describes them from the {@code cICP}, {@code iCCP}, {@code sRGB}, {@code gAMA} and {@code cHRM}
- * chunks, and an {@code iCCP} profile is also returned in {@link DecodedImage#iccProfile()}. An
+ * chunks, a high-dynamic-range {@code cICP} profile carrying the {@code mDCV} and {@code cLLI}
+ * metadata in its {@link com.github.auties00.smalt.image.color.ColorProfile#colorInfo()}, and an
+ * {@code iCCP} profile is also returned in {@link DecodedImage#iccProfile()}. An
  * {@code eXIf} chunk before the image data supplies {@link DecodedImage#exif()} and the
- * orientation.
+ * orientation, and the first {@code iTXt} chunk with the keyword {@code XML:com.adobe.xmp}
+ * supplies {@link DecodedImage#xmp()}. The first {@code pHYs} chunk before the image data supplies
+ * {@link DecodedImage#density()}, in dots per meter or as an aspect ratio; one of another length than 9 bytes,
+ * with a bad CRC, a zero value, a value above {@code 2^31 - 1} or an unknown unit gives none.
  *
  * <p>A CRC-32 mismatch in a critical chunk ({@code IHDR}, {@code PLTE}, {@code IDAT},
  * {@code IEND}) is malformed, while an ancillary chunk with a bad CRC is skipped; an unknown
  * critical chunk is unsupported; a palette index past the palette is malformed. The image data
  * is inflated only to the size of the scanlines the header declares, which is checked against the
  * {@link MediaLimits} before any allocation, so a decompression bomb costs no more than the
- * declared image. Chunks after the chunk in which the image data ends are not read by
- * {@link #decode(MediaSource, ImageDecoderOptions)}, so a missing {@code IEND} is tolerated.
+ * declared image. Of the chunks after the chunk in which the image data ends,
+ * {@link #decode(MediaSource, ImageDecoderOptions)} reads only those of a datastream without
+ * animation frames, and only to find an XMP packet not found before the image data; a missing
+ * {@code IEND} or a corrupt chunk there is tolerated.
  *
  * <p>This class is thread-safe.
  */
@@ -123,8 +131,10 @@ public final class PngDecoder {
      * {@link ImageDecoderOptions#highBitDepth()} set it is an {@link Rgba16Picture} instead.
      *
      * @param source the input, read from offset zero
-     * @param options the limits and the bit depth choice; the size hint is ignored
+     * @param options the limits, the region (cut out of the whole image) and the bit depth choice; the size hint
+     * is ignored
      * @return the decoded image
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the datastream is invalid, truncated or corrupt
      * @throws MediaException.Unsupported if an unknown critical chunk precedes the image data
      * @throws MediaException.LimitExceeded if the image exceeds the limits of {@code options} or
@@ -134,6 +144,17 @@ public final class PngDecoder {
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
+        return ImageRegions.decode(options, null, whole -> decodeWhole(source, whole));
+    }
+
+    /**
+     * Decodes the whole image of a datastream.
+     *
+     * @param source the datastream
+     * @param options the decoding options; the region is ignored
+     * @return the decoded image
+     */
+    private static DecodedImage decodeWhole(MediaSource source, ImageDecoderOptions options) {
         try (var _ = ParallelBands.operation()) {
             return Guards.malformed("PNG datastream", () -> {
                 var limits = options.limits();
@@ -162,9 +183,11 @@ public final class PngDecoder {
                     picture = rgba;
                 }
                 reader.finishImageData();
+                reader.readTrailingMetadata();
                 var image = new DecodedImage(picture, ImageFormat.PNG, reader.orientation(), width, height,
                         Optional.ofNullable(reader.iccProfile()), Optional.ofNullable(reader.exif()),
-                        Optional.ofNullable(reader.colorProfile()));
+                        Optional.ofNullable(reader.xmp()), Optional.ofNullable(reader.colorProfile()),
+                        Optional.ofNullable(reader.density()));
                 return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
             });
         }

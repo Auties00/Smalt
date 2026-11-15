@@ -47,8 +47,9 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  * A {@code kAudioDevicePropertyDeviceIsAlive} listener fails the session when the device
  * disappears.
  *
- * @implNote This implementation has not been run on a Mac: it was written from the macOS SDK
- * headers and compiled on another platform.
+ * <p>An exclusive stream first takes the device's hog mode ({@link CoreAudioHog}), which keeps
+ * every other process off the device, and runs the device at the stream's own rate and channel
+ * count, so nothing converts its audio.
  */
 @SuppressWarnings("restricted")
 final class CoreAudioStream implements DeviceEngine {
@@ -121,6 +122,11 @@ final class CoreAudioStream implements DeviceEngine {
     private MemorySegment aliveAddress = MemorySegment.NULL;
 
     /**
+     * The hog mode this stream holds, when it is exclusive.
+     */
+    private CoreAudioHog.Hold hold;
+
+    /**
      * The stream geometry.
      */
     private StreamPlan plan;
@@ -183,11 +189,11 @@ final class CoreAudioStream implements DeviceEngine {
      *
      * @param options the stream options
      * @return the session
-     * @throws MediaException.Io if the device cannot be opened
-     * @throws MediaException.Unsupported if the options ask for the exclusive mode
+     * @throws MediaException.Io if the device cannot be opened, or another stream owns it exclusively
+     * @throws MediaException.Unsupported if the device cannot run exclusively in the asked format
      */
     static AudioCaptureSession openCapture(AudioDevice.Input device, AudioStreamOptions options) {
-        var stream = new CoreAudioStream(false, device, resolve(device, options));
+        var stream = new CoreAudioStream(false, device, resolve(device));
         try {
             stream.openInput(options);
         } catch (RuntimeException | Error failure) {
@@ -202,11 +208,11 @@ final class CoreAudioStream implements DeviceEngine {
      *
      * @param options the stream options
      * @return the session
-     * @throws MediaException.Io if the device cannot be opened
-     * @throws MediaException.Unsupported if the options ask for the exclusive mode
+     * @throws MediaException.Io if the device cannot be opened, or another stream owns it exclusively
+     * @throws MediaException.Unsupported if the device cannot run exclusively in the asked format
      */
     static AudioPlaybackSession openPlayback(AudioDevice.Output device, AudioStreamOptions options) {
-        var stream = new CoreAudioStream(true, device, resolve(device, options));
+        var stream = new CoreAudioStream(true, device, resolve(device));
         try {
             stream.openOutput(options);
         } catch (RuntimeException | Error failure) {
@@ -217,18 +223,12 @@ final class CoreAudioStream implements DeviceEngine {
     }
 
     /**
-     * Resolves the device's audio object and checks the options.
+     * Resolves the device's audio object.
      *
-     * @param options the stream options
      * @return the {@code AudioObjectID}
      * @throws MediaException.Io if no device has the UID
-     * @throws MediaException.Unsupported if the options ask for the exclusive mode
      */
-    private static int resolve(AudioDevice device, AudioStreamOptions options) {
-        if (options.shareMode() == AudioShareMode.EXCLUSIVE) {
-            // TODO: exclusive streams through kAudioDevicePropertyHogMode
-            throw new MediaException.Unsupported("exclusive mode", "exclusive audio streams are not supported on macOS");
-        }
+    private static int resolve(AudioDevice device) {
         var object = CoreAudioDevices.resolve(device.id());
         if (object == 0) {
             var message = "cannot open the audio device " + device.name() + ": no such device";
@@ -243,8 +243,9 @@ final class CoreAudioStream implements DeviceEngine {
      * @param options the stream options
      */
     private void openInput(AudioStreamOptions options) {
-        var deviceRate = (int) Math.round(CoreAudio.doubleProperty(object, CoreAudio.NOMINAL_SAMPLE_RATE, CoreAudio.SCOPE_GLOBAL, 48_000));
+        // TODO: follow a change of the device's rate as CoreAudioTap does; the unit stops delivering until it returns
         var deviceChannels = Math.max(1, CoreAudioDevices.channels(object, CoreAudio.SCOPE_INPUT));
+        var deviceRate = deviceRate(options, deviceChannels);
         plan = StreamPlan.resolve(options, deviceRate, deviceChannels);
         unit = CoreAudio.newHalOutputUnit(arena);
         CoreAudio.check(CoreAudio.setUnitInt(unit, CoreAudio.UNIT_ENABLE_IO, CoreAudio.UNIT_SCOPE_INPUT, CoreAudio.INPUT_ELEMENT, 1, arena),
@@ -270,7 +271,7 @@ final class CoreAudioStream implements DeviceEngine {
         session.attach(this, granted(deviceRate));
         captureSession = session;
         watchAlive();
-        CoreAudio.check(CoreAudio.start(unit), "AudioOutputUnitStart");
+        startUnit();
     }
 
     /**
@@ -279,8 +280,8 @@ final class CoreAudioStream implements DeviceEngine {
      * @param options the stream options
      */
     private void openOutput(AudioStreamOptions options) {
-        var deviceRate = (int) Math.round(CoreAudio.doubleProperty(object, CoreAudio.NOMINAL_SAMPLE_RATE, CoreAudio.SCOPE_GLOBAL, 48_000));
         var deviceChannels = Math.max(1, CoreAudioDevices.channels(object, CoreAudio.SCOPE_OUTPUT));
+        var deviceRate = deviceRate(options, deviceChannels);
         plan = StreamPlan.resolve(options, deviceRate, deviceChannels);
         unit = CoreAudio.newHalOutputUnit(arena);
         bind(deviceRate);
@@ -294,7 +295,51 @@ final class CoreAudioStream implements DeviceEngine {
         session.attach(this, granted(deviceRate));
         playbackSession = session;
         watchAlive();
-        CoreAudio.check(CoreAudio.start(unit), "AudioOutputUnitStart");
+        startUnit();
+    }
+
+    /**
+     * Starts the unit, naming the owner when another process holds the device exclusively, which
+     * fails the start with a status that does not say so.
+     *
+     * @throws MediaException.Io if the unit does not start
+     */
+    private void startUnit() {
+        var status = CoreAudio.start(unit);
+        if (status == 0) {
+            return;
+        }
+        var owner = CoreAudio.intProperty(object, CoreAudio.HOG_MODE, CoreAudio.SCOPE_GLOBAL, CoreAudioHog.NO_OWNER);
+        CoreAudio.check(status, owner == CoreAudioHog.NO_OWNER || owner == ProcessHandle.current().pid() ? "AudioOutputUnitStart"
+                : "the audio device " + device.name() + ": another application (process " + owner
+                  + ") uses the device exclusively; AudioOutputUnitStart");
+    }
+
+    /**
+     * Returns the rate the device runs at for this stream, taking the device first when the stream
+     * is exclusive.
+     *
+     * @param options the stream options
+     * @param deviceChannels the device's channel count in the stream's direction
+     * @return the device's rate in hertz
+     * @throws MediaException.Io if another stream owns the device exclusively
+     * @throws MediaException.Unsupported if an exclusive stream asks for a format the device lacks,
+     * or the device refuses the hog mode
+     */
+    private int deviceRate(AudioStreamOptions options, int deviceChannels) {
+        var nominal = (int) Math.round(CoreAudio.doubleProperty(object, CoreAudio.NOMINAL_SAMPLE_RATE, CoreAudio.SCOPE_GLOBAL, 48_000));
+        if (options.shareMode() != AudioShareMode.EXCLUSIVE) {
+            return nominal;
+        }
+        var rate = options.sampleRate().orElse(nominal);
+        var channels = options.channels().orElse(deviceChannels);
+        var offered = CoreAudioDevices.formats(object, deviceChannels).stream().anyMatch(format -> format.sampleRate() == rate);
+        if (channels != deviceChannels || !offered) {
+            throw new MediaException.Unsupported("exclusive mode", "the audio device " + device.name() + " cannot run exclusively at "
+                    + rate + " Hz with " + channels + " channels");
+        }
+        hold = CoreAudioHog.system().acquire(object, device.name(), playback, rate);
+        return rate;
     }
 
     /**
@@ -373,6 +418,10 @@ final class CoreAudioStream implements DeviceEngine {
             CoreAudio.uninitialize(unit);
             CoreAudio.dispose(unit);
             unit = MemorySegment.NULL;
+        }
+        if (hold != null) {
+            CoreAudioHog.system().release(hold);
+            hold = null;
         }
         if (captureSession != null) {
             captureSession.end();

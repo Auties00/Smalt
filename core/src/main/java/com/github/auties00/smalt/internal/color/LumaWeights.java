@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.internal.color;
 
+import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 
 import java.util.Optional;
@@ -11,8 +12,8 @@ import java.util.Optional;
  * <p>{@code Y' = kr * R' + kg * G' + kb * B'} with {@code kg = 1 - kr - kb}; the chroma rows follow
  * from the same two weights. Instances are immutable and thread-safe.
  *
- * @param kr the red weight, in (0, 1)
- * @param kb the blue weight, in (0, 1)
+ * @param kr the red weight, in [0, 1)
+ * @param kb the blue weight, in [0, 1)
  */
 public record LumaWeights(double kr, double kb) {
     /**
@@ -43,12 +44,12 @@ public record LumaWeights(double kr, double kb) {
     /**
      * Returns the weights of a matrix.
      *
-     * <p>The result is empty for every matrix that two weights do not define:
+     * <p>The result is empty for every matrix that two fixed weights do not define:
      * {@link MatrixCoefficients#UNSPECIFIED}, which {@link MatrixCoefficients#effective()} resolves;
-     * {@link MatrixCoefficients#IDENTITY} and {@link MatrixCoefficients#YCGCO}, which are not
-     * luma-weighted; the constant-luminance and chromaticity-derived matrices and
-     * {@link MatrixCoefficients#ICTCP}, which need the transfer function or the primaries; and
-     * {@link MatrixCoefficients#SMPTE2085}.
+     * {@link MatrixCoefficients#IDENTITY}, {@link MatrixCoefficients#SMPTE2085} and the YCgCo matrices,
+     * which are not luma-weighted; the constant-luminance and chromaticity-derived matrices, which need the
+     * transfer function or the primaries (see {@link #of(MatrixCoefficients, ColorPrimaries)}); and
+     * {@link MatrixCoefficients#ICTCP} and {@link MatrixCoefficients#IPT_C2}.
      *
      * @param matrix the matrix coefficients
      * @return the weights, or empty when two weights do not define {@code matrix}
@@ -61,8 +62,52 @@ public record LumaWeights(double kr, double kb) {
             case SMPTE240M -> SMPTE240M;
             case BT2020_NCL -> BT2020;
             case IDENTITY, UNSPECIFIED, YCGCO, BT2020_CL, SMPTE2085, CHROMA_DERIVED_NCL, CHROMA_DERIVED_CL,
-                 ICTCP -> null;
+                 ICTCP, IPT_C2, YCGCO_RE, YCGCO_RO -> null;
         });
+    }
+
+    /**
+     * Returns the weights of a matrix with the primaries it is used with.
+     *
+     * <p>The chromaticity-derived matrices take the weights of {@link #of(ColorPrimaries)}; the BT.2020
+     * constant-luminance matrix takes {@link #BT2020}; every other matrix gives the result of
+     * {@link #of(MatrixCoefficients)}.
+     *
+     * @param matrix the matrix coefficients
+     * @param primaries the color primaries, {@link ColorPrimaries#UNSPECIFIED} meaning BT.709
+     * @return the weights, or empty when the matrix is not built on weighted luma
+     */
+    public static Optional<LumaWeights> of(MatrixCoefficients matrix, ColorPrimaries primaries) {
+        return switch (matrix) {
+            case CHROMA_DERIVED_NCL, CHROMA_DERIVED_CL -> Optional.of(of(primaries));
+            case BT2020_CL -> Optional.of(BT2020);
+            default -> of(matrix);
+        };
+    }
+
+    /**
+     * Returns the weights a set of primaries derives (ITU-T H.273 equations 39 to 44): the luminance of
+     * each unit primary relative to the white point.
+     *
+     * <p>The CIE XYZ primaries of {@link ColorPrimaries#SMPTE428} give {@code kr = kb = 0}, luma being Y.
+     *
+     * @param primaries the color primaries, {@link ColorPrimaries#UNSPECIFIED} meaning BT.709
+     * @return the weights
+     */
+    public static LumaWeights of(ColorPrimaries primaries) {
+        var defined = primaries == ColorPrimaries.UNSPECIFIED ? ColorPrimaries.BT709 : primaries;
+        var red = defined.red().orElseThrow();
+        var green = defined.green().orElseThrow();
+        var blue = defined.blue().orElseThrow();
+        var white = defined.white().orElseThrow();
+        double xr = red.x(), yr = red.y(), zr = 1 - (xr + yr);
+        double xg = green.x(), yg = green.y(), zg = 1 - (xg + yg);
+        double xb = blue.x(), yb = blue.y(), zb = 1 - (xb + yb);
+        double xw = white.x(), yw = white.y(), zw = 1 - (xw + yw);
+        var denominator = yw * (xr * (yg * zb - yb * zg) + xg * (yb * zr - yr * zb) + xb * (yr * zg - yg * zr));
+        var kr = yr * (xw * (yg * zb - yb * zg) + yw * (xb * zg - xg * zb) + zw * (xg * yb - xb * yg)) / denominator;
+        var kb = yb * (xw * (yr * zg - yg * zr) + yw * (xg * zr - xr * zg) + zw * (xr * yg - xg * yr)) / denominator;
+        return new LumaWeights(kr, kb);
     }
 
     /**

@@ -1,0 +1,16 @@
+# video decode dump of matroska/ffv1.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 600000
+seekable true
+track 1 FFV1 96x64 timebase=1/1000
+0 pts=0 dur=100 key=true 96x64 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=7ab55dd2 u=2072537b v=e6e0ba7a
+1 pts=100 dur=100 key=false 96x64 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=7dcd2b07 u=987db2b1 v=c4abbe62
+2 pts=200 dur=100 key=true 96x64 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=45fc2247 u=310cc894 v=f9bfe8ac
+3 pts=300 dur=100 key=false 96x64 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=59fc8ec9 u=0074a1af v=26e8cdf5
+4 pts=400 dur=100 key=true 96x64 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=b65a379a u=7142a75c v=6c6e809a
+5 pts=500 dur=100 key=false 96x64 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=cc2174ee u=53d8106c v=e0305925
+seek 0: @0
+seek 200000: @2
+seek 400000: @4
+seek 600000: end
+seek -1000000: @0

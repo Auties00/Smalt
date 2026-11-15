@@ -1,0 +1,22 @@
+# audio decode dump of ape/ape.ape; regenerate with -Dsmalt.test.updateDumps=true
+format APE
+duration 600000
+seekable true
+track 0 APE rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=df707101
+1 frames=4096 crc16=5c687e47
+2 frames=4096 crc16=7389be75
+3 frames=4096 crc16=ca84cb80
+4 frames=4096 crc16=d3e3d8a1
+5 frames=4096 crc16=234f3e87
+6 frames=1884 crc16=f78194c8
+seek 0: @sample 0
+seek 200000: @sample 8820
+seek 400000: @sample 17640
+seek 600000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format APE
+  duration 600000
+  seekable false
+  track 0 APE rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]

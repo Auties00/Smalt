@@ -1,10 +1,10 @@
 package com.github.auties00.smalt.video.vp9.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.YuvPicture;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -91,7 +91,7 @@ class Vp9RtInteropTest {
             "96, 64, 9, true, 0"})
     @DisplayName("FFmpeg's VP9 decoders reproduce the reconstruction")
     void decoders(int width, int height, int speed, boolean errorResilient, int tiles) throws Exception {
-        Assumptions.assumeTrue(ffmpegAvailable(), "ffmpeg not available");
+        Skip.unless(ffmpegAvailable(), "oracle:ffmpeg", "ffmpeg not available");
         var enc = new Vp9RtEncoder(width, height, 1, tiles, 1, MediaLimits.DEFAULT);
         enc.configure(Vp9TestVideo.rtOptions(250_000, speed).keyframeInterval(10).errorResilient(errorResilient)
                 .adaptiveQuantization(true).build());

@@ -72,4 +72,41 @@ class MathOpsExactnessTest {
             assertEquals(Double.doubleToRawLongBits(StrictMath.cos(x)), Double.doubleToRawLongBits(MathOps.cos(x)), "x " + x);
         }
     }
+    private static void assertSin(double x) {
+        assertEquals(Double.doubleToRawLongBits(StrictMath.sin(x)), Double.doubleToRawLongBits(MathOps.sin(x)), "x " + x);
+    }
+
+    @Test
+    @DisplayName("sin matches StrictMath.sin bit for bit across the reduction ranges, near multiples of pi / 2 and on special values")
+    void sin() {
+        var random = new SplittableRandom(7);
+        for (var i = 0; i < 2_000_000; i++) {
+            assertSin(random.nextDouble(-12, 12));
+        }
+        for (var i = 0; i < 500_000; i++) {
+            assertSin(random.nextDouble(-1e6, 1e6));
+            assertSin(Math.scalb(random.nextDouble(-1, 1), random.nextInt(-40, 21)));
+        }
+        // Near n pi / 2 the medium reduction cancels and takes its second and third steps.
+        for (var n = -40; n <= 40; n++) {
+            var center = n * (Math.PI / 2);
+            for (var ulps = -64; ulps <= 64; ulps++) {
+                assertSin(center + ulps * Math.ulp(center));
+            }
+            for (var k = 0; k < 2000; k++) {
+                assertSin(center + random.nextDouble(-1e-6, 1e-6));
+            }
+        }
+        for (var high : new long[]{0x3fe921fbL, 0x3fe921fcL, 0x3ff921fbL, 0x3ff921fcL, 0x4002d97bL, 0x4002d97cL,
+                0x413921fbL, 0x413921fcL, 0x3e400000L, 0x3d000000L}) {
+            for (var low : new long[]{0, 1, 0x54442d18L, 0xffffffffL}) {
+                assertSin(Double.longBitsToDouble(high << 32 | low));
+                assertSin(-Double.longBitsToDouble(high << 32 | low));
+            }
+        }
+        for (var x : new double[]{0.0, -0.0, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
+                Double.MIN_VALUE, Double.MAX_VALUE, 1e300}) {
+            assertSin(x);
+        }
+    }
 }

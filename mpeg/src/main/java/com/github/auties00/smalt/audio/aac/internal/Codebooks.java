@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.aac.internal;
 
+import com.github.auties00.smalt.MediaException;
 
 /**
  * Describes the AAC Huffman codebooks and decodes their codewords with two-level lookup tables.
@@ -51,6 +52,15 @@ public final class Codebooks {
      * The value of an escape codebook component that announces an escape sequence.
      */
     public static final int ESC_FLAG = 16;
+
+    /**
+     * The largest absolute value each spectrum codebook codes, indexed by the (virtual) codebook; 0 for
+     * the codebooks that code no values.
+     */
+    private static final int[] LARGEST = {
+            0, 1, 1, 2, 2, 4, 4, 7, 7, 12, 12, 8191, 0, 0, 0, 0,
+            15, 31, 47, 63, 95, 127, 159, 191, 223, 255, 319, 383, 511, 767, 1023, 2047
+    };
 
     /**
      * The number of values each spectrum codebook codes per codeword, indexed by codebook.
@@ -144,6 +154,79 @@ public final class Codebooks {
      */
     public static int decodeScalefactor(AacBitReader reader) {
         return (decode(reader, SCALEFACTOR_TABLE) >>> 5) - 60;
+    }
+
+    /**
+     * Returns the number of values a spectrum codebook codes per codeword.
+     *
+     * @param codebook the codebook, from 1 to 11
+     * @return 4 for codebooks 1 to 4, 2 for the others
+     */
+    public static int dimension(int codebook) {
+        return DIMENSION[codebook];
+    }
+
+    /**
+     * Decodes one spectrum codeword with its sign bits and escape sequences.
+     *
+     * @param reader the bit source
+     * @param codebook the codebook, from 1 to 11
+     * @param values receives the {@link #dimension(int)} quantized values
+     * @param offset the index of the first value
+     * @throws MediaException.Malformed if an escape prefix is longer than eight bits
+     */
+    public static void decodeCodeword(AacBitReader reader, int codebook, int[] values, int offset) {
+        var payload = decode(reader, SPECTRUM_TABLES[codebook]) >>> 5;
+        var count = DIMENSION[codebook];
+        if (!UNSIGNED[codebook]) {
+            for (var i = 0; i < count; i++) {
+                values[offset + i] = payload << (27 - 5 * i) >> 27;
+            }
+            return;
+        }
+        for (var i = 0; i < count; i++) {
+            var magnitude = payload >>> (5 * i) & 31;
+            values[offset + i] = magnitude != 0 && reader.readBit() != 0 ? -magnitude : magnitude;
+        }
+        if (codebook == ESC_HCB) {
+            for (var i = 0; i < 2; i++) {
+                var value = values[offset + i];
+                if (value == ESC_FLAG || value == -ESC_FLAG) {
+                    var magnitude = readEscape(reader);
+                    values[offset + i] = value < 0 ? -magnitude : magnitude;
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns the largest absolute value a spectrum codebook codes, virtual codebooks included.
+     *
+     * <p>A larger value in a virtual codebook band marks a corrupt codeword.
+     *
+     * @param codebook the spectrum codebook, from 1 to 11 or a virtual codebook from 16 to 31
+     * @return the largest absolute value, 8191 for codebook 11
+     */
+    public static int largestValue(int codebook) {
+        return LARGEST[codebook];
+    }
+
+    /**
+     * Reads an escape sequence: a prefix of {@code N} one bits, a zero, and an
+     * {@code N + 4}-bit word.
+     *
+     * @param reader the bit source
+     * @return the magnitude, {@code 2^(N+4)} plus the word
+     * @throws MediaException.Malformed if the prefix is longer than eight bits
+     */
+    public static int readEscape(AacBitReader reader) {
+        var bits = 4;
+        while (reader.readBit() != 0) {
+            if (++bits > 12) {
+                throw new MediaException.Malformed("AAC escape sequence longer than 13 bits");
+            }
+        }
+        return (1 << bits) + reader.read(bits);
     }
 
     /**

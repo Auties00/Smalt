@@ -74,10 +74,10 @@ final class MacroblockTree {
             outgoing = swap;
         }
         var intra = frames.get(0).intraCost;
-        var scale = (float) (strength / Math.log(2));
+        var scale = (float) (strength / StrictMath.log(2));
         for (var m = 0; m < offsets.length; m++) {
             var cost = Math.max(1, intra[m]);
-            offsets[m] = -scale * (float) Math.log(1 + incoming[m] / cost);
+            offsets[m] = -scale * (float) StrictMath.log(1 + incoming[m] / cost);
         }
     }
 

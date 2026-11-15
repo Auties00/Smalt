@@ -1,0 +1,19 @@
+# image dump of resources/tiff/inks/inks5-8.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=41, height=29, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 41x29 rgba8 alpha=false crc=a176d09e
+  format=TIFF orientation=NORMAL source=41x29
+  icc=none exif=none xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+scaled 10x7
+picture 41x29 rgba8 alpha=false crc=a176d09e
+  format=TIFF orientation=NORMAL source=41x29
+  icc=none exif=none xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+pages 1
+page 0 ImageInfo[format=TIFF, width=41, height=29, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 41x29 rgba8 alpha=false crc=a176d09e
+  format=TIFF orientation=NORMAL source=41x29
+  icc=none exif=none xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]

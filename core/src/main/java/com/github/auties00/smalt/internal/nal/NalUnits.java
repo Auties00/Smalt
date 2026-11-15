@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.internal.nal;
 
+import com.github.auties00.smalt.track.Codec;
+
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -200,6 +202,32 @@ public final class NalUnits {
      * of {@code data}
      */
     public static byte[] toAnnexB(byte[] data, int lengthSize, boolean hevc, byte[] parameterSets, byte[] delimiter) {
+        return toAnnexB(data, lengthSize, hevc ? Codec.HEVC : Codec.H264, parameterSets, delimiter);
+    }
+
+    /**
+     * Converts a length-prefixed access unit of a NAL unit codec into an Annex B access unit, with
+     * four-byte start codes.
+     *
+     * <p>Empty units are dropped. With a {@code delimiter}, the result starts with an access unit
+     * delimiter: the first unit when it is one, otherwise {@code delimiter} itself. With
+     * {@code parameterSets}, those bytes follow (after the delimiter, when there is one) unless
+     * the access unit already holds a parameter set (H.264 SPS or PPS; HEVC and VVC VPS, SPS or
+     * PPS).
+     *
+     * @param data the access unit
+     * @param lengthSize the prefix size, from 1 to 4 bytes
+     * @param codec the codec of the units: {@link Codec#H264}, {@link Codec#HEVC} or
+     * {@link Codec#VVC}
+     * @param parameterSets the start-code prefixed parameter sets to insert, or {@code null} for
+     * none
+     * @param delimiter the start-code prefixed access unit delimiter to insert, or {@code null}
+     * for none
+     * @return the Annex B access unit
+     * @throws IllegalArgumentException if a length prefix is cut off or a unit runs past the end
+     * of {@code data}
+     */
+    public static byte[] toAnnexB(byte[] data, int lengthSize, Codec codec, byte[] parameterSets, byte[] delimiter) {
         var units = new int[16];
         var count = 0;
         var hasDelimiter = false;
@@ -214,11 +242,11 @@ public final class NalUnits {
                 throw new IllegalArgumentException("NAL unit of " + length + " bytes overruns its packet");
             }
             if (length > 0) {
-                var type = type(data[start], hevc);
-                if (count == 0 && type == (hevc ? 35 : 9)) {
+                var type = type(data, start, (int) length, codec);
+                if (count == 0 && isDelimiter(type, codec)) {
                     hasDelimiter = true;
                 }
-                hasParameterSets |= hevc ? type >= 32 && type <= 34 : type == 7 || type == 8;
+                hasParameterSets |= isParameterSet(type, codec);
                 if (2 * count + 2 > units.length) {
                     units = Arrays.copyOf(units, 2 * units.length);
                 }
@@ -255,6 +283,33 @@ public final class NalUnits {
     }
 
     /**
+     * Converts an Annex B access unit into four-byte length-prefixed NAL units, the canonical packet
+     * form of H.264 and HEVC.
+     *
+     * <p>The units are those {@link #forEachAnnexB} finds, in stream order and unchanged.
+     *
+     * @param data the Annex B access unit
+     * @return the units, each after its big-endian four-byte length; empty when {@code data} holds
+     * no unit
+     */
+    public static byte[] toLengthPrefixed(byte[] data) {
+        var size = new long[1];
+        forEachAnnexB(data, (array, offset, length) -> size[0] += 4L + length);
+        var out = new byte[Math.toIntExact(size[0])];
+        var position = new int[1];
+        forEachAnnexB(data, (array, offset, length) -> {
+            var at = position[0];
+            out[at] = (byte) (length >>> 24);
+            out[at + 1] = (byte) (length >>> 16);
+            out[at + 2] = (byte) (length >>> 8);
+            out[at + 3] = (byte) length;
+            System.arraycopy(array, offset, out, at + 4, length);
+            position[0] = at + 4 + length;
+        });
+        return out;
+    }
+
+    /**
      * Returns parameter set units as an Annex B byte stream, each after a four-byte start code, in
      * list order.
      *
@@ -275,6 +330,108 @@ public final class NalUnits {
     }
 
     /**
+     * Rewrites a length-prefixed access unit with another prefix size, inserting parameter sets
+     * before its units when it holds none.
+     *
+     * <p>Empty units are dropped. The parameter sets are inserted only when the access unit
+     * holds no parameter set of its own (H.264 SPS or PPS; HEVC VPS, SPS or PPS).
+     *
+     * @param data the access unit
+     * @param lengthSize the prefix size of {@code data}, from 1 to 4 bytes
+     * @param targetSize the prefix size of the result, from 1 to 4 bytes
+     * @param hevc whether the units have HEVC rather than H.264 headers
+     * @param parameterSets the whole parameter set units to insert, or {@code null} for none
+     * @return the rewritten access unit
+     * @throws IllegalArgumentException if a length prefix is cut off, a unit runs past the end of
+     * {@code data}, or a unit is too long for {@code targetSize}
+     */
+    public static byte[] relength(byte[] data, int lengthSize, int targetSize, boolean hevc, List<byte[]> parameterSets) {
+        return relength(data, lengthSize, targetSize, hevc ? Codec.HEVC : Codec.H264, parameterSets);
+    }
+
+    /**
+     * Rewrites a length-prefixed access unit of a NAL unit codec with another prefix size,
+     * inserting parameter sets before its units when it holds none.
+     *
+     * <p>Empty units are dropped. The parameter sets are inserted only when the access unit
+     * holds no parameter set of its own (H.264 SPS or PPS; HEVC and VVC VPS, SPS or PPS).
+     *
+     * @param data the access unit
+     * @param lengthSize the prefix size of {@code data}, from 1 to 4 bytes
+     * @param targetSize the prefix size of the result, from 1 to 4 bytes
+     * @param codec the codec of the units: {@link Codec#H264}, {@link Codec#HEVC} or
+     * {@link Codec#VVC}
+     * @param parameterSets the whole parameter set units to insert, or {@code null} for none
+     * @return the rewritten access unit
+     * @throws IllegalArgumentException if a length prefix is cut off, a unit runs past the end of
+     * {@code data}, or a unit is too long for {@code targetSize}
+     */
+    public static byte[] relength(byte[] data, int lengthSize, int targetSize, Codec codec, List<byte[]> parameterSets) {
+        var size = 0L;
+        var hasParameterSets = false;
+        for (var offset = 0; offset < data.length; ) {
+            if (offset + lengthSize > data.length) {
+                throw new IllegalArgumentException("truncated NAL unit length");
+            }
+            var length = readLength(data, offset, lengthSize);
+            var start = offset + lengthSize;
+            if (length > data.length - start) {
+                throw new IllegalArgumentException("NAL unit of " + length + " bytes overruns its packet");
+            }
+            if (length > 0) {
+                hasParameterSets |= isParameterSet(type(data, start, (int) length, codec), codec);
+                size += targetSize + length;
+            }
+            offset = start + (int) length;
+        }
+        var insert = parameterSets != null && !hasParameterSets;
+        if (insert) {
+            for (var unit : parameterSets) {
+                size += targetSize + unit.length;
+            }
+        }
+        var out = new byte[Math.toIntExact(size)];
+        var position = 0;
+        if (insert) {
+            for (var unit : parameterSets) {
+                position = putPrefixed(out, position, targetSize, unit, 0, unit.length);
+            }
+        }
+        for (var offset = 0; offset < data.length; ) {
+            var length = (int) readLength(data, offset, lengthSize);
+            if (length > 0) {
+                position = putPrefixed(out, position, targetSize, data, offset + lengthSize, length);
+            }
+            offset += lengthSize + length;
+        }
+        return out;
+    }
+
+    /**
+     * Writes one unit after a length prefix.
+     *
+     * @param out the destination
+     * @param position the index of the prefix in {@code out}
+     * @param lengthSize the prefix size, from 1 to 4 bytes
+     * @param data the bytes holding the unit
+     * @param offset the index of the unit in {@code data}
+     * @param length the unit length
+     * @return the index after the unit
+     * @throws IllegalArgumentException if the length does not fit the prefix
+     */
+    private static int putPrefixed(byte[] out, int position, int lengthSize, byte[] data, int offset, int length) {
+        if (lengthSize < 4 && length >= 1 << (8 * lengthSize)) {
+            throw new IllegalArgumentException("NAL unit of " + length + " bytes does not fit a " + lengthSize
+                    + "-byte length");
+        }
+        for (var index = 0; index < lengthSize; index++) {
+            out[position + index] = (byte) (length >>> (8 * (lengthSize - 1 - index)));
+        }
+        System.arraycopy(data, offset, out, position + lengthSize, length);
+        return position + lengthSize + length;
+    }
+
+    /**
      * Returns the type of a NAL unit from its first header byte.
      *
      * @param header the first byte of the unit
@@ -283,6 +440,50 @@ public final class NalUnits {
      */
     public static int type(byte header, boolean hevc) {
         return hevc ? (header >> 1) & 0x3F : header & 0x1F;
+    }
+
+    /**
+     * Returns the type of a NAL unit of a NAL unit codec.
+     *
+     * @param data the bytes
+     * @param offset the index of the NAL unit header
+     * @param length the NAL unit length
+     * @param codec the codec: {@link Codec#H264}, {@link Codec#HEVC} or {@link Codec#VVC}
+     * @return {@code nal_unit_type}, or -1 for a VVC unit shorter than its two-byte header
+     */
+    public static int type(byte[] data, int offset, int length, Codec codec) {
+        if (codec == Codec.VVC) {
+            return length < 2 ? -1 : (data[offset + 1] & 0xFF) >> 3;
+        }
+        return type(data[offset], codec == Codec.HEVC);
+    }
+
+    /**
+     * {@return whether a NAL unit type is an access unit delimiter of a codec}
+     *
+     * @param type the NAL unit type
+     * @param codec the codec: {@link Codec#H264}, {@link Codec#HEVC} or {@link Codec#VVC}
+     */
+    public static boolean isDelimiter(int type, Codec codec) {
+        return switch (codec) {
+            case HEVC -> type == 35;
+            case VVC -> type == 20;
+            default -> type == 9;
+        };
+    }
+
+    /**
+     * {@return whether a NAL unit type is a video, sequence or picture parameter set of a codec}
+     *
+     * @param type the NAL unit type
+     * @param codec the codec: {@link Codec#H264}, {@link Codec#HEVC} or {@link Codec#VVC}
+     */
+    public static boolean isParameterSet(int type, Codec codec) {
+        return switch (codec) {
+            case HEVC -> type >= 32 && type <= 34;
+            case VVC -> type >= 14 && type <= 16;
+            default -> type == 7 || type == 8;
+        };
     }
 
     /**

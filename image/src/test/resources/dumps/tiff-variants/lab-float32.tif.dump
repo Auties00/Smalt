@@ -1,0 +1,19 @@
+# image dump of tiff-variants/lab-float32.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=13, height=9, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 13x9 rgba8 alpha=false crc=b392c363
+  format=TIFF orientation=NORMAL source=13x9
+  icc=none exif=none xmp=none
+  profile=none
+scaled 3x2
+picture 13x9 rgba8 alpha=false crc=b392c363
+  format=TIFF orientation=NORMAL source=13x9
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=TIFF, width=13, height=9, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 13x9 rgba8 alpha=false crc=b392c363
+  format=TIFF orientation=NORMAL source=13x9
+  icc=none exif=none xmp=none
+  profile=none

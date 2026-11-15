@@ -169,7 +169,49 @@ class SharedHeadersTest {
             OpusHeader.parse(head(2, 0, 0, 0, 1, new int[]{1, 0, 0, 255}), MediaLimits.DEFAULT);
             OpusHeader.parse(head(10, 0, 0, 0, 1, new int[]{10, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9}),
                     MediaLimits.DEFAULT);
-            OpusHeader.parse(head(4, 0, 0, 0, 3, new int[]{2, 2, 0, 1, 2, 3}), MediaLimits.DEFAULT);
+            // Family 3 carries a demixing matrix, not a mapping table: four entries are a truncated matrix.
+            assertThrows(MediaException.Malformed.class,
+                    () -> OpusHeader.parse(head(4, 0, 0, 0, 3, new int[]{2, 2, 0, 1, 2, 3}), MediaLimits.DEFAULT));
+            var matrix = new int[2 + 32];
+            matrix[0] = 2;
+            matrix[1] = 2;
+            Arrays.fill(matrix, 2, matrix.length, 0xFF);
+            OpusHeader.parse(head(4, 0, 0, 0, 3, matrix), MediaLimits.DEFAULT);
+        }
+
+        @Test
+        @DisplayName("reads the demixing matrix of family 3 instead of a mapping table")
+        void family3() {
+            // Two output channels from one coupled stream and one mono stream: a 2 x 3 matrix, column-major.
+            int[] coefficients = {32767, -32768, 0, 1, -1, 16384};
+            var table = new int[2 + 12];
+            table[0] = 2;
+            table[1] = 1;
+            for (var i = 0; i < coefficients.length; i++) {
+                table[2 + 2 * i] = coefficients[i] & 0xFF;
+                table[3 + 2 * i] = (coefficients[i] >> 8) & 0xFF;
+            }
+            var header = OpusHeader.parse(head(2, 312, 48000, 3050, 3, table), MediaLimits.DEFAULT);
+            assertEquals(3, header.family());
+            assertEquals(2, header.streamCount());
+            assertEquals(1, header.coupledCount());
+            assertEquals(12, header.mapping().length);
+            assertEquals(12, OpusHeader.tableSize(3, 2, 2, 1));
+            assertEquals(5, OpusHeader.tableSize(1, 5, 3, 2));
+            for (var column = 0; column < 3; column++) {
+                for (var row = 0; row < 2; row++) {
+                    assertEquals(coefficients[column * 2 + row], header.demixing(row, column));
+                }
+            }
+            assertThrows(IllegalStateException.class, () -> header.mapping(0));
+            var surround = OpusHeader.parse(head(6, 0, 48000, 0, 1, new int[]{4, 2, 0, 4, 1, 2, 3, 5}),
+                    MediaLimits.DEFAULT);
+            assertThrows(IllegalStateException.class, () -> surround.demixing(0, 0));
+            var truncated = Arrays.copyOf(head(2, 312, 48000, 3050, 3, table), 19 + 13);
+            var error = assertThrows(MediaException.Malformed.class, () -> OpusHeader.parseLenient(truncated));
+            assertEquals("OpusHead channel mapping truncated", error.getMessage());
+            assertThrows(MediaException.Malformed.class,
+                    () -> OpusHeader.parseLenient(Arrays.copyOf(head(2, 0, 0, 0, 3, table), 20)));
         }
 
         @ParameterizedTest(name = "seed {0}")
@@ -260,7 +302,10 @@ class SharedHeadersTest {
             };
         }
 
-        /** The former {@code AudioConfigs.parseOpusHead}: its fields, or the exception it threw. */
+        /**
+         * The former {@code AudioConfigs.parseOpusHead}, with the family 3 table size of RFC 8486: its fields, or
+         * the exception it threw.
+         */
         private static Object formerParseOpusHead(byte[] head) {
             if (head.length < 19 || !Arrays.equals(head, 0, 8, "OpusHead".getBytes(StandardCharsets.US_ASCII), 0, 8)) {
                 return new MediaException.Malformed("invalid OpusHead");
@@ -275,7 +320,9 @@ class SharedHeadersTest {
                     | (head[15] & 0xFFL) << 24;
             var gain = (short) ((head[16] & 0xFF) | (head[17] & 0xFF) << 8);
             var family = head[18] & 0xFF;
-            if (family != 0 && head.length < 21 + channels) {
+            // Family 3 (RFC 8486) holds a demixing matrix of 2 * channels * (streams + coupled) bytes.
+            if (family != 0 && (head.length < 21 || head.length < 21 + (family == 3
+                    ? 2 * channels * ((head[19] & 0xFF) + (head[20] & 0xFF)) : channels))) {
                 return new MediaException.Malformed("OpusHead channel mapping truncated");
             }
             if (channels == 0) {
@@ -483,6 +530,9 @@ class SharedHeadersTest {
             assertMessage("AAC object type 6 cannot be expressed in ADTS", new byte[]{0x32, 0x10});
             assertMessage("invalid sampling frequency index 13", new byte[]{0x16, (byte) 0x90});
             assertMessage("channel configuration 0 cannot be expressed in ADTS", new byte[]{0x12, 0x00});
+            assertMessage("channel configuration 12 cannot be expressed in ADTS", new byte[]{0x12, 0x60});
+            // 0x14: channel configuration 2 followed by a set frameLengthFlag.
+            assertMessage("960-sample frames cannot be expressed in ADTS", new byte[]{0x12, 0x14});
             assertEquals(1, AdtsHeader.fromAudioSpecificConfig(new byte[]{0x2A, 0x10, 0x08, 0x00}).profile());
         }
 

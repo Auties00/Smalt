@@ -34,6 +34,17 @@ public final class HeifItem {
     private final String contentType;
 
     /**
+     * The content encoding of a {@code mime} item, for example {@code "deflate"}, or the empty
+     * string when the data is stored as it is.
+     */
+    private final String contentEncoding;
+
+    /**
+     * Whether the {@code infe} entry marks the item hidden.
+     */
+    private final boolean hidden;
+
+    /**
      * Whether the {@code iloc} box located the item.
      */
     boolean located;
@@ -91,11 +102,22 @@ public final class HeifItem {
      * @param id the item identifier
      * @param type the item type
      * @param contentType the MIME content type, or the empty string
+     * @param contentEncoding the content encoding of a {@code mime} item, or the empty string
+     * @param hidden whether the entry marks the item hidden
      */
-    HeifItem(int id, String type, String contentType) {
+    HeifItem(int id, String type, String contentType, String contentEncoding, boolean hidden) {
         this.id = id;
         this.type = type;
         this.contentType = contentType;
+        this.contentEncoding = contentEncoding;
+        this.hidden = hidden;
+    }
+
+    /**
+     * {@return whether the item is hidden: an image not meant to be shown on its own, such as the tile of a grid}
+     */
+    public boolean isHidden() {
+        return hidden;
     }
 
     /**
@@ -123,6 +145,16 @@ public final class HeifItem {
      */
     public String contentType() {
         return contentType;
+    }
+
+    /**
+     * Returns the content encoding of a {@code mime} item ({@code infe} {@code content_encoding}).
+     *
+     * @return the encoding, for example {@code "deflate"}, or the empty string when the data is
+     * not encoded and for other items
+     */
+    public String contentEncoding() {
+        return contentEncoding;
     }
 
     /**

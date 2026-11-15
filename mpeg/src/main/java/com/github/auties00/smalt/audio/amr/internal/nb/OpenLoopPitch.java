@@ -32,8 +32,9 @@ import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.PIT_MIN_
  * Estimates the open-loop pitch lag of the AMR-NB encoder from the weighted speech
  * ({@code ol_ltp}): once per frame in the 4.75 and 5.15 kbit/s modes, once per half frame
  * otherwise, with the lag-weighted search and the median-smoothed lag history of the 10.2 kbit/s
- * mode. With discontinuous transmission it also feeds the tone and complex-signal detectors of
- * {@link Vad1}.
+ * mode. With discontinuous transmission it also feeds the {@link VoiceActivityDetector}: the
+ * tone and complex-signal detectors of {@link Vad1}, or the correlation and energy of the
+ * selected lags {@link Vad2} accumulates.
  */
 final class OpenLoopPitch {
     /**
@@ -101,6 +102,16 @@ final class OpenLoopPitch {
     private final short[] gainFlg = new short[1];
 
     /**
+     * The maximum correlation of the lag the last {@code lagMax} call found.
+     */
+    private int lastRmax;
+
+    /**
+     * The energy of the lag the last {@code lagMax} call found.
+     */
+    private int lastR0;
+
+    /**
      * Creates the search in its reset state.
      */
     OpenLoopPitch() {
@@ -130,7 +141,7 @@ final class OpenLoopPitch {
      * @param overflow the saturation flag
      * @return the open-loop lag
      */
-    short olLtp(Vad1 vad, int mode, short[] wsp, int wspOffset, short[] oldLags, short[] olGainFlg, int idx,
+    short olLtp(VoiceActivityDetector vad, int mode, short[] wsp, int wspOffset, short[] oldLags, short[] olGainFlg, int idx,
                 boolean dtx, Flag overflow) {
         if (mode != Mode.MR102) {
             olGainFlg[0] = 0;
@@ -179,9 +190,11 @@ final class OpenLoopPitch {
      * @param lagMin the smallest lag
      * @param dtx whether discontinuous transmission is on
      * @param overflow the saturation flag
-     * @return the lag; the normalized correlation is left in {@link #corMax}
+     * @return the lag; the normalized correlation is left in {@link #corMax}, and with
+     * discontinuous transmission the correlation and energy in {@link #lastRmax} and
+     * {@link #lastR0}
      */
-    private short lagMax(Vad1 vad, short scalFac, boolean scalFlag, int lFrame, int lagMax, int lagMin, boolean dtx,
+    private short lagMax(VoiceActivityDetector vad, short scalFac, boolean scalFlag, int lFrame, int lagMax, int lagMin, boolean dtx,
                          Flag overflow) {
         var max = Integer.MIN_VALUE;
         var pMax = lagMax;
@@ -201,6 +214,8 @@ final class OpenLoopPitch {
         t0 <<= 1;
         if (dtx) {
             vad.toneDetection(max, t0, overflow);
+            lastRmax = max;
+            lastR0 = t0;
         }
         t0 = FixedMath.invSqrt(t0);
         if (scalFlag) {
@@ -246,7 +261,7 @@ final class OpenLoopPitch {
      * @param overflow the saturation flag
      * @return the lag
      */
-    private short pitchOl(Vad1 vad, int mode, short[] signal, int offset, int pitMin, int pitMax, int lFrame, int idx,
+    private short pitchOl(VoiceActivityDetector vad, int mode, short[] signal, int offset, int pitMin, int pitMax, int lFrame, int idx,
                           boolean dtx, Flag overflow) {
         if (dtx) {
             vad.toneDetectionUpdate(mode == Mode.MR475 || mode == Mode.MR515, overflow);
@@ -290,24 +305,35 @@ final class OpenLoopPitch {
         }
         var pMax1 = lagMax(vad, scalFac, scalFlag, lFrame, pitMax, j, dtx, overflow);
         var max1 = corMax[0];
+        var rmax1 = lastRmax;
+        var r01 = lastR0;
         var i = j - 1;
         j = pitMin << 1;
         var pMax2 = lagMax(vad, scalFac, scalFlag, lFrame, i, j, dtx, overflow);
         var max2 = corMax[0];
+        var rmax2 = lastRmax;
+        var r02 = lastR0;
         i = j - 1;
         var pMax3 = lagMax(vad, scalFac, scalFlag, lFrame, i, pitMin, dtx, overflow);
         var max3 = corMax[0];
-        if (dtx && idx == 1) {
+        if (dtx && idx == 1 && vad.usesComplexDetection()) {
             vad.complexDetectionUpdate(hpMax(lFrame, pitMax, pitMin, overflow));
         }
         var threshold = (short) ((max1 * THRESHOLD) >> 15);
         if (threshold < max2) {
             max1 = max2;
             pMax1 = pMax2;
+            rmax1 = rmax2;
+            r01 = r02;
         }
         threshold = (short) ((max1 * THRESHOLD) >> 15);
         if (threshold < max3) {
             pMax1 = pMax3;
+            rmax1 = lastRmax;
+            r01 = lastR0;
+        }
+        if (dtx) {
+            vad.pitchSelected(rmax1, r01, overflow);
         }
         return pMax1;
     }
@@ -325,7 +351,7 @@ final class OpenLoopPitch {
      * @param overflow the saturation flag
      * @return the lag; the gain flag is left in {@link #gainFlg}
      */
-    private short lagMaxWgh(Vad1 vad, int lFrame, int lagMax, int lagMin, short oldLag, boolean dtx, Flag overflow) {
+    private short lagMaxWgh(VoiceActivityDetector vad, int lFrame, int lagMax, int lagMin, short oldLag, boolean dtx, Flag overflow) {
         var ww = 250;
         var we = 123 + lagMax - oldLag;
         var max = Integer.MIN_VALUE;
@@ -354,6 +380,7 @@ final class OpenLoopPitch {
         if (dtx) {
             vad.toneDetectionUpdate(false, overflow);
             vad.toneDetection(t0, t1, overflow);
+            vad.pitchSelected(t0, t1, overflow);
         }
         var temp = round(t1, overflow);
         t1 = lMsu(t0, temp, (short) 13107, overflow);
@@ -378,7 +405,7 @@ final class OpenLoopPitch {
      * @param overflow the saturation flag
      * @return the lag
      */
-    private short pitchOlWgh(Vad1 vad, short[] signal, int offset, int pitMin, int pitMax, int lFrame, short[] oldLags,
+    private short pitchOlWgh(VoiceActivityDetector vad, short[] signal, int offset, int pitMin, int pitMax, int lFrame, short[] oldLags,
                              short[] olGainFlg, int idx, boolean dtx, Flag overflow) {
         var t0 = 0;
         for (var i = -pitMax; i < lFrame; i++) {
@@ -414,7 +441,7 @@ final class OpenLoopPitch {
             adaW = (short) ((adaW * 29491) >> 15);
         }
         wghtFlg = sub(adaW, (short) 9830, overflow) >= 0;
-        if (dtx && sub((short) idx, (short) 1, overflow) == 0) {
+        if (dtx && sub((short) idx, (short) 1, overflow) == 0 && vad.usesComplexDetection()) {
             vad.complexDetectionUpdate(hpMax(lFrame, pitMax, pitMin, overflow));
         }
         return pMax1;

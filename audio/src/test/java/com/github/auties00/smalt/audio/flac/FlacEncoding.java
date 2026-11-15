@@ -92,7 +92,7 @@ final class FlacEncoding {
                 .build();
     }
 
-    /** Decodes packets back to planar integers with {@link FlacDecoder}. */
+    /** Decodes packets back to planar integers through {@link FlacDecoder}'s integer output. */
     static int[][] decode(Encoded encoded, int rate, int channels) {
         var decoder = new FlacDecoder(track(encoded.config(), rate));
         var total = 0;
@@ -100,15 +100,14 @@ final class FlacEncoding {
             total += (int) packet.duration();
         }
         var out = new int[channels][total];
-        var position = 0;
+        var position = new int[1];
         for (var packet : encoded.packets()) {
-            decoder.decode(packet, buffer -> {
+            decoder.decodeIntegers(packet, block -> {
+                for (var c = 0; c < channels; c++) {
+                    System.arraycopy(block.plane(c), 0, out[c], position[0], block.frames());
+                }
+                position[0] += block.frames();
             });
-            var size = decoder.lastBlockSize();
-            for (var c = 0; c < channels; c++) {
-                System.arraycopy(decoder.lastSamples()[c], 0, out[c], position, size);
-            }
-            position += size;
         }
         return out;
     }

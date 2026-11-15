@@ -1,0 +1,18 @@
+# demux dump of raw/avc-marking-field-parity; regenerate with -Dsmalt.test.updateDumps=true
+format H264
+duration -1
+seekable true
+track 1 VIDEO H264 timebase=1/50 duration=? config=37:d052d4d2
+  video 16x32 orientation=NORMAL rate=25/1
+packets 6
+0 t1 pts=0 dts=-14 dur=2 flags=KEY size=438 crc=e583ab84
+1 t1 pts=2 dts=-12 dur=2 flags=- size=18 crc=6cd6067e
+2 t1 pts=? dts=-10 dur=0 flags=- size=19 crc=1b7e6618
+3 t1 pts=? dts=-8 dur=0 flags=- size=18 crc=cdfc6849
+4 t1 pts=4 dts=-6 dur=2 flags=KEY size=404 crc=d2a77894
+5 t1 pts=6 dts=-4 dur=2 flags=- size=18 crc=bf7d4ddc
+seek 0: t1@0
+seek 53333: t1@0
+seek 106666: t1@4
+seek 160000: end
+seek -1000000: t1@0

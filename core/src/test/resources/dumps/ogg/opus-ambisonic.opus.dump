@@ -1,0 +1,37 @@
+# demux dump of ogg/opus-ambisonic.opus; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 250000
+seekable true
+metadata encoder="Lavc libopus"
+track 0 AUDIO OPUS timebase=1/48000 duration=12000 config=27:9f1649f7
+  audio rate=48000 bits=0 skip=0 layout=[UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, FRONT_LEFT, FRONT_RIGHT] ambisonics=SN3D[0, 1, 2, 3]
+  metadata encoder="Lavc libopus"
+packets 13
+0 t0 pts=-312 dts=-312 dur=960 flags=KEY size=299 crc=29b4e7fb
+1 t0 pts=648 dts=648 dur=960 flags=KEY size=195 crc=5f2953ce
+2 t0 pts=1608 dts=1608 dur=960 flags=KEY size=197 crc=347647eb
+3 t0 pts=2568 dts=2568 dur=960 flags=KEY size=196 crc=00c038f3
+4 t0 pts=3528 dts=3528 dur=960 flags=KEY size=197 crc=9e606c02
+5 t0 pts=4488 dts=4488 dur=960 flags=KEY size=197 crc=d5132beb
+6 t0 pts=5448 dts=5448 dur=960 flags=KEY size=194 crc=96aa62fc
+7 t0 pts=6408 dts=6408 dur=960 flags=KEY size=198 crc=02d6f6af
+8 t0 pts=7368 dts=7368 dur=960 flags=KEY size=197 crc=02cdd6e0
+9 t0 pts=8328 dts=8328 dur=960 flags=KEY size=196 crc=0412dc95
+10 t0 pts=9288 dts=9288 dur=960 flags=KEY size=193 crc=74a703ce
+11 t0 pts=10248 dts=10248 dur=960 flags=KEY size=200 crc=465e7b1b
+12 t0 pts=11208 dts=11208 dur=792 flags=KEY size=247 crc=d21e294b side=[discard=0/168]
+seek 0: t0@0
+seek 83333: t0@4
+seek 166666: t0@8
+seek 250000: end
+seek -1000000: t0@0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  metadata encoder="Lavc libopus"
+  track 0 AUDIO OPUS timebase=1/48000 duration=? config=27:9f1649f7
+    audio rate=48000 bits=0 skip=0 layout=[UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, FRONT_LEFT, FRONT_RIGHT] ambisonics=SN3D[0, 1, 2, 3]
+    metadata encoder="Lavc libopus"
+not seekable over READ_ONCE_UNKNOWN_LENGTH
+seeks forward only over READ_ONCE_UNKNOWN_LENGTH

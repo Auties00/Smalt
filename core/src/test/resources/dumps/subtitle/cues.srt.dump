@@ -1,0 +1,14 @@
+# demux dump of subtitle/cues.srt; regenerate with -Dsmalt.test.updateDumps=true
+format SUBRIP
+duration 2000000
+seekable true
+track 1 DATA SUBRIP timebase=1/1000 duration=2000 config=none
+packets 3
+0 t1 pts=0 dts=0 dur=400 flags=KEY size=5 crc=f7d18982
+1 t1 pts=500 dts=500 dur=400 flags=KEY size=12 crc=bc6c6d5b
+2 t1 pts=1250 dts=1250 dur=750 flags=KEY size=9 crc=3a64f8bc
+seek 0: t1@0
+seek 666666: t1@1
+seek 1333333: t1@2
+seek 2000000: end
+seek -1000000: t1@0

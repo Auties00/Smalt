@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.transcode;
 
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Orientation;
@@ -12,6 +13,9 @@ import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
 import com.github.auties00.smalt.internal.resize.SizePlan;
+import com.github.auties00.smalt.track.Rational;
+
+import java.math.BigInteger;
 
 /**
  * Applies the geometric and pixel-format operations of a transcode to each picture of a stream.
@@ -22,6 +26,11 @@ import com.github.auties00.smalt.internal.resize.SizePlan;
  * oriented (when the orientation is applied), resampled, cropped to the box (for
  * {@link ScaleMode#FILL}), flattened when it has transparency and a background is set, and
  * converted to the requested chroma format and color description.
+ *
+ * <p>A stream of non-square samples either has its samples made square, the box then fitting the
+ * displayed shape, or keeps them: the box then applies to the stored samples and the output
+ * declares the sample aspect ratio that keeps the displayed shape after any uneven scaling.
+ * Square samples stay square whatever the scaling.
  *
  * <p>Instances are immutable and thread-safe.
  */
@@ -109,9 +118,14 @@ final class PictureOps {
      */
     private final int outputHeight;
 
+    /**
+     * The sample aspect ratio the output declares in its coded orientation, or {@code null} for none.
+     */
+    private final Rational outputAspect;
+
     private PictureOps(Orientation applied, Orientation output, Rect crop, int scaledWidth, int scaledHeight, Rect boxCrop,
                        ResizeFilter filter, int background, ChromaFormat chromaFormat, ColorInfo color, int outputWidth,
-                       int outputHeight) {
+                       int outputHeight, Rational outputAspect) {
         this.applied = applied;
         this.output = output;
         this.crop = crop;
@@ -124,6 +138,7 @@ final class PictureOps {
         this.color = color;
         this.outputWidth = outputWidth;
         this.outputHeight = outputHeight;
+        this.outputAspect = outputAspect;
     }
 
     /**
@@ -145,6 +160,37 @@ final class PictureOps {
     static PictureOps plan(int codedWidth, int codedHeight, Orientation orientation, boolean apply, Region region,
                            SizePlanner sizing, ResizeFilter filter, int background, ChromaFormat chromaFormat,
                            ColorInfo color) {
+        return plan(codedWidth, codedHeight, orientation, apply, region, sizing, filter, background, chromaFormat, color,
+                null, false);
+    }
+
+    /**
+     * Plans the operations for a stream of possibly non-square samples.
+     *
+     * <p>The region is given in displayed orientation and stored samples. When the sample aspect
+     * ratio is applied, the box is fitted to the cropped picture stretched to square samples and
+     * the output declares none; otherwise the box applies to the stored samples and the output
+     * declares the ratio scaled by the uneven scaling of the plan (a square ratio stays square).
+     *
+     * @param codedWidth the coded width of the pictures
+     * @param codedHeight the coded height of the pictures
+     * @param orientation the display orientation of the stream
+     * @param apply whether the orientation is applied to the pixels rather than kept
+     * @param region the displayed region kept, or {@code null} for the whole picture
+     * @param sizing plans the scaling of the displayed (cropped) picture
+     * @param filter the resampling filter
+     * @param background the flattening background as {@code 0xRRGGBB}, or {@code -1} to keep transparency
+     * @param chromaFormat the output chroma format, or {@code null} to keep the picture's representation
+     * @param color the output color description, or {@code null} to keep the picture's
+     * @param sampleAspect the sample aspect ratio of the stream in coded orientation, or {@code null} when
+     * undeclared
+     * @param applyAspect whether the samples are made square rather than the ratio kept
+     * @return the operations
+     * @throws IllegalArgumentException if the region is not inside the displayed picture
+     */
+    static PictureOps plan(int codedWidth, int codedHeight, Orientation orientation, boolean apply, Region region,
+                           SizePlanner sizing, ResizeFilter filter, int background, ChromaFormat chromaFormat,
+                           ColorInfo color, Rational sampleAspect, boolean applyAspect) {
         var swaps = orientation.swapsDimensions();
         var displayWidth = swaps ? codedHeight : codedWidth;
         var displayHeight = swaps ? codedWidth : codedHeight;
@@ -162,7 +208,15 @@ final class PictureOps {
             croppedWidth = region.width();
             croppedHeight = region.height();
         }
-        var plan = sizing.plan(croppedWidth, croppedHeight);
+        var displayAspect = sampleAspect == null ? null : swaps ? sampleAspect.invert() : sampleAspect;
+        var stretch = applyAspect && displayAspect != null && displayAspect.numerator() != displayAspect.denominator();
+        var plan = stretch ? sizing.plan(stretched(croppedWidth, displayAspect), croppedHeight)
+                : sizing.plan(croppedWidth, croppedHeight);
+        Rational outputAspect = null;
+        if (displayAspect != null && !applyAspect) {
+            outputAspect = displayAspect.numerator() == displayAspect.denominator() ? displayAspect
+                    : scaled(displayAspect, croppedWidth, croppedHeight, plan.scaledWidth(), plan.scaledHeight());
+        }
         int scaledWidth;
         int scaledHeight;
         Rect boxCrop = null;
@@ -193,9 +247,49 @@ final class PictureOps {
             }
             outputWidth = swaps ? plan.outputHeight() : plan.outputWidth();
             outputHeight = swaps ? plan.outputWidth() : plan.outputHeight();
+            if (outputAspect != null && swaps) {
+                outputAspect = outputAspect.invert();
+            }
         }
         return new PictureOps(applied, recorded, crop, scaledWidth, scaledHeight, boxCrop, filter, background, chromaFormat,
-                color, outputWidth, outputHeight);
+                color, outputWidth, outputHeight, outputAspect);
+    }
+
+    /**
+     * {@return the width of a picture stretched by a sample aspect ratio, rounded to nearest and at
+     * least 1}
+     *
+     * @param width the width in samples
+     * @param aspect the sample aspect ratio
+     */
+    static int stretched(int width, Rational aspect) {
+        return (int) Math.clamp(Math.round(width * (double) aspect.numerator() / aspect.denominator()), 1,
+                Integer.MAX_VALUE);
+    }
+
+    /**
+     * Returns the sample aspect ratio that keeps the displayed shape of a picture resampled from one
+     * size to another: {@code aspect * (width * scaledHeight) / (height * scaledWidth)}.
+     *
+     * @param aspect the sample aspect ratio before resampling
+     * @param width the width before resampling
+     * @param height the height before resampling
+     * @param scaledWidth the width after resampling
+     * @param scaledHeight the height after resampling
+     * @return the ratio in lowest terms, or {@code null} when its terms do not fit in a {@code long}
+     */
+    static Rational scaled(Rational aspect, int width, int height, int scaledWidth, int scaledHeight) {
+        var numerator = BigInteger.valueOf(aspect.numerator()).multiply(BigInteger.valueOf(width))
+                .multiply(BigInteger.valueOf(scaledHeight));
+        var denominator = BigInteger.valueOf(aspect.denominator()).multiply(BigInteger.valueOf(height))
+                .multiply(BigInteger.valueOf(scaledWidth));
+        var gcd = numerator.gcd(denominator);
+        numerator = numerator.divide(gcd);
+        denominator = denominator.divide(gcd);
+        if (numerator.bitLength() > 63 || denominator.bitLength() > 63) {
+            return null;
+        }
+        return new Rational(numerator.longValue(), denominator.longValue());
     }
 
     /**
@@ -245,6 +339,20 @@ final class PictureOps {
     }
 
     /**
+     * {@return the width pictures are resampled to before the box crop, in pixels}
+     */
+    int resampledWidth() {
+        return scaledWidth;
+    }
+
+    /**
+     * {@return the height pictures are resampled to before the box crop, in pixels}
+     */
+    int resampledHeight() {
+        return scaledHeight;
+    }
+
+    /**
      * {@return the coded width of the output pictures, in pixels}
      */
     int outputWidth() {
@@ -264,6 +372,14 @@ final class PictureOps {
      */
     Orientation outputOrientation() {
         return output;
+    }
+
+    /**
+     * {@return the sample aspect ratio the output declares in its coded orientation, or
+     * {@code null} when it declares none}
+     */
+    Rational outputSampleAspect() {
+        return outputAspect;
     }
 
     /**
@@ -307,7 +423,7 @@ final class PictureOps {
         return switch (picture) {
             case YuvPicture yuv -> yuv.chromaFormat();
             case Yuv16Picture yuv -> yuv.chromaFormat();
-            case RgbaPicture _, Rgba16Picture _ -> ChromaFormat.YUV420;
+            case RgbaPicture _, Rgba16Picture _, ChannelPicture _ -> ChromaFormat.YUV420;
         };
     }
 
@@ -321,7 +437,7 @@ final class PictureOps {
         return switch (picture) {
             case YuvPicture yuv -> yuv.color();
             case Yuv16Picture yuv -> yuv.color();
-            case RgbaPicture _, Rgba16Picture _ -> ColorInfo.BT709_LIMITED;
+            case RgbaPicture _, Rgba16Picture _, ChannelPicture _ -> ColorInfo.BT709_LIMITED;
         };
     }
 }

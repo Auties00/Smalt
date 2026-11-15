@@ -1,0 +1,21 @@
+# demux dump of encrypted/valid-webm-video.webm; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 599000
+seekable true
+track 1 VIDEO VP9 timebase=1/1000 duration=599 language=eng config=none
+  video 64x48 orientation=NORMAL sar=1/1
+packets 9
+0 t1 pts=0 dts=0 dur=? flags=KEY size=1192 crc=03c5396f
+1 t1 pts=67 dts=67 dur=? flags=- size=15 crc=d4364a96
+2 t1 pts=133 dts=133 dur=? flags=- size=68 crc=d1e7f2b0
+3 t1 pts=200 dts=200 dur=? flags=- size=15 crc=a0a34ea4
+4 t1 pts=267 dts=267 dur=? flags=- size=55 crc=2dc20e57
+5 t1 pts=333 dts=333 dur=? flags=- size=15 crc=41fc57db
+6 t1 pts=400 dts=400 dur=? flags=- size=54 crc=0e917fdc
+7 t1 pts=467 dts=467 dur=? flags=- size=43 crc=22b1ab53
+8 t1 pts=533 dts=533 dur=66 flags=- size=44 crc=8c5b46a2
+seek 0: t1@0
+seek 199666: t1@0
+seek 399333: t1@0
+seek 599000: end
+seek -1000000: t1@0

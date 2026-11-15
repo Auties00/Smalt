@@ -1,0 +1,39 @@
+# demux dump of mxf/bmx-op1a-clip-pcm.mxf; regenerate with -Dsmalt.test.updateDumps=true
+format MXF
+duration 200000
+seekable true
+metadata application_platform="libMXF (Linux)"
+metadata company_name="RegCo"
+metadata material_package_umid="0000000000000000000000000000000000000000000000000000000000000001"
+metadata operational_pattern="OP1a"
+metadata product_name="RegLib"
+metadata product_version="0.0.0"
+timecode 00:00:00:00 fps=25
+track 2001 AUDIO PCM_S24LE timebase=1/48000 duration=9600 config=none
+  audio rate=48000 bits=24 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+  metadata title="A1"
+packets 3
+0 t2001 pts=0 dts=0 dur=4096 flags=KEY size=24576 crc=774d07bf
+1 t2001 pts=4096 dts=4096 dur=4096 flags=KEY size=24576 crc=a3f986b3
+2 t2001 pts=8192 dts=8192 dur=1408 flags=KEY size=8448 crc=50ea701f
+seek 0: t2001@0
+seek 66666: t2001@pts=3200
+seek 133333: t2001@pts=6400
+seek 200000: end
+seek -1000000: t2001@0
+header over READ_ONCE, READ_ONCE_UNKNOWN_LENGTH:
+  format MXF
+  duration 200000
+  seekable false
+  metadata application_platform="libMXF (Linux)"
+  metadata company_name="RegCo"
+  metadata material_package_umid="0000000000000000000000000000000000000000000000000000000000000001"
+  metadata operational_pattern="OP1a"
+  metadata product_name="RegLib"
+  metadata product_version="0.0.0"
+  timecode 00:00:00:00 fps=25
+  track 2001 AUDIO PCM_S24LE timebase=1/48000 duration=9600 config=none
+    audio rate=48000 bits=24 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+    metadata title="A1"
+not seekable over READ_ONCE
+not seekable over READ_ONCE_UNKNOWN_LENGTH

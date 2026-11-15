@@ -6,27 +6,29 @@ import com.github.auties00.smalt.audio.voice.GainControl;
 import com.github.auties00.smalt.audio.voice.internal.FixedPointMath;
 
 /**
- * Applies WebRTC's legacy automatic gain control to one 16 kHz mono channel the way the audio
- * processing module drives it: the gains are computed in fixed point on a 16-bit copy of each
- * frame and applied to the floating-point frame.
+ * Applies WebRTC's legacy automatic gain control to the bands of one or more channels the way the
+ * audio processing module drives it: the gains are computed in fixed point on a 16-bit copy of
+ * the lowest band of each channel and applied to every band of every channel in floating point.
  *
- * <p>Samples are floats in the 16-bit range. Each capture frame goes through
- * {@link #analyzeCapture(float[])} before the echo canceller and the noise suppressor and
- * through {@link #processCapture(float[])} after them; render frames go to
- * {@link #processRender(float[])}, which feeds the far-end speech detector. In the adaptive
- * analog mode the caller reports the microphone level through
- * {@link #setStreamAnalogLevel(int)}, which holds until the next report, and reads the
- * recommended level back from {@link #streamAnalogLevel()}.
+ * <p>Samples are floats in the 16-bit range, 160 per band. Each capture frame goes through
+ * {@link #analyzeCapture(float[][][])} before the echo canceller and the noise suppressor and
+ * through {@link #processCapture(float[][][])} after them; render frames go to
+ * {@link #processRender(float[][], int)}, which feeds the far-end speech detector. In the adaptive
+ * analog mode the caller reports the microphone level through {@link #setStreamAnalogLevel(int)},
+ * which holds until the next report, and reads the recommended level back from
+ * {@link #streamAnalogLevel()}. Every channel runs its own controller; the gains of the channel
+ * with the highest final gain are applied to all of them, and the lowest recommended level wins.
  *
- * @implNote This implementation follows {@code GainControlImpl} for one channel with the analog
- * level limits {@code [0, 255]}, as {@code AudioProcessingImpl} configures it without the analog
- * controller ({@code AgcManagerDirect}). Where the reference rejects an adaptive analog frame whose
- * level was not reported since the previous frame, this implementation keeps the last reported or
- * recommended level, which gives the same output whenever the caller reports every frame's level.
+ * @implNote This implementation follows {@code GainControlImpl} with the analog level limits
+ * {@code [0, 255]}, as {@code AudioProcessingImpl} configures it without the analog controller
+ * ({@code AgcManagerDirect}), or as that controller sets it up. Where the reference rejects an
+ * adaptive analog frame whose level was not reported since the previous frame, this
+ * implementation keeps the last reported or recommended level, which gives the same output
+ * whenever the caller reports every frame's level.
  */
 public final class GainController {
     /**
-     * The number of samples of a frame.
+     * The number of samples of a band.
      */
     private static final int FRAME = 160;
 
@@ -56,29 +58,54 @@ public final class GainController {
     private static final int MAXIMUM_CAPTURE_LEVEL = 255;
 
     /**
-     * The mode, never {@link GainControl#OFF}.
+     * The mode, never {@link GainControl#OFF} or {@link GainControl#MANAGED_ANALOG}.
      */
-    private final GainControl mode;
+    private GainControl mode;
 
     /**
-     * The legacy controller.
+     * The number of bands.
      */
-    private final LegacyAgc agc;
+    private final int numBands;
 
     /**
-     * The gains of the last frame, in Q16.
+     * The legacy controller of every channel.
      */
-    private final int[] gains;
+    private final LegacyAgc[] agcs;
 
     /**
-     * The gains of the last frame, scaled to linear factors.
+     * The gains of the last frame of every channel, in Q16.
+     */
+    private final int[][] gains;
+
+    /**
+     * The gains of the applied channel, scaled to linear factors.
      */
     private final float[] gainsScaled;
 
     /**
-     * The 16-bit copy of the frame the legacy controller works on.
+     * The 16-bit copy of the band the legacy controller works on.
      */
     private final short[] splitBand;
+
+    /**
+     * The microphone level carried from the analysis to the processing of every channel.
+     */
+    private final int[] captureLevels;
+
+    /**
+     * The target level, in dB below full scale.
+     */
+    private int targetLevelDbfs;
+
+    /**
+     * The compression gain, in dB.
+     */
+    private int compressionGainDb;
+
+    /**
+     * Whether the limiter is enabled.
+     */
+    private boolean limiter;
 
     /**
      * The microphone level the caller reported, or the recommendation of the last frame in the
@@ -87,72 +114,157 @@ public final class GainController {
     private int analogCaptureLevel;
 
     /**
-     * The microphone level carried from the analysis to the processing of a frame.
-     */
-    private int captureLevel;
-
-    /**
      * Creates a controller.
      *
-     * @param mode the gain control mode, other than {@link GainControl#OFF}
+     * @param mode the gain control mode, other than {@link GainControl#OFF} and
+     * {@link GainControl#MANAGED_ANALOG}
      * @param targetLevelDbfs the target peak level, in dB below full scale, in {@code [0, 31]}
      * @param compressionGainDb the compression gain, in dB, in {@code [0, 90]}
      * @param limiter whether the limiter is enabled
-     * @throws IllegalArgumentException if {@code mode} is {@link GainControl#OFF} or the legacy
-     * controller rejects the configuration
+     * @param numChannels the number of channels
+     * @param numBands the number of bands, 1 at 16 kHz, 2 at 32 kHz and 3 at 48 kHz
+     * @throws IllegalArgumentException if {@code mode} is not supported or the legacy controller
+     * rejects the configuration
      */
-    public GainController(GainControl mode, int targetLevelDbfs, int compressionGainDb, boolean limiter) {
+    public GainController(GainControl mode, int targetLevelDbfs, int compressionGainDb, boolean limiter,
+                          int numChannels, int numBands) {
+        this.numBands = numBands;
+        this.agcs = new LegacyAgc[numChannels];
+        this.gains = new int[numChannels][11];
+        this.captureLevels = new int[numChannels];
+        this.gainsScaled = new float[11];
+        this.splitBand = new short[FRAME];
+        this.targetLevelDbfs = targetLevelDbfs;
+        this.compressionGainDb = compressionGainDb;
+        this.limiter = limiter;
+        this.analogCaptureLevel = 0;
+        for (var ch = 0; ch < numChannels; ch++) {
+            agcs[ch] = new LegacyAgc(numBands > 1);
+        }
+        setMode(mode);
+    }
+
+    /**
+     * Sets the mode and reinitializes every channel's controller ({@code set_mode}).
+     *
+     * @param mode the gain control mode, other than {@link GainControl#OFF} and
+     * {@link GainControl#MANAGED_ANALOG}
+     * @throws IllegalArgumentException if {@code mode} is not supported or the legacy controller
+     * rejects the configuration
+     */
+    public void setMode(GainControl mode) {
         var legacyMode = switch (mode) {
-            case OFF -> throw new IllegalArgumentException("gain control is off");
+            case OFF, MANAGED_ANALOG -> throw new IllegalArgumentException("unsupported mode: " + mode);
             case ADAPTIVE_ANALOG -> DigitalAgc.MODE_ADAPTIVE_ANALOG;
             case ADAPTIVE_DIGITAL -> DigitalAgc.MODE_ADAPTIVE_DIGITAL;
             case FIXED_DIGITAL -> DigitalAgc.MODE_FIXED_DIGITAL;
         };
         this.mode = mode;
-        this.agc = new LegacyAgc();
-        this.gains = new int[11];
-        this.gainsScaled = new float[11];
-        this.splitBand = new short[FRAME];
-        if (agc.init(MINIMUM_CAPTURE_LEVEL, MAXIMUM_CAPTURE_LEVEL, legacyMode) != 0
-                || agc.setConfig(targetLevelDbfs, compressionGainDb, limiter) != 0) {
-            throw new IllegalArgumentException("invalid gain control configuration: target " + targetLevelDbfs
-                    + " dBFS, compression " + compressionGainDb + " dB");
+        for (var ch = 0; ch < agcs.length; ch++) {
+            if (agcs[ch].init(MINIMUM_CAPTURE_LEVEL, MAXIMUM_CAPTURE_LEVEL, legacyMode) != 0) {
+                throw new IllegalArgumentException("invalid gain control mode: " + mode);
+            }
+            captureLevels[ch] = analogCaptureLevel;
         }
-        this.analogCaptureLevel = 0;
-        this.captureLevel = 0;
+        configure();
     }
 
     /**
-     * Feeds one render frame to the far-end speech detector ({@code ProcessRenderAudio} of the
-     * packed render frame).
+     * Sets the target level ({@code set_target_level_dbfs}).
      *
-     * @param render the 160 render samples in the 16-bit range; not modified
+     * @param targetLevelDbfs the target peak level, in dB below full scale, in {@code [0, 31]}
      */
-    public void processRender(float[] render) {
-        for (var i = 0; i < FRAME; i++) {
-            splitBand[i] = FixedPointMath.floatS16ToS16(render[i]);
+    public void setTargetLevelDbfs(int targetLevelDbfs) {
+        this.targetLevelDbfs = targetLevelDbfs;
+        configure();
+    }
+
+    /**
+     * Sets the compression gain ({@code set_compression_gain_db}).
+     *
+     * @param compressionGainDb the compression gain, in dB, in {@code [0, 90]}
+     */
+    public void setCompressionGainDb(int compressionGainDb) {
+        this.compressionGainDb = compressionGainDb;
+        configure();
+    }
+
+    /**
+     * Enables or disables the limiter ({@code enable_limiter}).
+     *
+     * @param limiter whether the limiter is enabled
+     */
+    public void setLimiter(boolean limiter) {
+        this.limiter = limiter;
+        configure();
+    }
+
+    /**
+     * Applies the target level, compression gain and limiter to every channel ({@code Configure}).
+     *
+     * @throws IllegalArgumentException if the legacy controller rejects the configuration
+     */
+    private void configure() {
+        for (var agc : agcs) {
+            if (agc.setConfig(targetLevelDbfs, compressionGainDb, limiter) != 0) {
+                throw new IllegalArgumentException("invalid gain control configuration: target " + targetLevelDbfs
+                        + " dBFS, compression " + compressionGainDb + " dB");
+            }
         }
-        agc.addFarend(splitBand, 0);
+    }
+
+    /**
+     * Feeds one render frame to the far-end speech detector of every channel ({@code
+     * ProcessRenderAudio} of the frame {@code PackRenderAudioBuffer} packs: the lowest band,
+     * averaged over the render channels in 16-bit integers).
+     *
+     * @param render the lowest band of every render channel, 160 samples in the 16-bit range each;
+     * not modified
+     * @param renderChannels the number of render channels
+     */
+    public void processRender(float[][] render, int renderChannels) {
+        if (renderChannels == 1) {
+            var band = render[0];
+            for (var i = 0; i < FRAME; i++) {
+                splitBand[i] = FixedPointMath.floatS16ToS16(band[i]);
+            }
+        } else {
+            for (var i = 0; i < FRAME; i++) {
+                var sum = 0;
+                for (var ch = 0; ch < renderChannels; ch++) {
+                    sum += FixedPointMath.floatS16ToS16(render[ch][i]);
+                }
+                splitBand[i] = (short) (sum / renderChannels);
+            }
+        }
+        for (var agc : agcs) {
+            agc.addFarend(splitBand, 0);
+        }
     }
 
     /**
      * Collects the statistics of a capture frame before the other processing stages
      * ({@code AnalyzeCaptureAudio}).
      *
-     * @param capture the 160 capture samples in the 16-bit range; not modified
+     * @param capture the bands of every channel, {@code [channel][band]}, 160 samples in the
+     * 16-bit range each; not modified
      */
-    public void analyzeCapture(float[] capture) {
+    public void analyzeCapture(float[][][] capture) {
         switch (mode) {
             case ADAPTIVE_ANALOG -> {
-                captureLevel = analogCaptureLevel;
-                export(capture);
-                agc.addMic(splitBand, 0);
+                for (var ch = 0; ch < agcs.length; ch++) {
+                    captureLevels[ch] = analogCaptureLevel;
+                    export(capture[ch][0]);
+                    agcs[ch].addMic(splitBand, 0);
+                }
             }
             case ADAPTIVE_DIGITAL -> {
-                export(capture);
-                captureLevel = agc.virtualMic(splitBand, 0, analogCaptureLevel);
+                for (var ch = 0; ch < agcs.length; ch++) {
+                    export(capture[ch][0]);
+                    captureLevels[ch] = agcs[ch].virtualMic(splitBand, 0, analogCaptureLevel);
+                }
             }
-            case FIXED_DIGITAL, OFF -> {
+            case FIXED_DIGITAL, OFF, MANAGED_ANALOG -> {
             }
         }
     }
@@ -161,14 +273,35 @@ public final class GainController {
      * Computes the gains of a capture frame after the other processing stages and applies them
      * in place ({@code ProcessCaptureAudio}).
      *
-     * @param capture the 160 capture samples in the 16-bit range, modified in place
+     * @param capture the bands of every channel, {@code [channel][band]}, 160 samples in the
+     * 16-bit range each, modified in place
      */
-    public void processCapture(float[] capture) {
-        export(capture);
-        captureLevel = agc.analyze(splitBand, 0, captureLevel, false, gains);
-        applyDigitalGain(capture);
+    public void processCapture(float[][][] capture) {
+        for (var ch = 0; ch < agcs.length; ch++) {
+            export(capture[ch][0]);
+            captureLevels[ch] = agcs[ch].analyze(splitBand, 0, captureLevels[ch], false, gains[ch]);
+        }
+        var indexToApply = 0;
+        for (var ch = 1; ch < agcs.length; ch++) {
+            if (gains[indexToApply][10] < gains[ch][10]) {
+                indexToApply = ch;
+            }
+        }
+        var applied = gains[indexToApply];
+        for (var k = 0; k < 11; k++) {
+            gainsScaled[k] = applied[k] * GAIN_SCALING;
+        }
+        for (var ch = 0; ch < agcs.length; ch++) {
+            for (var b = 0; b < numBands; b++) {
+                applyDigitalGain(capture[ch][b]);
+            }
+        }
         if (mode == GainControl.ADAPTIVE_ANALOG) {
-            analogCaptureLevel = captureLevel;
+            var level = captureLevels[0];
+            for (var ch = 1; ch < agcs.length; ch++) {
+                level = Math.min(level, captureLevels[ch]);
+            }
+            analogCaptureLevel = level;
         }
     }
 
@@ -196,33 +329,30 @@ public final class GainController {
     }
 
     /**
-     * {@return the gain control mode, never {@link GainControl#OFF}}
+     * {@return the gain control mode}
      */
     public GainControl mode() {
         return mode;
     }
 
     /**
-     * Copies a frame into {@link #splitBand}, rounding to 16-bit integers.
+     * Copies a band into {@link #splitBand}, rounding to 16-bit integers.
      *
-     * @param capture the frame in the 16-bit float range
+     * @param band the band in the 16-bit float range
      */
-    private void export(float[] capture) {
+    private void export(float[] band) {
         for (var i = 0; i < FRAME; i++) {
-            splitBand[i] = FixedPointMath.floatS16ToS16(capture[i]);
+            splitBand[i] = FixedPointMath.floatS16ToS16(band[i]);
         }
     }
 
     /**
-     * Applies the gains of the last frame, interpolated linearly over each millisecond, and
-     * clamps to the 16-bit range ({@code ApplyDigitalGain}).
+     * Applies the scaled gains, interpolated linearly over each millisecond, and clamps to the
+     * 16-bit range ({@code ApplyDigitalGain}).
      *
-     * @param out the frame, modified in place
+     * @param out the band, modified in place
      */
     private void applyDigitalGain(float[] out) {
-        for (var k = 0; k < 11; k++) {
-            gainsScaled[k] = gains[k] * GAIN_SCALING;
-        }
         for (int k = 0, sample = 0; k < 10; k++) {
             var delta = (gainsScaled[k + 1] - gainsScaled[k]) * ONE_BY_NUM_SUB_SECTIONS;
             var gain = gainsScaled[k];
