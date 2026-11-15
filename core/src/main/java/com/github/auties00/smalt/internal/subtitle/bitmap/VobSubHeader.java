@@ -69,7 +69,7 @@ public record VobSubHeader(int width, int height, int originX, int originY, int[
                 case "palette" -> palette = colors(value, 16);
                 case "custom colors" -> {
                     var parts = value.split(",");
-                    customOn = parts[0].trim().equalsIgnoreCase("on");
+                    customOn = parts.length > 0 && parts[0].trim().equalsIgnoreCase("on");
                     for (var part : parts) {
                         var item = part.trim().toLowerCase(Locale.ROOT);
                         if (item.startsWith("tridx:")) {
