@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793511350619,
+  "lastUpdate": 1794748046111,
   "repoUrl": "https://github.com/Auties00/Smalt",
   "entries": {
     "Smalt A/B head (hosted runner, ns per operation)": [
@@ -608,6 +608,328 @@ window.BENCHMARK_DATA = {
             "value": 241529589.394,
             "unit": "ns/op",
             "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.0%\n95% interval: -1.6% to +4.1%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Alessandro Autiero",
+            "username": "Auties00",
+            "email": "alautiero@gmail.com"
+          },
+          "committer": {
+            "name": "Alessandro Autiero",
+            "username": "Auties00",
+            "email": "alautiero@gmail.com"
+          },
+          "id": "96379c496a14e8743c1ba2cdf6a61d9ec114082a",
+          "message": "Snapshot of int for CI",
+          "timestamp": "2026-11-15T07:41:15Z",
+          "url": "https://github.com/Auties00/Smalt/commit/96379c496a14e8743c1ba2cdf6a61d9ec114082a"
+        },
+        "date": 1794748044530,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "com.github.auties00.smalt.audio.opus.internal.silk.SilkEncoderBenchmark.encode60s config=voiceNote",
+            "value": 535577649.313,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.3%\n95% interval: -1.5% to +1.4%"
+          },
+          {
+            "name": "com.github.auties00.smalt.audio.voice.VoiceProcessorBenchmark.frame kernels=vector scenario=double talk",
+            "value": 77039.016,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +2.4%\n95% interval: +0.9% to +2.9%"
+          },
+          {
+            "name": "com.github.auties00.smalt.capture.internal.convert.ConversionBenchmark.bgrx1080p kernel=vector",
+            "value": 1352551.427,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.5%\n95% interval: -1.8% to +1.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.capture.internal.convert.ConversionBenchmark.nv12Chroma720p kernel=vector",
+            "value": 17484.615,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.1%\n95% interval: -3.0% to +3.9%"
+          },
+          {
+            "name": "com.github.auties00.smalt.capture.internal.convert.ConversionBenchmark.yuy2720p kernel=vector",
+            "value": 111849.006,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.4%\n95% interval: -1.2% to +1.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.image.color.ColorTransformBenchmark.transform transform=p3",
+            "value": 68161396.492,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.1%\n95% interval: -0.6% to +0.3%"
+          },
+          {
+            "name": "com.github.auties00.smalt.image.color.ColorTransformBenchmark.transform transform=pq-16",
+            "value": 582378852.812,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +9.6%\n95% interval: +8.6% to +11.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=aacenc",
+            "value": 52373598.006,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +5.9%\n95% interval: +4.2% to +6.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=ac3",
+            "value": 37743081.958,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.3%\n95% interval: -0.5% to +0.5%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=alacenc",
+            "value": 35209777.004,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=amrnb",
+            "value": 28399943.691,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +22.9%\n95% interval: +21.7% to +24.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=amrwb",
+            "value": 66503103.037,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.5%\n95% interval: -1.4% to +2.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=av1enc:speed=FASTER:threads=1",
+            "value": 354971631.75,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +2.7%\n95% interval: -1.3% to +6.4%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=capture",
+            "value": 3783300.354,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.5%\n95% interval: -1.4% to +2.1%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=convert",
+            "value": 3449789.614,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.8%\n95% interval: -1.9% to +0.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=dnxhddec",
+            "value": 2028636.338,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.3%\n95% interval: -0.6% to +11.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=dnxhdenc",
+            "value": 2236448.379,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.5%\n95% interval: -2.2% to +1.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=dvrec:threads=1",
+            "value": 70964246.679,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=effects",
+            "value": 15846011.716,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.8%\n95% interval: -4.5% to +1.0%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=flacenc",
+            "value": 9614512.906,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.8%\n95% interval: +0.0% to +1.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=gifdec",
+            "value": 5370127.427,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.6%\n95% interval: -3.6% to +6.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h263enc:threads=1",
+            "value": 202216798.875,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264dec:threads=1",
+            "value": 44749329.576,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +4.3%\n95% interval: +3.4% to +4.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264dec:threads=2",
+            "value": 28492403.391,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +4.1%\n95% interval: +2.8% to +4.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264enc:rt=true:threads=2",
+            "value": 85034425.775,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.4%\n95% interval: -0.9% to +2.3%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264enc:speed=BALANCED:profile=main:threads=1",
+            "value": 215517831.075,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.5%\n95% interval: -0.7% to +1.9%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264enc:speed=FASTEST:profile=baseline:threads=1",
+            "value": 122006571.694,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.2%\n95% interval: +0.4% to +1.5%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=heaac",
+            "value": 6855276.621,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +51.8%\n95% interval: +49.3% to +54.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=heaacenc",
+            "value": 79446119.279,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=jpegsend",
+            "value": 20714934.4,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.6%\n95% interval: +0.3% to +2.4%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=mp3enc",
+            "value": 66450838.168,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +3.8%\n95% interval: +2.5% to +5.9%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=mpeg4dec:threads=1",
+            "value": 21019039.544,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=mpeg4enc:threads=1",
+            "value": 422691462.917,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=opuscall",
+            "value": 93251189.659,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.1%\n95% interval: -2.2% to +2.0%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=opusvoice",
+            "value": 79452506.231,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -1.6%\n95% interval: -1.9% to +0.4%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=pngdec",
+            "value": 41030413.866,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.8%\n95% interval: -6.2% to +9.1%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=proresdec",
+            "value": 2519331.881,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.0%\n95% interval: -1.6% to +1.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=proresenc",
+            "value": 2660405.063,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.2%\n95% interval: -1.8% to +1.9%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=resample",
+            "value": 6782704.498,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +8.2%\n95% interval: +7.0% to +10.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=voice",
+            "value": 46156423.415,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +2.3%\n95% interval: +1.1% to +3.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=vp8enc:speed=6:threads=1",
+            "value": 108621229.087,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.1%\n95% interval: -0.6% to +1.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=vp8enc:speed=8:threads=2:resilient=false",
+            "value": 76872749.763,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.8%\n95% interval: -1.6% to +7.3%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=vp9enc:speed=6:threads=1",
+            "value": 330634794.688,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.7%\n95% interval: -0.5% to +2.1%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=webpanim",
+            "value": 625034606.812,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.7%\n95% interval: +0.3% to +4.0%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=webpdec",
+            "value": 5903119.165,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -1.0%\n95% interval: -1.6% to +0.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=webpenc",
+            "value": 225250903.85,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +11.6%\n95% interval: +10.9% to +13.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.video.h264.H264DecoderBenchmark.decode stream=720p-baseline-cavlc threads=1",
+            "value": 1388100402.125,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +6.2%\n95% interval: +4.3% to +13.1%"
+          },
+          {
+            "name": "com.github.auties00.smalt.video.vp8.Vp8RtEncodeBenchmark.encodeFrame size=720 speed=6 threads=1",
+            "value": 10943767.001,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.6%\n95% interval: -4.1% to +2.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.video.vp9.internal.Vp9RtEncodeBenchmark.encodeFrame size=720 speed=6 threads=1",
+            "value": 49175241.873,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.2%\n95% interval: -1.2% to +11.4%"
+          },
+          {
+            "name": "com.github.auties00.smalt.video.vp9.internal.Vp9RtEncodeBenchmark.encodeFrameScalar size=720 speed=6 threads=1",
+            "value": 243794908.681,
+            "unit": "ns/op",
+            "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.3%\n95% interval: +0.2% to +3.9%"
           }
         ]
       }
