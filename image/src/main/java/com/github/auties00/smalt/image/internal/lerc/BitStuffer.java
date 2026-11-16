@@ -42,6 +42,9 @@ final class BitStuffer {
         var nb = bits67 == 0 ? 4 : 3 - bits67;
         var doLut = (b & 0x20) != 0;
         var numBits = b & 31;
+        if (nb == 0) {
+            throw new DataFormatException("invalid Lerc2 packed value count size");
+        }
         need(nb);
         var count = nb == 1 ? src[pos] & 0xFF : nb == 2 ? (src[pos] & 0xFF) | (src[pos + 1] & 0xFF) << 8
                 : LercDecoder.intLE(src, pos);

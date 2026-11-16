@@ -111,14 +111,16 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
 
     /**
      * The kernels used for the cases this class does not vectorize.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarLoopFilterDsp scalar;
+    private static final ScalarLoopFilterDsp SCALAR = new ScalarLoopFilterDsp();
 
     /**
      * Constructs the kernels.
      */
     private VectorLoopFilterDsp() {
-        this.scalar = new ScalarLoopFilterDsp();
     }
 
     /**
@@ -148,7 +150,7 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
                              int mask2, byte[] lvl, int lvlOff, int b4Stride, FilterLut lut, int length,
                              short[] scratch, int bitdepthMax) {
         if (bitdepthMax > 1023) {
-            scalar.loopFilterSb(plane, dir, dst, dstOff, stride, mask0, mask1, mask2, lvl, lvlOff, b4Stride, lut,
+            SCALAR.loopFilterSb(plane, dir, dst, dstOff, stride, mask0, mask1, mask2, lvl, lvlOff, b4Stride, lut,
                     length, scratch, bitdepthMax);
             return;
         }
@@ -179,7 +181,7 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
             var off = dstOff + 4 * g;
             if (column + 4 * g + 16 > stride || off - before * stride < 0 || off + after * stride + 16 > dst.length) {
                 var selected = 15 << g;
-                scalar.loopFilterSb(plane, dir, dst, dstOff, stride, mask0 & selected, mask1 & selected,
+                SCALAR.loopFilterSb(plane, dir, dst, dstOff, stride, mask0 & selected, mask1 & selected,
                         mask2 & selected, lvl, lvlOff, b4Stride, lut, length, scratch, bitdepthMax);
                 continue;
             }
@@ -294,7 +296,7 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
             var off = dstOff + 4 * g * stride;
             if (off - before < 0 || off + 15 * stride + after > dst.length) {
                 var selected = 15 << g;
-                scalar.loopFilterSb(plane, DIR_COLUMN_EDGES, dst, dstOff, stride, mask0 & selected, mask1 & selected,
+                SCALAR.loopFilterSb(plane, DIR_COLUMN_EDGES, dst, dstOff, stride, mask0 & selected, mask1 & selected,
                         mask2 & selected, lvl, lvlOff, b4Stride, lut, length, scratch, bitdepthMax);
                 continue;
             }

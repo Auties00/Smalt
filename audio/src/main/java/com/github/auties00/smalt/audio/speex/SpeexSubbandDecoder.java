@@ -245,7 +245,13 @@ final class SpeexSubbandDecoder implements SpeexFrameDecoder {
             }
             piGain[sub] = pi;
             var rl = lowPiGain[sub];
-            var filterRatio = (short) saturate(pdiv32(shl32(rl + 82, 7), 82 + rh), 32767);
+            // a corrupt filter can zero the ratio or its divisor, which the fixed-point reference divides by; the
+            // smallest positive value takes the place of either
+            var ratioDivisor = 82 + rh == 0 ? 1 : 82 + rh;
+            var filterRatio = (short) saturate(pdiv32(shl32(rl + 82, 7), ratioDivisor), 32767);
+            if (filterRatio == 0) {
+                filterRatio = 1;
+            }
             Arrays.fill(exc, 0);
             if (mode.innovation() == null) {
                 var quant = bits.unsigned(5);

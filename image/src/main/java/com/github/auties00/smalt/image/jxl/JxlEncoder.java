@@ -116,7 +116,8 @@ public final class JxlEncoder {
      * @param jpeg the JPEG file
      * @return the JPEG XL file
      * @throws MediaException.Malformed if the JPEG file is invalid or truncated
-     * @throws MediaException.Unsupported if the JPEG file uses a coding process that JPEG XL cannot hold
+     * @throws MediaException.Unsupported if the JPEG file uses a coding process or a table layout that JPEG XL
+     * cannot hold
      * @throws MediaException.LimitExceeded if the file exceeds the default limits or encoding runs out of memory
      * @throws MediaException.Io if reading the source fails
      * @see #recompressJpeg(MediaSource, JxlEncoderOptions)
@@ -144,7 +145,8 @@ public final class JxlEncoder {
      * @param options the encoder settings
      * @return the JPEG XL file
      * @throws MediaException.Malformed if the JPEG file is invalid or truncated
-     * @throws MediaException.Unsupported if the JPEG file uses a coding process that JPEG XL cannot hold
+     * @throws MediaException.Unsupported if the JPEG file uses a coding process or a table layout that JPEG XL
+     * cannot hold
      * @throws MediaException.LimitExceeded if the file exceeds the default limits or encoding runs out of memory
      * @throws MediaException.Io if reading the source fails
      */
@@ -161,7 +163,8 @@ public final class JxlEncoder {
      * @param limits the bounds of the file size, the image size and the memory the coefficients take
      * @return the JPEG XL file
      * @throws MediaException.Malformed if the JPEG file is invalid or truncated
-     * @throws MediaException.Unsupported if the JPEG file uses a coding process that JPEG XL cannot hold
+     * @throws MediaException.Unsupported if the JPEG file uses a coding process or a table layout that JPEG XL
+     * cannot hold
      * @throws MediaException.LimitExceeded if the file or the image exceeds the limits, or encoding runs out of
      * memory
      * @throws MediaException.Io if reading the source fails

@@ -156,6 +156,10 @@ public final class Av1FilmGrainTable {
             if (start < 0 || start > Long.MAX_VALUE / NANOS_PER_UNIT) {
                 throw new IllegalArgumentException("invalid film grain table start time " + start);
             }
+            if (end <= start) {
+                throw new IllegalArgumentException("film grain table end time " + end + " not after start time "
+                        + start);
+            }
             out.add(new Entry(Duration.ofNanos(start * NANOS_PER_UNIT), Duration.ofNanos(saturatedNanos(end)),
                     apply ? Optional.of(grain) : Optional.empty()));
         }

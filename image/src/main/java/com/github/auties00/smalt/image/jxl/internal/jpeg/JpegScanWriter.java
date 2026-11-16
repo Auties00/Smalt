@@ -148,9 +148,13 @@ final class JpegScanWriter {
             w8 = (frameHeader.width + (8 << maxHShift) - 1) / (8 << maxHShift);
             h8 = (frameHeader.height + (8 << maxVShift) - 1) / (8 << maxVShift);
         }
-        var ss = Math.max(scan.ss(), 1);
-        var se = scan.se() + 1;
-        var al = scan.al();
+        // a sequential scan codes the full band whatever spectral selection its header states, as JPEG decoders
+        // read it
+        var sequentialScan = kind == SEQUENTIAL;
+        var hasDc = sequentialScan || scan.ss() == 0;
+        var ss = sequentialScan ? 1 : Math.max(scan.ss(), 1);
+        var se = sequentialScan ? 64 : scan.se() + 1;
+        var al = sequentialScan ? 0 : scan.al();
         if (se > 64 || ss > se) {
             throw JbrdHeader.malformed("invalid spectral selection");
         }
@@ -205,7 +209,7 @@ final class JpegScanWriter {
                             var xAc = (xDc * 8) & groupWidthMask;
                             xDc &= groupWidthMask;
                             var dc = 0;
-                            if (scan.ss() == 0) {
+                            if (hasDc) {
                                 var lfIndex = yDc * lfWidth + xDc;
                                 if (xDc >= lfWidth || lfIndex >= lfPlane.length) {
                                     throw JbrdHeader.malformed("block outside the LF image");
@@ -232,7 +236,6 @@ final class JpegScanWriter {
                             if (scan.resetPoints().contains(blockIndex)) {
                                 emitEobRun();
                             }
-                            var hasDc = scan.ss() == 0;
                             switch (kind) {
                                 case SEQUENTIAL -> sequential(c, dcTable, acTable, dc, ac, se - ss, extraZeroRuns);
                                 case FIRST -> progressiveFirst(c, dcTable, acTable, hasDc, dc, ac, se - ss,

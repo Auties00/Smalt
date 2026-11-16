@@ -3,6 +3,8 @@
    BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.image.jxl.internal.encode;
 
+import com.github.auties00.smalt.MediaException;
+
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -115,6 +117,7 @@ final class JbrdWriter {
      * APP segments, the COM segments, the bytes between markers and the bytes after EOI.
      *
      * @return the payload
+     * @throws MediaException.Unsupported if the JPEG file has fewer than 2 or more than 89 Huffman table definitions
      */
     byte[] payload() {
         var w = new JxlBitWriter(1024);
@@ -158,6 +161,11 @@ final class JbrdWriter {
         }
         for (var c : comps) {
             w.write(2, c.quantIndex);
+        }
+        if (jpeg.huffman.size() < 2 || jpeg.huffman.size() > 26 + 63) {
+            // the reconstruction data stores between 2 and 89 Huffman table definitions
+            throw new MediaException.Unsupported("JPEG XL", "a JPEG file with " + jpeg.huffman.size()
+                    + " Huffman table definitions cannot be recompressed");
         }
         w.writeU32(jpeg.huffman.size(), 4, 0, 2, 3, 10, 4, 26, 6);
         for (var h : jpeg.huffman) {

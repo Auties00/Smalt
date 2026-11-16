@@ -911,12 +911,18 @@ public final class Mpeg4VideoDemuxer implements Demuxer {
 
         /**
          * Gives a picture its decoding time, the presentation time of the place it would have without reordering.
+         * Packets keep the decoding order: a picture without a time releases the held first picture, with its own
+         * presentation time as its decoding time, before it.
          *
          * @param picture the picture read last, in decoding order
          */
         private void order(Picture picture) {
             var n = decoded++;
             if (picture.pts == Packet.NO_TIMESTAMP) {
+                if (held != null) {
+                    emit(held, pending.poll());
+                    held = null;
+                }
                 emit(picture, n == 0 ? 0 : Packet.NO_TIMESTAMP);
                 return;
             }

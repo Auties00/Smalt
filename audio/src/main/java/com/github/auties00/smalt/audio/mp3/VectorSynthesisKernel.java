@@ -68,8 +68,8 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     private final float[] rows = new float[32 * 4];
 
     /**
-     * The window results of one or two output positions: the {@code a} lanes then the {@code b}
-     * lanes.
+     * The window results of one or two output positions, before the output scaling: the {@code a}
+     * lanes then the {@code b} lanes.
      */
     private final float[] results = new float[16];
 
@@ -651,7 +651,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     /**
      * Computes the 32 windowed sums of one 128-bit column group of time slot position {@code zi}:
      * the four even-indexed outputs into {@code r[0..3]} and the four odd-indexed ones into
-     * {@code r[4..7]}, scaled to the output range.
+     * {@code r[4..7]}, unscaled.
      *
      * @implNote This implementation unrolls the eight window taps into straight-line code, so no
      * vector crosses a loop back edge or a control-flow merge (the alternating sign of the odd taps
@@ -714,18 +714,19 @@ final class VectorSynthesisKernel implements SynthesisKernel {
         vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 512));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
-        var scale = FLOAT_VECTOR.cast(FloatVector.broadcast(SPECIES, ScalarSynthesisKernel.OUTPUT_SCALE));
-        a.lanewise(VectorOperators.MUL, scale).intoArray(r, 0);
-        b.lanewise(VectorOperators.MUL, scale).intoArray(r, 4);
+        a.intoArray(r, 0);
+        b.intoArray(r, 4);
     }
 
     /**
      * Computes the windowed sums of two positions at once with 256-bit vectors, the pair weights
      * starting at {@code wb}: the even-indexed outputs into {@code r[0..7]} and the odd-indexed ones
-     * into {@code r[8..15]}, scaled to the output range.
+     * into {@code r[8..15]}, unscaled.
      *
      * @implNote This implementation unrolls the taps for the reasons given on
-     * {@link #accumulateNarrow(float[], int, float[], int, float[])}.
+     * {@link #accumulateNarrow(float[], int, float[], int, float[])}. The output scaling is left to
+     * {@link #scatter}: as the last vector operation of this method, a multiplication by the
+     * broadcast scale was intermittently left on the allocating fallback in mixed JVMs.
      *
      * @param lins the filterbank history
      * @param zi the index in {@code lins} of the first sample of the lower position
@@ -782,9 +783,8 @@ final class VectorSynthesisKernel implements SynthesisKernel {
         vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 512));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
-        var scale = WIDE_VECTOR.cast(FloatVector.broadcast(WIDE, ScalarSynthesisKernel.OUTPUT_SCALE));
-        a.lanewise(VectorOperators.MUL, scale).intoArray(r, 0);
-        b.lanewise(VectorOperators.MUL, scale).intoArray(r, 8);
+        a.intoArray(r, 0);
+        b.intoArray(r, 8);
     }
 
     /**
@@ -810,8 +810,9 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     }
 
     /**
-     * Writes the eight output samples of one output position, right channel first so that the
-     * left value wins when both planes are the same array.
+     * Writes the eight output samples of one output position, scaled to the output range as
+     * {@link ScalarSynthesisKernel} scales them, right channel first so that the left value wins
+     * when both planes are the same array.
      *
      * @param r the results
      * @param a the index of the position's four {@code a} lanes
@@ -822,13 +823,14 @@ final class VectorSynthesisKernel implements SynthesisKernel {
      * @param outOffset the index of the first output sample
      */
     private static void scatter(float[] r, int a, int b, int i, float[] outLeft, float[] outRight, int outOffset) {
-        outRight[outOffset + 15 - i] = r[a + 1];
-        outRight[outOffset + 17 + i] = r[b + 1];
-        outLeft[outOffset + 15 - i] = r[a];
-        outLeft[outOffset + 17 + i] = r[b];
-        outRight[outOffset + 47 - i] = r[a + 3];
-        outRight[outOffset + 49 + i] = r[b + 3];
-        outLeft[outOffset + 47 - i] = r[a + 2];
-        outLeft[outOffset + 49 + i] = r[b + 2];
+        var scale = ScalarSynthesisKernel.OUTPUT_SCALE;
+        outRight[outOffset + 15 - i] = r[a + 1] * scale;
+        outRight[outOffset + 17 + i] = r[b + 1] * scale;
+        outLeft[outOffset + 15 - i] = r[a] * scale;
+        outLeft[outOffset + 17 + i] = r[b] * scale;
+        outRight[outOffset + 47 - i] = r[a + 3] * scale;
+        outRight[outOffset + 49 + i] = r[b + 3] * scale;
+        outLeft[outOffset + 47 - i] = r[a + 2] * scale;
+        outLeft[outOffset + 49 + i] = r[b + 2] * scale;
     }
 }

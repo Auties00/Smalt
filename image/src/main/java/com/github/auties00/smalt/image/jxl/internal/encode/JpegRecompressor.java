@@ -14,6 +14,7 @@ import com.github.auties00.smalt.image.jxl.internal.vardct.VarDctEncoder;
 import com.github.auties00.smalt.internal.tiff.TiffExif;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -23,6 +24,27 @@ import java.util.List;
 public final class JpegRecompressor {
     private JpegRecompressor() {
         throw new AssertionError();
+    }
+
+    /**
+     * Checks that the reconstruction can rebuild every quantization table: the codestream holds only the tables the
+     * components use, and a decoder fills each other one with the table before it.
+     *
+     * @param reader the parsed JPEG file
+     * @throws MediaException.Unsupported if the first table is unused or another unused table differs from the one
+     * before it
+     */
+    private static void checkQuantTables(JpegReader reader) {
+        var used = new boolean[reader.quant.size()];
+        for (var component : reader.components) {
+            used[component.quantIndex] = true;
+        }
+        for (var i = 0; i < used.length; i++) {
+            if (!used[i] && (i == 0 || !Arrays.equals(reader.quant.get(i).values, reader.quant.get(i - 1).values))) {
+                throw new MediaException.Unsupported("JPEG XL",
+                        "a JPEG file with a quantization table no component uses cannot be recompressed");
+            }
+        }
     }
 
     /**
@@ -38,6 +60,7 @@ public final class JpegRecompressor {
      */
     public static byte[] recompress(byte[] jpeg, int effort, com.github.auties00.smalt.MediaLimits limits) {
         var reader = JpegReader.read(jpeg, limits);
+        checkQuantTables(reader);
         var jbrd = new JbrdWriter(reader);
         var payload = jbrd.payload();
         var count = reader.components.size();

@@ -2,6 +2,8 @@ package com.github.auties00.smalt.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.mp4.Mp4Remuxer;
@@ -12,6 +14,9 @@ import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.metadata.TagReadOptions;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
+import com.github.auties00.smalt.track.Packet;
+
+import java.util.List;
 
 /**
  * Fuzz target of the MP4 remuxer ({@link Mp4Remuxer}), which reads any container Smalt demuxes and writes its
@@ -50,15 +55,37 @@ class RemuxFuzzTest {
                 while (packets <= result.packets() && demuxer.read() != null) {
                     packets++;
                 }
-                if (packets != result.packets()) {
-                    throw new AssertionError("the remuxed file holds " + packets + " packets, reported "
-                            + result.packets());
+                // an MP4 input's samples are copied with their edit list, which trims the packets a demuxer
+                // presents, so the output must present the input's packets of the copied tracks
+                var expected = result.inputFormat() == ContainerFormat.MP4 && packets < result.packets()
+                        ? presented(data, limits, result.sourceTrackIds()) : result.packets();
+                if (packets != expected) {
+                    throw new AssertionError("the remuxed file holds " + packets + " packets, expected " + expected
+                            + " (reported " + result.packets() + ")");
                 }
             } catch (MediaException exception) {
                 throw new AssertionError("the remuxed file does not demux", exception);
             }
             run.output();
         });
+    }
+
+    /** {@return the number of packets a demuxer presents for the given tracks of an input} */
+    private static long presented(byte[] data, MediaLimits limits, List<Integer> trackIds) {
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(data), DemuxerOptions.builder()
+                .limits(limits)
+                .build())) {
+            var count = 0L;
+            Packet packet;
+            while ((packet = demuxer.read()) != null) {
+                if (trackIds.contains(packet.trackId())) {
+                    count++;
+                }
+            }
+            return count;
+        } catch (MediaException exception) {
+            throw new AssertionError("the remuxed input no longer demuxes", exception);
+        }
     }
 
     @FuzzTest

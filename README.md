@@ -2233,7 +2233,9 @@ apartment.
   a quarter larger on screen content with repeated glyphs, which cjxl codes as patches. The `jbrd` box of a
   recompressed JPEG file holds uncompressed Brotli meta-blocks, about the size of the JPEG headers. JPEG
   recompression rejects arithmetic-coded, 12-bit, lossless and four-component (CMYK) JPEG files, files whose
-  height a DNL marker defines and sampling factors JPEG XL cannot hold.
+  height a DNL marker defines, sampling factors JPEG XL cannot hold, fewer than 2 or more than 89 Huffman table
+  definitions, and a quantization table no component uses that differs from the one defined before it (the
+  `jbrd` box stores only the tables the components use).
 - JPEG 2000 metadata editing changes the color specification of the JP2 header only (not those of JPX
   codestream or compositing layer headers), cannot store comments (the codestream's `COM` segments are not
   rewritten) or the metadata of a raw codestream, and refuses to move the boxes of a file whose codestream is

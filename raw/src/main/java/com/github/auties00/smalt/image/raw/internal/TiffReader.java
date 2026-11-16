@@ -75,9 +75,13 @@ public final class TiffReader {
      * @param base the absolute offset of the byte order mark
      * @param limits the resource bounds
      * @return the reader
-     * @throws MediaException.Malformed if the byte order mark is missing
+     * @throws MediaException.Malformed if the offset is outside the source or the byte order mark is missing
      */
     public static TiffReader open(MediaSource source, long base, MediaLimits limits) {
+        var size = source.size();
+        if (base < 0 || size >= 0 && base > size - 2) {
+            throw new MediaException.Malformed("TIFF structure offset " + base + " outside the file");
+        }
         var mark = new byte[2];
         source.readFully(base, mark, 0, 2);
         if (mark[0] == 'I' && mark[1] == 'I') {

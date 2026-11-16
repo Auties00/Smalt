@@ -286,7 +286,12 @@ public final class StreamMerge implements AutoCloseable {
                     packet.sideData());
             var time = dts != Packet.NO_TIMESTAMP ? dts : pts;
             if (time != Packet.NO_TIMESTAMP) {
-                times[index] = tracks.get(id - 1).timeBase().toMicros(time);
+                try {
+                    times[index] = tracks.get(id - 1).timeBase().toMicros(time);
+                } catch (ArithmeticException exception) {
+                    // a time past the long range in microseconds still orders after (or before) every other
+                    times[index] = time < 0 ? Long.MIN_VALUE : Long.MAX_VALUE;
+                }
             }
             next[index] = moved;
             return;

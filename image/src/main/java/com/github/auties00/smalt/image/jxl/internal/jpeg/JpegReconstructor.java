@@ -682,9 +682,6 @@ public final class JpegReconstructor {
             out.write((scan.dcTable()[c] << 4) | scan.acTable()[c]);
         }
         out.writeBytes(new byte[]{(byte) scan.ss(), (byte) scan.se(), (byte) ((scan.ah() << 4) | scan.al())});
-        if (!progressive && (scan.ss() != 0 || scan.se() != 63 || scan.al() != 0 || scan.ah() != 0)) {
-            throw JbrdHeader.malformed("progressive parameters in a sequential scan");
-        }
         var writer = new JpegScanWriter(this, scan, progressive ? (scan.ah() == 0 ? 1 : 2) : 0);
         writer.write();
     }

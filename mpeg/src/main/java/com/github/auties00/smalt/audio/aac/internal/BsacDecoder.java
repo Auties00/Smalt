@@ -1274,6 +1274,8 @@ final class BsacDecoder {
                 endCband[ch][g] = 0;
                 endFreq[ch][g] = 0;
                 sFreq[ch][g] = 0;
+                // a group without base layers decodes nothing until a layer sets its end
+                eFreq[ch][g] = 0;
             }
         }
         var available = 0;

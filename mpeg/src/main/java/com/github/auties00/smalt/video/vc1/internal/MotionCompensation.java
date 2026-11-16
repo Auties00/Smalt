@@ -129,7 +129,8 @@ final class MotionCompensation {
         } else if (row >= validHeight) {
             row = interlacedRows ? validHeight - 2 + ((row - validHeight) & 1) : validHeight - 1;
         }
-        return row * stride;
+        // a plane of one row has no row of the other parity
+        return Math.clamp(row, 0, validHeight - 1) * stride;
     }
 
     /**

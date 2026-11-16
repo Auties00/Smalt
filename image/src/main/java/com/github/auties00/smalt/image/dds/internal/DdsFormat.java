@@ -281,18 +281,23 @@ public final class DdsFormat {
      *
      * @param width the width, positive
      * @param height the height, positive
-     * @return the size in bytes
+     * @return the size in bytes, or {@link Long#MAX_VALUE} when it does not fit a {@code long}
      */
     public long surfaceBytes(int width, int height) {
-        return switch (kind) {
-            case BC1, BC4 -> ((width + 3L) / 4) * ((height + 3L) / 4) * 8;
-            case BC2, BC3, BC5, BC6H, BC7 -> ((width + 3L) / 4) * ((height + 3L) / 4) * 16;
-            case RGBG, GRGB -> ((width + 1L) / 2) * 4 * height;
-            case PLAIN, YUV444, PALETTE -> (long) width * height * bytesPerTexel;
-            case YUV422 -> ((width + 1L) / 2) * 4 * sampleBytes * height;
-            case PLANAR -> planarPitch(width) * (height + (alternate ? 1 : 2) * chromaRows(height));
-            case BITS -> ((width + 7L) / 8) * height;
-        };
+        try {
+            return switch (kind) {
+                case BC1, BC4 -> Math.multiplyExact(((width + 3L) / 4) * ((height + 3L) / 4), 8L);
+                case BC2, BC3, BC5, BC6H, BC7 -> Math.multiplyExact(((width + 3L) / 4) * ((height + 3L) / 4), 16L);
+                case RGBG, GRGB -> Math.multiplyExact(((width + 1L) / 2) * height, 4L);
+                case PLAIN, YUV444, PALETTE -> Math.multiplyExact((long) width * height, (long) bytesPerTexel);
+                case YUV422 -> Math.multiplyExact(((width + 1L) / 2) * height, 4L * sampleBytes);
+                case PLANAR -> Math.multiplyExact(planarPitch(width),
+                        height + (alternate ? 1 : 2) * chromaRows(height));
+                case BITS -> ((width + 7L) / 8) * height;
+            };
+        } catch (ArithmeticException exception) {
+            return Long.MAX_VALUE;
+        }
     }
 
     /**
@@ -370,7 +375,7 @@ public final class DdsFormat {
      */
     public Picture decode(byte[] data, long offset, int width, int height) {
         var size = surfaceBytes(width, height);
-        if (offset + size > data.length) {
+        if (size > data.length - offset) {
             throw new MediaException.Malformed("the DDS surface of " + size + " bytes at offset " + offset
                     + " runs past the end of the file");
         }

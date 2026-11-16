@@ -8,7 +8,8 @@ package com.github.auties00.smalt.image.gainmap;
  * @implNote This implementation bounds the denominator by the numerator limit for values below 1 too, where
  * libultrahdr lets a signed fraction overflow its numerator and fail, and checks that bound against the product of
  * the value and the denominator rather than only the floating-point quotient, so that every value a fraction of the
- * fields holds is written back.
+ * fields holds is written back. When the next convergent's denominator does not fit it also tries the largest
+ * semiconvergent that does, keeping the closer of the two.
  */
 final class Fractions {
     /**
@@ -92,7 +93,8 @@ final class Fractions {
             remainder = 1 / remainder;
             var next = previousDenominator + Math.floor(remainder) * denominator;
             if (next > maxDenominator) {
-                return numerator << 32 | denominator;
+                return closer(value, numerator, denominator, previousDenominator + (maxDenominator
+                        - previousDenominator) / denominator * denominator);
             }
             previousDenominator = denominator;
             denominator = (long) next;
@@ -100,5 +102,27 @@ final class Fractions {
         }
         numerator = Math.round(denominator * value);
         return numerator << 32 | denominator;
+    }
+
+    /**
+     * Picks the closer to a value of the last convergent and the largest semiconvergent denominator that fits.
+     *
+     * <p>The semiconvergent also covers a partial quotient that floating-point error rounded one past its exact
+     * value, which would otherwise end the expansion a convergent early.
+     *
+     * @param value the non-negative value approximated
+     * @param numerator the numerator of the last convergent
+     * @param denominator the denominator of the last convergent
+     * @param candidate the largest semiconvergent denominator within the denominator limit
+     * @return the numerator in the high 32 bits and the denominator in the low 32 bits
+     */
+    private static long closer(double value, long numerator, long denominator, long candidate) {
+        if (candidate <= denominator) {
+            return numerator << 32 | denominator;
+        }
+        var candidateNumerator = Math.round(candidate * value);
+        var error = Math.abs((double) numerator / denominator - value);
+        var candidateError = Math.abs((double) candidateNumerator / candidate - value);
+        return candidateError < error ? candidateNumerator << 32 | candidate : numerator << 32 | denominator;
     }
 }

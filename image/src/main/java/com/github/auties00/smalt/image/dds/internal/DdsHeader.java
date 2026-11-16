@@ -164,7 +164,7 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
                     var d = Math.max(1, depth >> level);
                     var size = format.surfaceBytes(w, h);
                     for (var slice = 0; slice < d; slice++) {
-                        if (offset + size > fileSize || result.size() >= maxSurfaces) {
+                        if (size > fileSize - offset || result.size() >= maxSurfaces) {
                             if (result.isEmpty()) {
                                 throw new MediaException.Malformed("the DDS file ends before its first surface");
                             }
@@ -254,6 +254,11 @@ public record DdsHeader(int width, int height, int depth, int mipmaps, int[] fac
         }
         if (fields.isEmpty()) {
             throw new MediaException.Malformed("the DDS pixel format has no channel mask");
+        }
+        for (var field : fields) {
+            if (field.shift() + field.bits() > bitCount) {
+                throw new MediaException.Malformed("a DDS channel mask exceeds the " + bitCount + "-bit texel");
+            }
         }
         return DdsFormat.plain("masks", bitCount / 8, fields.toArray(Field[]::new));
     }
