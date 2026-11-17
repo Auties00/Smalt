@@ -728,7 +728,9 @@ final class VectorSynthesisKernel implements SynthesisKernel {
      * {@link #scatter}: as the last vector operation of this method, a multiplication by the
      * broadcast scale was intermittently left on the allocating fallback in mixed JVMs. Every
      * operand, the loaded weights included, is cast to its exact vector class, so that the compiler
-     * needs no type profile to intrinsify any operation.
+     * needs no type profile to intrinsify any operation. The eight taps are split between two
+     * methods, each compiled on its own: in one method, the inlined Vector API code of the last
+     * operations could exceed the compiler's inlining budget, which left them on the fallback.
      *
      * @param lins the filterbank history
      * @param zi the index in {@code lins} of the first sample of the lower position
@@ -737,6 +739,21 @@ final class VectorSynthesisKernel implements SynthesisKernel {
      * @param r receives the sixteen results
      */
     private static void accumulateWide(float[] lins, int zi, float[] pw, int wb, float[] r) {
+        accumulateWideFirst(lins, zi, pw, wb, r);
+        accumulateWideSecond(lins, zi, pw, wb, r);
+    }
+
+    /**
+     * Accumulates the first four taps of {@link #accumulateWide}, storing the partial sums in
+     * {@code r}.
+     *
+     * @param lins the filterbank history
+     * @param zi the index in {@code lins} of the first sample of the lower position
+     * @param pw the pair weights
+     * @param wb the index in {@code pw} of the pair's first weight
+     * @param r receives the sixteen partial sums
+     */
+    private static void accumulateWideFirst(float[] lins, int zi, float[] pw, int wb, float[] r) {
         var w0 = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, pw, wb));
         var w1 = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, pw, wb + 8));
         var vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi));
@@ -761,10 +778,26 @@ final class VectorSynthesisKernel implements SynthesisKernel {
         vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 768));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
-        w0 = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, pw, wb + 64));
-        w1 = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, pw, wb + 72));
-        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 256));
-        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 704));
+        a.intoArray(r, 0);
+        b.intoArray(r, 8);
+    }
+
+    /**
+     * Accumulates the last four taps of {@link #accumulateWide} onto the partial sums in {@code r}.
+     *
+     * @param lins the filterbank history
+     * @param zi the index in {@code lins} of the first sample of the lower position
+     * @param pw the pair weights
+     * @param wb the index in {@code pw} of the pair's first weight
+     * @param r holds the partial sums and receives the sixteen results
+     */
+    private static void accumulateWideSecond(float[] lins, int zi, float[] pw, int wb, float[] r) {
+        var a = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, r, 0));
+        var b = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, r, 8));
+        var w0 = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, pw, wb + 64));
+        var w1 = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, pw, wb + 72));
+        var vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 256));
+        var vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 704));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, pw, wb + 80));
