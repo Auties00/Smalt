@@ -511,8 +511,12 @@ public final class JpegReconstructor {
                 case 3 -> 0x12;
                 default -> 0x11;
             };
+            var table = header.componentQuant[index];
+            if (table >= header.quantIndex.length) {
+                throw JbrdHeader.malformed("component quantization table out of range");
+            }
             out.writeBytes(new byte[]{(byte) header.componentIds[index], (byte) sampling,
-                    (byte) header.componentQuant[index]});
+                    (byte) header.quantIndex[table]});
         }
     }
 
@@ -582,9 +586,11 @@ public final class JpegReconstructor {
         out.writeBytes(new byte[]{(byte) 0xFF, (byte) 0xDB, (byte) (length >> 8), (byte) length});
         for (var index = quantIndex; index <= end; index++) {
             var slot = header.quantIndex[index];
+            // a component names its table by its position among the recorded tables, not by its DQT slot, which a
+            // file may define more than once; a table no component uses repeats the one before it
             var channel = -1;
             for (var c = 0; c < header.componentQuant.length; c++) {
-                if (header.componentQuant[c] == slot) {
+                if (header.componentQuant[c] == index) {
                     channel = c;
                     break;
                 }
