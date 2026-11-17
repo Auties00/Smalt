@@ -270,7 +270,8 @@ public final class PsdDecoder {
             if (sectionLength >= (document.large ? 10 : 6)) {
                 var lengthSize = document.large ? 8 : 4;
                 var infoLength = document.large ? u64(data, sectionStart) : u32(data, sectionStart);
-                if (infoLength >= 2 && ByteArrays.u16be(data, (int) (sectionStart + lengthSize)) != 0) {
+                if (infoLength >= 2 && sectionStart + lengthSize + 2 <= data.length
+                        && ByteArrays.u16be(data, (int) (sectionStart + lengthSize)) != 0) {
                     infoStart = sectionStart + lengthSize;
                     infoEnd = Math.min(infoStart + infoLength, Math.min(data.length, sectionStart + sectionLength));
                 } else {

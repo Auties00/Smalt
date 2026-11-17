@@ -291,9 +291,14 @@ jobs:
           # A real compositor sending the pointer as metadata: headless mutter, rendering in software.
           WAYLAND_DISPLAY=smalt-mutter nohup mutter --headless --wayland --no-x11 --virtual-monitor 1280x720 \
             --wayland-display smalt-mutter > "$RUNNER_TEMP/mutter.log" 2>&1 &
-          for _ in $(seq 1 50); do
+          # mutter owns its screen cast and remote desktop names once its backend is up, which a busy runner can delay
+          # by several seconds; the script needs both
+          for _ in $(seq 1 150); do
             dbus-send --session --print-reply --dest=org.gnome.Mutter.ScreenCast /org/gnome/Mutter/ScreenCast \
-              org.freedesktop.DBus.Properties.Get string:org.gnome.Mutter.ScreenCast string:Version > /dev/null 2>&1 && break
+              org.freedesktop.DBus.Properties.Get string:org.gnome.Mutter.ScreenCast string:Version > /dev/null 2>&1 \
+              && dbus-send --session --print-reply --dest=org.gnome.Mutter.RemoteDesktop /org/gnome/Mutter/RemoteDesktop \
+              org.freedesktop.DBus.Properties.Get string:org.gnome.Mutter.RemoteDesktop string:Version > /dev/null 2>&1 \
+              && break
             sleep 0.2
           done
           nohup /usr/bin/python3 .github/scripts/mutter-screencast.py "$RUNNER_TEMP/mutter-node" \
