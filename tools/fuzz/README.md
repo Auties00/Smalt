@@ -126,7 +126,7 @@ yields a preview exactly as the uncut one does.
 `.clusterfuzzlite/build.sh` runs `fuzz.py build`, fetches the smoke data tier for extra seeds and runs
 `fuzz.py package --out $OUT`, which lays out one launcher per target, the bundled JDK, the class paths, the seed
 corpus zips and the dictionaries. `cflite_pr.yml` fuzzes every pull request that touches code for 30 minutes
-shared by the targets; `cflite_batch.yml` fuzzes every night for four hours, which grows the corpus the pull
+shared by the targets; `cflite_batch.yml` fuzzes every night for three and a half hours, which grows the corpus the pull
 request runs start from, and then prunes it. A crash fails the job; download the artifact and follow
 [Reproducing and saving a finding](#reproducing-and-saving-a-finding).
 

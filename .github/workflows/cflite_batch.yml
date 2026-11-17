@@ -33,7 +33,9 @@ jobs:
         with:
           mode: batch
           sanitizer: address
-          fuzz-seconds: 14400
+          # the build takes up to about 50 minutes and the reproduction and upload of crashes some more, which a
+          # four-hour budget pushed past the 330-minute job limit
+          fuzz-seconds: 12600
           output-sarif: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
 

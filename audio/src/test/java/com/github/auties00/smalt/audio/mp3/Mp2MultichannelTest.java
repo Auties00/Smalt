@@ -243,6 +243,20 @@ class Mp2MultichannelTest {
         }
 
         @Test
+        @DisplayName("a stereo frame whose extension fails after a mono multichannel layout decodes as stereo")
+        void baseChannelsChanged() {
+            // the mono frames carry a second stereo program the main program leaves out, so their layout is mono
+            var packets = new ArrayList<>(Mp2MultichannelStreams.buildOverSilentBase(1, true, false, 0, 3, 31));
+            packets.addAll(damage(Mp2MultichannelStreams.build(Mp2MultichannelStreams.surround51(), 1, 33, false), 0));
+            var decoded = decode(packets, Mp3DecoderOptions.defaults(), -1);
+            assertEquals(ChannelLayout.MONO, decoded.layouts().get(2));
+            assertEquals(ChannelLayout.STEREO, decoded.layouts().get(3));
+            assertEquals(0, decoded.concealed());
+            var flagged = decode(packets, Mp3DecoderOptions.defaults(), 3);
+            assertEquals(ChannelLayout.STEREO, flagged.layouts().get(3));
+        }
+
+        @Test
         @DisplayName("a frame of more channels than the limits allow fails with LimitExceeded")
         void limits() {
             var packets = Mp2MultichannelStreams.build(Mp2MultichannelStreams.surround51(), 2, 17, false);

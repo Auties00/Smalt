@@ -666,9 +666,10 @@ public final class Mp3Decoder implements AudioDecoder {
             output.accept(concealProgram());
             return;
         }
-        var out = multichannelFrame && extensionEstablished ? outputBuffer(extensionLayout, rate)
-                : outputBuffer(channels, rate);
-        conceal(header, channels, out.plane(0), out.plane(channels - 1));
+        var extended = multichannelFrame && extendsLayout(channels);
+        var out = extended ? outputBuffer(extensionLayout, rate) : outputBuffer(channels, rate);
+        conceal(header, channels, out.plane(extended ? extensionPlanes[0] : 0),
+                out.plane(extended ? extensionPlanes[channels - 1] : channels - 1));
         if (out.channels() > channels) {
             silenceExtension(out, header);
         }
@@ -836,7 +837,7 @@ public final class Mp3Decoder implements AudioDecoder {
         var samples = MpegAudioHeader.samplesPerFrame(header);
         var multichannelFrame = isMultichannel(header);
         var out = multichannelFrame && programEstablished ? outputBuffer(programLayout, programRate)
-                : multichannelFrame && extensionEstablished ? outputBuffer(extensionLayout, rate)
+                : multichannelFrame && extendsLayout(channels) ? outputBuffer(extensionLayout, rate)
                 : outputBuffer(channels, rate);
         var left = out.plane(0);
         var right = out.plane(Math.min(channels, out.channels()) - 1);
@@ -873,8 +874,9 @@ public final class Mp3Decoder implements AudioDecoder {
             if (programFrame) {
                 samples = programFrames;
             } else {
-                left = out.plane(0);
-                right = out.plane(channels - 1);
+                var mapped = extendsLayout(channels) && out.layout().equals(extensionLayout);
+                left = out.plane(mapped ? extensionPlanes[0] : 0);
+                right = out.plane(mapped ? extensionPlanes[channels - 1] : channels - 1);
             }
         } else {
             status = decodeLayer12(header, channels, left, right, data, offset, corrupt, crcWord);
@@ -1491,14 +1493,14 @@ public final class Mp3Decoder implements AudioDecoder {
         }
         programEstablished = false;
         clearStaleMain();
-        if (!extensionEstablished) {
+        if (!extendsLayout(channels)) {
             var out = outputBuffer(channels, rate);
             synthesizeBase(channels, out.plane(0), out.plane(channels - 1));
             return DECODED;
         }
         concealedFrames++;
         var out = outputBuffer(extensionLayout, rate);
-        synthesizeBase(channels, out.plane(0), out.plane(channels - 1));
+        synthesizeBase(channels, out.plane(extensionPlanes[0]), out.plane(extensionPlanes[channels - 1]));
         silenceExtension(out, header);
         return DECODED;
     }
@@ -1538,6 +1540,17 @@ public final class Mp3Decoder implements AudioDecoder {
             }
         }
         synthesizeExtension(outputBuffer(frameLayout, rate), true);
+    }
+
+    /**
+     * Returns whether a frame can stand in for the established multichannel layout: one is established and its base
+     * channels are those of the frame.
+     *
+     * @param channels the number of base channels of the frame
+     * @return {@code true} when the frame's base channels map to planes of the established layout
+     */
+    private boolean extendsLayout(int channels) {
+        return extensionEstablished && (extensionPlanes[1] < 0 ? 1 : 2) == channels;
     }
 
     /**
