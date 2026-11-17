@@ -51,6 +51,17 @@ final class Mp3FrameEncoder {
     private static final float[] VBR_LAMBDA = {-12, -10, -8, -6.5f, -5, -3.5f, -2, 0, 2, 4.5f};
 
     /**
+     * The time constant of the recent bitrate that steers average bitrate mode after a retarget, in seconds.
+     */
+    private static final double RECENT_SECONDS = 0.25;
+
+    /**
+     * The change of the noise offset, in decibels, per frame and unit of relative deviation of the recent bitrate
+     * from the target.
+     */
+    private static final double RECENT_GAIN = 1.0;
+
+    /**
      * The noise offset range searched by constant bitrate rate control, in half decibels.
      */
     private static final int LAMBDA_MIN = -80;
@@ -78,7 +89,7 @@ final class Mp3FrameEncoder {
     /**
      * The validated configuration.
      */
-    private final Mp3EncoderOptions options;
+    private Mp3EncoderOptions options;
 
     /**
      * The index of the sampling rate in {@link Mp3EncoderTables#SAMPLE_RATES}.
@@ -242,6 +253,12 @@ final class Mp3FrameEncoder {
     private long framesWritten;
 
     /**
+     * The recent bitrate of average bitrate mode after a retarget, in bits per second, or a negative value while
+     * the stream keeps its first target and is steered by its whole average.
+     */
+    private double recentBitrate = -1;
+
+    /**
      * The frames assembled so far, handed out or pending.
      */
     private long assembled;
@@ -342,6 +359,21 @@ final class Mp3FrameEncoder {
     }
 
     /**
+     * Changes the bitrate of the frames coded from now on: takes the options' bitrate and bandwidth, and from now
+     * on steers average bitrate mode by its recent bitrate, starting from the new target.
+     *
+     * @param retargeted the options, differing from the current ones only in their bitrate
+     */
+    void retarget(Mp3EncoderOptions retargeted) {
+        this.options = retargeted;
+        var cutoff = retargeted.effectiveBandwidth();
+        var rate = retargeted.sampleRate();
+        fillLowpass(lowpassLong, rate / 1152.0, cutoff);
+        fillLowpass(lowpassShort, rate / 384.0, cutoff);
+        recentBitrate = retargeted.bitrate();
+    }
+
+    /**
      * Fills the gains of a frequency-domain lowpass with a raised-cosine transition ending at the
      * cutoff.
      *
@@ -359,7 +391,7 @@ final class Mp3FrameEncoder {
                 gains[i] = 0;
             } else {
                 var x = (f - (cutoff - transition)) / transition;
-                var c = Math.cos(x * Math.PI / 2);
+                var c = StrictMath.cos(x * Math.PI / 2);
                 gains[i] = (float) (c * c);
             }
         }
@@ -733,7 +765,7 @@ final class Mp3FrameEncoder {
         if (energy <= threshold) {
             return 0;
         }
-        return 0.5 * width * Math.log(energy / threshold) * 1.4426950408889634;
+        return 0.5 * width * StrictMath.log(energy / threshold) * 1.4426950408889634;
     }
 
     /**
@@ -779,6 +811,14 @@ final class Mp3FrameEncoder {
     private void updateAverageLambda(int bitrateIndex, int padding) {
         bitsWritten += 8L * frameBytes(bitrateIndex, padding);
         framesWritten++;
+        if (recentBitrate >= 0) {
+            var duration = (double) frameSize() / options.sampleRate();
+            var weight = Math.min(1, duration / RECENT_SECONDS);
+            recentBitrate += weight * (8L * frameBytes(bitrateIndex, padding) / duration - recentBitrate);
+            var error = (recentBitrate - options.bitrate()) / options.bitrate();
+            averageLambda = (float) Math.clamp(averageLambda + RECENT_GAIN * error, -8, 20);
+            return;
+        }
         var seconds = framesWritten * (double) frameSize() / options.sampleRate();
         var average = bitsWritten / seconds;
         var error = (average - options.bitrate()) / options.bitrate();

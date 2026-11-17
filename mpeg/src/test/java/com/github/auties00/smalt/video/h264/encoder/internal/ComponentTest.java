@@ -475,15 +475,15 @@ class ComponentTest {
         })
         @DisplayName("picks the lowest level of Table A-1 that fits size, rate and bitrate")
         void select(int width, int height, double fps, long bitrate, int expected) {
-            var level = Levels.select(false, (width + 15) / 16, (height + 15) / 16, fps, bitrate, bitrate, 1);
+            var level = Levels.select(1000, false, (width + 15) / 16, (height + 15) / 16, fps, bitrate, bitrate, 1);
             assertEquals(expected, level.idc());
         }
 
         @Test
         @DisplayName("moves up a level when the decoded picture buffer is too small for the references")
         void references() {
-            var one = Levels.select(false, 80, 45, 30, 0, 0, 1);
-            var many = Levels.select(false, 80, 45, 30, 0, 0, 16);
+            var one = Levels.select(1000, false, 80, 45, 30, 0, 0, 1);
+            var many = Levels.select(1000, false, 80, 45, 30, 0, 0, 16);
             assertTrue(many.idc() > one.idc());
             assertTrue(many.maxDpbFrames(80 * 45) >= 16);
         }
@@ -496,7 +496,47 @@ class ComponentTest {
         })
         @DisplayName("past every rate limit, keeps as many of the bitrate and buffer limits as a level can")
         void overLimit(long bitrate, long bufferSize, int expected) {
-            var level = Levels.select(false, 120, 68, 30, bitrate, bufferSize, 1);
+            var level = Levels.select(1000, false, 120, 68, 30, bitrate, bufferSize, 1);
+            assertEquals(expected, level.idc());
+        }
+
+        @ParameterizedTest(name = "{0}x{1} at {2} fps interlaced -> {3}")
+        @CsvSource({
+                "176, 144, 15, 21",
+                "720, 576, 25, 30",
+                "1920, 1088, 30, 40",
+                "1920, 1088, 60, 41"
+        })
+        @DisplayName("keeps interlaced streams within levels 2.1 to 4.1, the levels that allow field coding")
+        void interlaced(int width, int height, double fps, int expected) {
+            var level = Levels.select(1000, true, (width + 15) / 16, (height + 15) / 16, fps, 0, 0, 1);
+            assertEquals(expected, level.idc());
+            for (var idc : new int[]{10, 20, 42, 51}) {
+                assertTrue(!Levels.fits(Levels.of(idc), 1000, true, 11, 10, 0, 0, 0), "level " + idc);
+            }
+            assertTrue(Levels.fits(Levels.of(21), 1000, true, 11, 10, 0, 0, 0));
+        }
+
+        @ParameterizedTest(name = "{0}: level_idc {1}")
+        @CsvSource({
+                "CONSTRAINED_BASELINE, 41",
+                "MAIN, 41",
+                "HIGH, 41",
+                "HIGH_10, 40",
+                "HIGH_422, 40",
+                "HIGH_444_PREDICTIVE, 40"
+        })
+        @DisplayName("scales the bitrate limits by the profile's cpbBrVclFactor of Table A-2")
+        void bitrateFactor(H264Profile profile, int expected) {
+            var factor = Levels.bitrateFactor(profile);
+            assertEquals(switch (profile) {
+                case CONSTRAINED_BASELINE, MAIN -> 1000;
+                case HIGH -> 1250;
+                case HIGH_10 -> 3000;
+                case HIGH_422, HIGH_444_PREDICTIVE -> 4000;
+            }, factor);
+            // level 4.0 allows 20000 units, 25 Mbps at 1250 bits per unit, 60 Mbps at 3000
+            var level = Levels.select(factor, false, 120, 68, 30, 30_000_000, 0, 1);
             assertEquals(expected, level.idc());
         }
     }
@@ -551,7 +591,7 @@ class ComponentTest {
                 assertEquals(profile == H264Profile.CONSTRAINED_BASELINE ? 0 : 1, reader.bit(),
                         "entropy_coding_mode_flag of " + profile);
                 assertEquals(settings.cabac(), profile != H264Profile.CONSTRAINED_BASELINE);
-                assertEquals(settings.transform8x8(), profile == H264Profile.HIGH);
+                assertEquals(settings.transform8x8(), profile.profileIdc() >= 100);
             }
         }
     }

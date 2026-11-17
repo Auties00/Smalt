@@ -1,0 +1,38 @@
+# demux dump of wav/opus.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 1033500
+seekable true
+track 0 AUDIO OPUS timebase=1/48000 duration=49608 config=19:ea5d642a
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 26
+0 t0 pts=-312 dts=-312 dur=1920 flags=KEY size=160 crc=98e4a99f
+1 t0 pts=1608 dts=1608 dur=1920 flags=KEY size=230 crc=d23ec96f
+2 t0 pts=3528 dts=3528 dur=1920 flags=KEY size=229 crc=5910b6d4
+3 t0 pts=5448 dts=5448 dur=1920 flags=KEY size=209 crc=7b22e618
+4 t0 pts=7368 dts=7368 dur=1920 flags=KEY size=225 crc=a8b75294
+5 t0 pts=9288 dts=9288 dur=1920 flags=KEY size=224 crc=40c0cef3
+6 t0 pts=11208 dts=11208 dur=1920 flags=KEY size=218 crc=365cf8cb
+7 t0 pts=13128 dts=13128 dur=1920 flags=KEY size=204 crc=a9aa3e30
+8 t0 pts=15048 dts=15048 dur=1920 flags=KEY size=231 crc=ad3a615d
+9 t0 pts=16968 dts=16968 dur=1920 flags=KEY size=228 crc=10b73f1d
+10 t0 pts=18888 dts=18888 dur=1920 flags=KEY size=226 crc=6d1253c9
+11 t0 pts=20808 dts=20808 dur=1920 flags=KEY size=215 crc=e0179fdf
+12 t0 pts=22728 dts=22728 dur=1920 flags=KEY size=218 crc=74f2f613
+13 t0 pts=24648 dts=24648 dur=1920 flags=KEY size=212 crc=9c84c5c8
+14 t0 pts=26568 dts=26568 dur=1920 flags=KEY size=225 crc=ad2fbee1
+15 t0 pts=28488 dts=28488 dur=1920 flags=KEY size=213 crc=92c8c180
+16 t0 pts=30408 dts=30408 dur=1920 flags=KEY size=210 crc=2d9d44fd
+17 t0 pts=32328 dts=32328 dur=1920 flags=KEY size=213 crc=c0c7fe7b
+18 t0 pts=34248 dts=34248 dur=1920 flags=KEY size=215 crc=5e78d338
+19 t0 pts=36168 dts=36168 dur=1920 flags=KEY size=211 crc=7576eca7
+20 t0 pts=38088 dts=38088 dur=1920 flags=KEY size=227 crc=1efe1197
+21 t0 pts=40008 dts=40008 dur=1920 flags=KEY size=215 crc=8b8769fd
+22 t0 pts=41928 dts=41928 dur=1920 flags=KEY size=216 crc=43d308e9
+23 t0 pts=43848 dts=43848 dur=1920 flags=KEY size=221 crc=8665eb1d
+24 t0 pts=45768 dts=45768 dur=1920 flags=KEY size=217 crc=5ae589e9
+25 t0 pts=47688 dts=47688 dur=1920 flags=KEY size=135 crc=17f9c29f
+seek 0: t0@0
+seek 344500: t0@8
+seek 689000: t0@17
+seek 1033500: end
+seek -1000000: t0@0

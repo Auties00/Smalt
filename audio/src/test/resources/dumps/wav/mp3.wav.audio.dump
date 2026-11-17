@@ -1,0 +1,22 @@
+# audio decode dump of wav/mp3.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 1044898
+seekable true
+track 0 MP3 rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=228e736a
+1 frames=4096 crc16=9a820121
+2 frames=4096 crc16=c8f4e2f2
+3 frames=4096 crc16=8e641e77
+4 frames=4096 crc16=adb1d21b
+5 frames=4096 crc16=6fa9b2d8
+6 frames=4096 crc16=b7403f4a
+7 frames=4096 crc16=1e512d8d
+8 frames=4096 crc16=92154a7c
+9 frames=4096 crc16=83319098
+10 frames=4096 crc16=9b9b45e3
+11 frames=1024 crc16=ea178451
+seek 0: @sample 0
+seek 348299: @sample 15360
+seek 696598: @sample 30720
+seek 1044898: end
+seek -1000000: @sample 0

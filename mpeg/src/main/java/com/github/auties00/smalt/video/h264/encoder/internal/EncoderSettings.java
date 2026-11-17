@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.video.h264.encoder.internal;
 
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderSpeed;
 import com.github.auties00.smalt.video.h264.encoder.H264Profile;
 import com.github.auties00.smalt.video.h264.internal.H264Levels;
@@ -12,7 +13,7 @@ import com.github.auties00.smalt.video.h264.internal.H264Levels;
  * sets; the analysis part (search range, partitions, decision method) depends only on the
  * {@link H264EncoderSpeed} and changes no syntax.
  */
-public final class EncoderSettings {
+public final class EncoderSettings implements StreamParameters {
     /**
      * The configuration the settings derive from.
      */
@@ -109,9 +110,30 @@ public final class EncoderSettings {
     private final int maxMvY;
 
     /**
-     * The analysis parameters of the configured speed.
+     * The analysis parameters of the configured speed, or of {@link H264EncoderSpeed#FASTEST} in the first
+     * pass of a two-pass encode, which keeps the stream structure of the configured speed.
      */
     private final Analysis analysis;
+
+    /**
+     * The address of the first macroblock of the fixed slice each macroblock belongs to.
+     */
+    private final int[] sliceStarts;
+
+    /**
+     * The number of fixed slices per picture.
+     */
+    private final int sliceCount;
+
+    /**
+     * The number of temporal layers.
+     */
+    private final int temporalLayers;
+
+    /**
+     * The intra refresh period in frames, or 0 for none.
+     */
+    private final int intraRefresh;
 
     /**
      * Holds the analysis parameters of a speed.
@@ -144,6 +166,17 @@ public final class EncoderSettings {
     public record Analysis(int refs, int partitions, int searchRange, int searchMethod, int subpel16,
                            int subpelOther, boolean intra4x4, int intraModeSearch, int rdMode, boolean trellis,
                            int refSearchMethod, boolean lightB) {
+        /**
+         * Returns these parameters with another number of searched reference frames.
+         *
+         * @param count the number of reference frames searched
+         * @return the parameters
+         */
+        Analysis withRefs(int count) {
+            return new Analysis(count, partitions, searchRange, searchMethod, subpel16, subpelOther, intra4x4,
+                    intraModeSearch, rdMode, trellis, refSearchMethod, lightB);
+        }
+
         /**
          * Returns the analysis parameters of a speed.
          *
@@ -178,29 +211,40 @@ public final class EncoderSettings {
         this.displayWidth = (config.width() + 1) & ~1;
         this.displayHeight = (config.height() + 1) & ~1;
         this.profileIdc = config.profile().profileIdc();
-        this.cabac = config.profile() != H264Profile.CONSTRAINED_BASELINE;
-        this.transform8x8 = config.profile() == H264Profile.HIGH;
+        this.cabac = config.profile() != H264Profile.CONSTRAINED_BASELINE && !config.cavlc();
+        this.transform8x8 = profileIdc >= 100 && cabac;
         var baseAnalysis = Analysis.of(config.speed());
-        var wantB = cabac && config.bFrames() > 0 && lookahead() > 0;
+        this.temporalLayers = config.temporalLayers();
+        this.intraRefresh = config.intraRefresh();
+        if (temporalLayers > 1 || intraRefresh > 0) {
+            baseAnalysis = baseAnalysis.withRefs(1);
+        }
+        var wantB = cabac && config.bFrames() > 0 && lookahead() > 0 && temporalLayers == 1 && intraRefresh == 0;
         var bCount = wantB ? Math.min(config.bFrames(), lookahead() - 1) : 0;
-        var high = config.profile() == H264Profile.HIGH;
+        var factor = Levels.bitrateFactor(config.profile());
         var frameRate = config.frameRate().toDouble();
         var maxBitrate = config.effectiveMaxBitrate();
         var bufferSize = config.effectiveBufferSize();
+        var layerRefs = temporalLayers > 1 ? 1 << Math.max(0, temporalLayers - 2) : 1;
         if (config.level() == 0) {
-            this.level = Levels.select(high, mbWidth, mbHeight, frameRate, maxBitrate, bufferSize,
-                    wantB ? Math.max(2, baseAnalysis.refs()) : baseAnalysis.refs());
+            this.level = Levels.select(factor, false, mbWidth, mbHeight, frameRate, maxBitrate, bufferSize,
+                    Math.max(layerRefs, wantB ? Math.max(2, baseAnalysis.refs()) : baseAnalysis.refs()));
         } else {
             this.level = Levels.of(config.level());
-            if (!level.fits(high, mbWidth, mbHeight, frameRate, maxBitrate, bufferSize)) {
+            if (!Levels.fits(level, factor, false, mbWidth, mbHeight, frameRate, maxBitrate, bufferSize)) {
                 throw new IllegalArgumentException("level " + config.level() + " is too small for "
                         + config.width() + "x" + config.height() + " at " + config.frameRate() + " fps and "
                         + maxBitrate + " bps");
             }
         }
         var dpb = level.maxDpbFrames(mbWidth * mbHeight);
+        if (layerRefs > dpb) {
+            throw new IllegalArgumentException("level " + level.idc() + " holds " + dpb + " reference frames of "
+                    + config.width() + "x" + config.height() + ", " + temporalLayers + " temporal layers need "
+                    + layerRefs);
+        }
         this.activeRefs = Math.max(1, Math.min(baseAnalysis.refs(), dpb));
-        this.refs = wantB ? Math.max(activeRefs, Math.min(2, dpb)) : activeRefs;
+        this.refs = temporalLayers > 1 ? layerRefs : wantB ? Math.max(activeRefs, Math.min(2, dpb)) : activeRefs;
         var fitted = bCount;
         var shaped = false;
         if (refs >= 2 && bCount >= 2) {
@@ -212,7 +256,8 @@ public final class EncoderSettings {
         this.pyramid = shaped;
         this.bframes = shaped ? fitted : bCount;
         this.numRefFrames = refs + (shaped ? new BStructure(fitted, true).referenced : 0);
-        this.analysis = activeRefs == baseAnalysis.refs() ? baseAnalysis : new Analysis(activeRefs, baseAnalysis.partitions(),
+        this.analysis = config.passRecorder() != null ? Analysis.of(H264EncoderSpeed.FASTEST)
+                : activeRefs == baseAnalysis.refs() ? baseAnalysis : new Analysis(activeRefs, baseAnalysis.partitions(),
                 baseAnalysis.searchRange(), baseAnalysis.searchMethod(), baseAnalysis.subpel16(),
                 baseAnalysis.subpelOther(), baseAnalysis.intra4x4(), baseAnalysis.intraModeSearch(),
                 baseAnalysis.rdMode(), baseAnalysis.trellis(), baseAnalysis.refSearchMethod(), baseAnalysis.lightB());
@@ -222,6 +267,14 @@ public final class EncoderSettings {
         this.timeScale = 2 * rate.numerator();
         this.workers = Math.min(config.threads(), mbHeight);
         this.maxMvY = level.maxVmv() * 4 - 1;
+        var rows = Math.min(config.slices(), mbHeight);
+        this.sliceCount = rows;
+        this.sliceStarts = new int[mbWidth * mbHeight];
+        for (var slice = 0; slice < rows; slice++) {
+            var firstRow = (int) ((long) slice * mbHeight / rows);
+            var endRow = (int) ((long) (slice + 1) * mbHeight / rows);
+            java.util.Arrays.fill(sliceStarts, firstRow * mbWidth, endRow * mbWidth, firstRow * mbWidth);
+        }
     }
 
     /**
@@ -536,7 +589,7 @@ public final class EncoderSettings {
      * @return the look-ahead depth in pictures, {@code 0} in real-time mode
      */
     public int lookahead() {
-        if (config.realtime()) {
+        if (config.realtime() || config.temporalLayers() > 1) {
             return 0;
         }
         return config.lookahead();
@@ -545,9 +598,102 @@ public final class EncoderSettings {
     /**
      * Returns the analysis parameters.
      *
-     * @return the parameters of the configured speed
+     * @return the parameters of the configured speed, or of the fastest in a first pass
      */
     public Analysis analysis() {
         return analysis;
+    }
+
+    /**
+     * Returns the address of the first macroblock of the fixed slice a macroblock belongs to.
+     *
+     * @param address the macroblock address
+     * @return the first macroblock address of its slice
+     */
+    public int sliceStart(int address) {
+        return sliceStarts[address];
+    }
+
+    /**
+     * {@return the number of fixed slices per picture, at most the number of macroblock rows}
+     */
+    public int sliceCount() {
+        return sliceCount;
+    }
+
+    /**
+     * {@return the largest slice NAL unit in bytes, or 0 for no limit}
+     */
+    public int maxSliceBytes() {
+        return config.maxSliceBytes();
+    }
+
+    /**
+     * {@return the number of temporal layers}
+     */
+    public int temporalLayers() {
+        return temporalLayers;
+    }
+
+    /**
+     * {@return the intra refresh period in frames, or 0 for none}
+     */
+    public int intraRefresh() {
+        return intraRefresh;
+    }
+
+    @Override
+    public int chromaFormatIdc() {
+        return 1;
+    }
+
+    @Override
+    public int bitDepth() {
+        return 8;
+    }
+
+    @Override
+    public boolean transformBypass() {
+        return false;
+    }
+
+    @Override
+    public boolean frameNumGapsAllowed() {
+        return temporalLayers > 2;
+    }
+
+    @Override
+    public boolean frameMbsOnly() {
+        return true;
+    }
+
+    @Override
+    public boolean mbaff() {
+        return false;
+    }
+
+    @Override
+    public int cropRight() {
+        return codedWidth() - displayWidth;
+    }
+
+    @Override
+    public int cropBottom() {
+        return codedHeight() - displayHeight;
+    }
+
+    @Override
+    public Rational sampleAspectRatio() {
+        return config.sampleAspectRatio();
+    }
+
+    @Override
+    public boolean fixedFrameRate() {
+        return config.fixedFrameRate();
+    }
+
+    @Override
+    public boolean bottomFieldPicOrder() {
+        return false;
     }
 }

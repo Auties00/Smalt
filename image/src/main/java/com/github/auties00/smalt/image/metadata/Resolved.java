@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.metadata;
 
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEdit.Change;
 import com.github.auties00.smalt.metadata.XmpPacket;
 
@@ -14,12 +15,13 @@ import java.util.Map;
  * @param xmp         what happens to the XMP packet, with the new packet when replaced
  * @param iptc        what happens to the IPTC data, with the new data when replaced
  * @param icc         what happens to the ICC profile, with the new profile bytes when replaced
+ * @param hdrColor    the color description of a replacing high-dynamic-range profile, or {@code null}
  * @param comments    what happens to the comments, with the new comments when replaced
  * @param text        what happens to the PNG text, with the new text when replaced
  * @param removeOther whether the metadata of no other kind is removed
  */
 record Resolved(Change<byte[]> exif, Change<XmpPacket> xmp, Change<IptcData> iptc, Change<byte[]> icc,
-                Change<List<String>> comments, Change<Map<String, String>> text, boolean removeOther) {
+                ColorInfo hdrColor, Change<List<String>> comments, Change<Map<String, String>> text, boolean removeOther) {
     /**
      * Returns whether the resolution changes nothing.
      *

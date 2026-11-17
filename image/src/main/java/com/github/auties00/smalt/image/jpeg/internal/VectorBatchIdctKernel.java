@@ -306,14 +306,16 @@ final class VectorBatchIdctKernel implements BatchIdctKernel {
 
     /**
      * The scalar kernel, which writes batches of fewer than eight blocks.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarBatchIdctKernel scalar;
+    private static final ScalarBatchIdctKernel SCALAR = new ScalarBatchIdctKernel();
 
     /**
      * Constructs the kernel.
      */
     VectorBatchIdctKernel() {
-        this.scalar = new ScalarBatchIdctKernel();
     }
 
     /**
@@ -332,7 +334,7 @@ final class VectorBatchIdctKernel implements BatchIdctKernel {
     @Override
     public void idct8(int[] c, int count, byte[] output, int offset, int stride) {
         if (count < LANES) {
-            scalar.idct8(c, count, output, offset, stride);
+            SCALAR.idct8(c, count, output, offset, stride);
             return;
         }
         columns8(c);
@@ -552,7 +554,7 @@ final class VectorBatchIdctKernel implements BatchIdctKernel {
     @Override
     public void idct4(int[] c, int count, byte[] output, int offset, int stride) {
         if (count < LANES) {
-            scalar.idct4(c, count, output, offset, stride);
+            SCALAR.idct4(c, count, output, offset, stride);
             return;
         }
         columns4(c);
@@ -710,7 +712,7 @@ final class VectorBatchIdctKernel implements BatchIdctKernel {
     @Override
     public void idct2(int[] c, int count, byte[] output, int offset, int stride) {
         if (count < LANES) {
-            scalar.idct2(c, count, output, offset, stride);
+            SCALAR.idct2(c, count, output, offset, stride);
             return;
         }
         columns2(c);

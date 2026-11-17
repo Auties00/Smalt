@@ -14,8 +14,9 @@ import java.util.List;
  * <p>Surround channels map the way the 5.1 layouts of other formats do: the two surrounds of 2/2
  * and 3/2 to the side speakers, the single surround of 2/1 and 3/1 to the back center; the rear
  * surround pair of a channel extension maps to the back speakers, so a 7.1 program comes out as
- * front, center, LFE, back and side pairs. Locations without a {@link Speaker} counterpart (the
- * surround direct and wide pairs, the second LFE) map to {@link Speaker#UNKNOWN}.
+ * front, center, LFE, back and side pairs. The surround direct pair, the wide pair and the second
+ * LFE map to {@link Speaker#SURROUND_DIRECT_LEFT} and {@link Speaker#SURROUND_DIRECT_RIGHT},
+ * {@link Speaker#WIDE_LEFT} and {@link Speaker#WIDE_RIGHT}, and {@link Speaker#LOW_FREQUENCY_2}.
  */
 public final class ChannelMap {
     /**
@@ -126,39 +127,36 @@ public final class ChannelMap {
     public static final int EXTENSION_MAP = 0x8000 >>> 3 | 0x8000 >>> 4 | 0x8000 >>> 6;
 
     /**
-     * Maps a layout onto the closest channel configuration E-AC-3 codes: a 7.1 or 7.0 program,
-     * with the side and back pairs and the center, codes as it is, in WAVE order; every other
-     * layout maps as {@link #codable(ChannelLayout)} maps it.
+     * Maps a layout onto the closest channel configuration E-AC-3 codes, in WAVE order: the core
+     * {@link #codable(ChannelLayout)} keeps and every other channel with a custom channel map
+     * location (see {@link ProgramPlan}), which dependent substreams carry. A layout of bare
+     * channels beyond six codes 7.1 from eight channels on, otherwise as {@link #codable(ChannelLayout)}
+     * maps it.
      *
      * @param layout the requested layout
      * @return the codable layout
      */
     public static ChannelLayout codableEnhanced(ChannelLayout layout) {
-        if (extended(layout)) {
-            var lfe = layout.speakers().contains(Speaker.LOW_FREQUENCY);
-            return lfe ? ChannelLayout.SURROUND_7_1 : new ChannelLayout(List.of(Speaker.FRONT_LEFT,
-                    Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER, Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.SIDE_LEFT,
-                    Speaker.SIDE_RIGHT));
-        }
-        if (layout.channels() > 6 && layout.speakers().stream().allMatch(speaker -> speaker == Speaker.UNKNOWN)) {
+        if (layout.speakers().stream().allMatch(speaker -> speaker == Speaker.UNKNOWN)) {
             return layout.channels() >= 8 ? ChannelLayout.SURROUND_7_1 : codable(layout);
         }
-        return codable(layout);
+        var core = codable(layout);
+        var speakers = new ArrayList<>(core.speakers());
+        speakers.addAll(ProgramPlan.extras(layout, core));
+        speakers.sort(null);
+        return new ChannelLayout(List.copyOf(speakers));
     }
 
     /**
-     * Returns whether a layout is a program beyond 5.1 that E-AC-3 codes with a dependent
-     * substream: the front pair, the center, and both the side and the back pairs.
+     * Returns whether a layout is a program beyond 5.1 that E-AC-3 codes with dependent
+     * substreams: one with a channel outside the core {@link #codable(ChannelLayout)} keeps that
+     * has a custom channel map location.
      *
      * @param layout the requested layout
-     * @return {@code true} for 7.1 and 7.0
+     * @return {@code true} for 7.1, 7.0 and the larger programs
      */
     public static boolean extended(ChannelLayout layout) {
-        var speakers = layout.speakers();
-        return speakers.contains(Speaker.FRONT_LEFT) && speakers.contains(Speaker.FRONT_RIGHT)
-                && speakers.contains(Speaker.FRONT_CENTER) && speakers.contains(Speaker.SIDE_LEFT)
-                && speakers.contains(Speaker.SIDE_RIGHT) && speakers.contains(Speaker.BACK_LEFT)
-                && speakers.contains(Speaker.BACK_RIGHT);
+        return !ProgramPlan.extras(layout, codable(layout)).isEmpty();
     }
 
     /**
@@ -205,8 +203,8 @@ public final class ChannelMap {
 
     /**
      * Returns the bit rate an encoder uses for a layout when none is configured: 96, 192, 320, 384
-     * and 448 kbit/s for one to five full-bandwidth channels and 768 kbit/s for more, which only an
-     * E-AC-3 program beyond 5.1 has.
+     * and 448 kbit/s for one to five full-bandwidth channels, 768 kbit/s for six or seven, which only
+     * an E-AC-3 program beyond 5.1 has, and 96 kbit/s more for each full-bandwidth channel beyond.
      *
      * @param layout a layout {@link #codable(ChannelLayout)} or {@link #codableEnhanced(ChannelLayout)}
      * returns
@@ -219,7 +217,8 @@ public final class ChannelMap {
             case 3 -> 320_000;
             case 4 -> 384_000;
             case 5 -> 448_000;
-            default -> 768_000;
+            case 6, 7 -> 768_000;
+            default -> 768_000 + 96_000 * (fullBandwidthChannels(layout) - 7);
         };
     }
 

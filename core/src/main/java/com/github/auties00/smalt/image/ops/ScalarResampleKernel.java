@@ -37,7 +37,7 @@ final class ScalarResampleKernel implements ResampleKernel {
      * @param from the first sample
      * @param to the sample after the last one
      */
-    void verticalRange(byte[] src, int[] offsets, int[] weights, int wOff, int taps, int[] dst, int shift, int from, int to) {
+    static void verticalRange(byte[] src, int[] offsets, int[] weights, int wOff, int taps, int[] dst, int shift, int from, int to) {
         java.util.Arrays.fill(dst, from, to, 1 << (shift - 1));
         for (var k = 0; k < taps; k++) {
             var weight = weights[wOff + k];
@@ -71,7 +71,7 @@ final class ScalarResampleKernel implements ResampleKernel {
      * @param from the first sample
      * @param to the sample after the last one
      */
-    void verticalWideRange(char[] src, int[] offsets, int[] weights, int wOff, int taps, int[] dst,
+    static void verticalWideRange(char[] src, int[] offsets, int[] weights, int wOff, int taps, int[] dst,
                            boolean accumulate, int shift, int from, int to) {
         if (!accumulate) {
             java.util.Arrays.fill(dst, from, to, 0);
@@ -122,7 +122,7 @@ final class ScalarResampleKernel implements ResampleKernel {
      * @param from the first output sample
      * @param to the output sample after the last one
      */
-    void horizontalRowsRange(int[] src, int lanes, int[] starts, int[] counts, int[] weights, int stride, byte[] dst,
+    static void horizontalRowsRange(int[] src, int lanes, int[] starts, int[] counts, int[] weights, int stride, byte[] dst,
                              int shift, int from, int to) {
         var half = 1 << (shift - 1);
         for (var i = from; i < to; i++) {
@@ -172,7 +172,7 @@ final class ScalarResampleKernel implements ResampleKernel {
      * @param from the first pixel
      * @param to the pixel after the last one
      */
-    void interleaveRange(byte[] planes, int pOff, int width, boolean opaque, byte[] dst, int dOff, int from, int to) {
+    static void interleaveRange(byte[] planes, int pOff, int width, boolean opaque, byte[] dst, int dOff, int from, int to) {
         for (var x = from; x < to; x++) {
             var out = dOff + 4 * x;
             dst[out] = planes[pOff + x];
@@ -198,7 +198,7 @@ final class ScalarResampleKernel implements ResampleKernel {
      * @param from the first pixel
      * @param to the pixel after the last one
      */
-    void premultiplyRange(byte[] src, int sOff, int width, char[] dst, int dOff, int from, int to) {
+    static void premultiplyRange(byte[] src, int sOff, int width, char[] dst, int dOff, int from, int to) {
         for (var x = from; x < to; x++) {
             var index = sOff + 4 * x;
             var a = src[index + 3] & 0xFF;
@@ -226,7 +226,7 @@ final class ScalarResampleKernel implements ResampleKernel {
      * @param from the first pixel
      * @param to the pixel after the last one
      */
-    void unpremultiplyRange(int[] src, int sOff, int width, int scale, byte[] dst, int dOff, int from, int to) {
+    static void unpremultiplyRange(int[] src, int sOff, int width, int scale, byte[] dst, int dOff, int from, int to) {
         var alphaDivisor = 510L * scale;
         for (var x = from; x < to; x++) {
             var out = dOff + 4 * x;

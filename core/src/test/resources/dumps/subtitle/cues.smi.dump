@@ -1,0 +1,20 @@
+# demux dump of subtitle/cues.smi; regenerate with -Dsmalt.test.updateDumps=true
+format SAMI
+duration 2000000
+seekable true
+track 1 DATA SUBRIP timebase=1/1000 duration=2000 language=eng config=none
+  metadata title="English"
+track 2 DATA SUBRIP timebase=1/1000 duration=2000 language=fra config=none
+  metadata title="French"
+packets 6
+0 t1 pts=0 dts=0 dur=400 flags=KEY size=5 crc=f7d18982
+1 t2 pts=0 dts=0 dur=400 flags=KEY size=7 crc=6a0bc954
+2 t1 pts=500 dts=500 dur=400 flags=KEY size=12 crc=bc6c6d5b
+3 t2 pts=500 dts=500 dur=400 flags=KEY size=12 crc=f4cff8d3
+4 t1 pts=1250 dts=1250 dur=750 flags=KEY size=9 crc=3a64f8bc
+5 t2 pts=1250 dts=1250 dur=750 flags=KEY size=11 crc=85030bad
+seek 0: t1@0 t2@0
+seek 666666: t1@1 t2@1
+seek 1333333: t1@2 t2@2
+seek 2000000: end
+seek -1000000: t1@0 t2@0

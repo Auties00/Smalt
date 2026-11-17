@@ -88,8 +88,11 @@ final class VectorAacKernel implements AacKernel {
 
     /**
      * The scalar reference used for loop remainders.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarAacKernel scalar = new ScalarAacKernel();
+    private static final ScalarAacKernel SCALAR = new ScalarAacKernel();
 
     /**
      * Constructs the kernel.
@@ -100,19 +103,28 @@ final class VectorAacKernel implements AacKernel {
     @Override
     public void fftRadix4(float[] re, float[] im, int n, int quarter, float[] twiddles, int offset) {
         if (quarter % LANES != 0) {
-            scalar.fftRadix4(re, im, n, quarter, twiddles, offset);
+            SCALAR.fftRadix4(re, im, n, quarter, twiddles, offset);
             return;
         }
         for (var block = 0; block < n; block += 4 * quarter) {
             for (var j = 0; j < quarter; j += LANES) {
-                radix4(re, im, block + j, quarter, twiddles, offset + j);
+                radix4Even(re, im, block + j, quarter, twiddles, offset + j);
+                radix4Odd(re, im, block + j, quarter, twiddles, offset + j);
             }
         }
     }
 
     /**
-     * Computes one vector of radix-4 butterflies: the points {@code i0}, {@code i0 + quarter},
-     * {@code i0 + 2 * quarter} and {@code i0 + 3 * quarter} of {@link #LANES} consecutive columns.
+     * Computes the first half of one vector of radix-4 butterflies over the points {@code i0},
+     * {@code i0 + quarter}, {@code i0 + 2 * quarter} and {@code i0 + 3 * quarter} of {@link #LANES}
+     * consecutive columns: writes the outputs of the first two points, and leaves the differences
+     * {@code x0 - x2} and {@code x1 - x3} (rotated) of the butterflies in the last two points for
+     * {@link #radix4Odd}.
+     *
+     * @implNote This implementation splits the butterfly in two methods, exchanging the two
+     * differences through the arrays (exactly, as floats), because one method holding every vector
+     * operation of the butterfly intermittently left its last operations on the allocating fallback
+     * in mixed JVMs, past the compiler's inlining budget.
      *
      * @param re the real parts, transformed in place
      * @param im the imaginary parts, transformed in place
@@ -121,7 +133,7 @@ final class VectorAacKernel implements AacKernel {
      * @param twiddles the twiddle table
      * @param w the index of the first column's first twiddle in {@code twiddles}
      */
-    private static void radix4(float[] re, float[] im, int i0, int quarter, float[] twiddles, int w) {
+    private static void radix4Even(float[] re, float[] im, int i0, int quarter, float[] twiddles, int w) {
         var i1 = i0 + quarter;
         var i2 = i1 + quarter;
         var i3 = i2 + quarter;
@@ -135,12 +147,12 @@ final class VectorAacKernel implements AacKernel {
         var x3i = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, im, i3));
         var ar = x0r.lanewise(VectorOperators.ADD, x2r);
         var ai = x0i.lanewise(VectorOperators.ADD, x2i);
-        var cr = x0r.lanewise(VectorOperators.SUB, x2r);
-        var ci = x0i.lanewise(VectorOperators.SUB, x2i);
         var br = x1r.lanewise(VectorOperators.ADD, x3r);
         var bi = x1i.lanewise(VectorOperators.ADD, x3i);
-        var dr = x1i.lanewise(VectorOperators.SUB, x3i);
-        var di = x3r.lanewise(VectorOperators.SUB, x1r);
+        x0r.lanewise(VectorOperators.SUB, x2r).intoArray(re, i2);
+        x0i.lanewise(VectorOperators.SUB, x2i).intoArray(im, i2);
+        x1i.lanewise(VectorOperators.SUB, x3i).intoArray(re, i3);
+        x3r.lanewise(VectorOperators.SUB, x1r).intoArray(im, i3);
         ar.lanewise(VectorOperators.ADD, br).intoArray(re, i0);
         ai.lanewise(VectorOperators.ADD, bi).intoArray(im, i0);
         var tr = ar.lanewise(VectorOperators.SUB, br);
@@ -149,10 +161,30 @@ final class VectorAacKernel implements AacKernel {
         var wi = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, twiddles, w + 3 * quarter));
         tr.lanewise(VectorOperators.MUL, wr).lanewise(VectorOperators.SUB, ti.lanewise(VectorOperators.MUL, wi)).intoArray(re, i1);
         tr.lanewise(VectorOperators.MUL, wi).lanewise(VectorOperators.ADD, ti.lanewise(VectorOperators.MUL, wr)).intoArray(im, i1);
-        tr = cr.lanewise(VectorOperators.ADD, dr);
-        ti = ci.lanewise(VectorOperators.ADD, di);
-        wr = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, twiddles, w));
-        wi = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, twiddles, w + quarter));
+    }
+
+    /**
+     * Completes the butterflies {@link #radix4Even} started: writes the outputs of the last two
+     * points from the differences it left there.
+     *
+     * @param re the real parts, transformed in place
+     * @param im the imaginary parts, transformed in place
+     * @param i0 the index of the first point of the first column
+     * @param quarter the distance between the points of a butterfly
+     * @param twiddles the twiddle table
+     * @param w the index of the first column's first twiddle in {@code twiddles}
+     */
+    private static void radix4Odd(float[] re, float[] im, int i0, int quarter, float[] twiddles, int w) {
+        var i2 = i0 + 2 * quarter;
+        var i3 = i2 + quarter;
+        var cr = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, re, i2));
+        var ci = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, im, i2));
+        var dr = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, re, i3));
+        var di = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, im, i3));
+        var tr = cr.lanewise(VectorOperators.ADD, dr);
+        var ti = ci.lanewise(VectorOperators.ADD, di);
+        var wr = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, twiddles, w));
+        var wi = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, twiddles, w + quarter));
         tr.lanewise(VectorOperators.MUL, wr).lanewise(VectorOperators.SUB, ti.lanewise(VectorOperators.MUL, wi)).intoArray(re, i2);
         tr.lanewise(VectorOperators.MUL, wi).lanewise(VectorOperators.ADD, ti.lanewise(VectorOperators.MUL, wr)).intoArray(im, i2);
         tr = cr.lanewise(VectorOperators.SUB, dr);
@@ -177,7 +209,7 @@ final class VectorAacKernel implements AacKernel {
     @Override
     public void fftRadix2(float[] re, float[] im, int n, int half, float[] twiddles, int offset) {
         if (half % LANES != 0 || half < 4 * LANES) {
-            scalar.fftRadix2(re, im, n, half, twiddles, offset);
+            SCALAR.fftRadix2(re, im, n, half, twiddles, offset);
             return;
         }
         for (var block = 0; block < n; block += 2 * half) {
@@ -246,7 +278,7 @@ final class VectorAacKernel implements AacKernel {
      */
     @Override
     public void dequantize(int[] quant, float[] out, int from, int to, float gain) {
-        scalar.dequantize(quant, out, from, to, gain);
+        SCALAR.dequantize(quant, out, from, to, gain);
     }
 
     @Override
@@ -303,7 +335,7 @@ final class VectorAacKernel implements AacKernel {
      */
     @Override
     public void powerLaw(float[] x, float[] magnitude, float[] power34, int from, int to) {
-        scalar.powerLaw(x, magnitude, power34, from, to);
+        SCALAR.powerLaw(x, magnitude, power34, from, to);
     }
 
     /**
@@ -314,7 +346,7 @@ final class VectorAacKernel implements AacKernel {
      */
     @Override
     public int quantize(float[] power34, int[] quant, int from, int to, float inverseStep) {
-        return scalar.quantize(power34, quant, from, to, inverseStep);
+        return SCALAR.quantize(power34, quant, from, to, inverseStep);
     }
 
     @Override
@@ -331,7 +363,7 @@ final class VectorAacKernel implements AacKernel {
             total += distortionQuarter(magnitude, power34, i, inverseStep, step);
             i += 4;
         }
-        return total + scalar.distortion(magnitude, power34, scratch, i, to, inverseStep, step);
+        return total + SCALAR.distortion(magnitude, power34, scratch, i, to, inverseStep, step);
     }
 
     /**
@@ -426,7 +458,7 @@ final class VectorAacKernel implements AacKernel {
         if (from < bound) {
             total = energyFull(x, from, bound);
         }
-        return total + scalar.energy(x, bound, to);
+        return total + SCALAR.energy(x, bound, to);
     }
 
     /**
@@ -558,7 +590,7 @@ final class VectorAacKernel implements AacKernel {
      */
     @Override
     public void midSide(float[] left, float[] right, int from, int to) {
-        scalar.midSide(left, right, from, to);
+        SCALAR.midSide(left, right, from, to);
     }
 
     @Override
@@ -568,7 +600,7 @@ final class VectorAacKernel implements AacKernel {
         if (bound > 0) {
             total = dotFull(a, aOffset, b, bOffset, bound);
         }
-        return total + scalar.dot(a, aOffset + bound, b, bOffset + bound, length - bound);
+        return total + SCALAR.dot(a, aOffset + bound, b, bOffset + bound, length - bound);
     }
 
     /**

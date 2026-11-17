@@ -90,13 +90,16 @@ public final class ExifReader {
 
     /**
      * Parses the IFD0, Exif, GPS, interoperability and thumbnail (IFD1) directories of a block,
-     * and the JPEG thumbnail IFD1 points at.
+     * and the thumbnail IFD1 points at.
      *
-     * <p>Entries whose type is not a TIFF 6.0 type, whose value lies outside the block, or whose
-     * value would exceed the decoding budget are skipped; a repeated tag keeps its first value.
-     * A pointer to a directory that is out of range, or that points at a directory already read,
-     * yields an empty map for that directory; a thumbnail whose range lies outside the block is
-     * ignored. Directories chained after IFD1 are not read.
+     * <p>Entries whose type is not one of {@link ExifValue.Type}, whose value lies outside the
+     * block, or whose value would exceed the decoding budget are skipped; a repeated tag keeps its
+     * first value. A pointer to a directory that is out of range, or that points at a directory
+     * already read, yields an empty map for that directory. The thumbnail is the JPEG file IFD1's
+     * {@code JPEGInterchangeFormat} entries locate or, when IFD1 describes an uncompressed
+     * thumbnail ({@link ExifData#hasUncompressedThumbnail()}), its strips concatenated in order; a
+     * thumbnail any part of which lies outside the block is ignored. Directories chained after IFD1
+     * are not read.
      *
      * @param tiff the EXIF block, starting with its byte-order mark
      * @return the parsed directories
@@ -140,13 +143,70 @@ public final class ExifReader {
         if (validDirectory(tiff, ifd1Offset) && ifd1Offset != ifd0Offset && ifd1Offset != exifOffset
                 && ifd1Offset != gpsOffset && ifd1Offset != interopOffset) {
             ifd1 = readDirectory(tiff, Ifd.read(input, 0, header, ifd1Offset, POLICY), budget);
-            var start = pointer(ifd1.get(ExifData.THUMBNAIL_OFFSET));
-            var length = pointer(ifd1.get(ExifData.THUMBNAIL_LENGTH));
-            if (start >= HEADER_SIZE && length > 0 && start + length <= tiff.length) {
-                thumbnail = Optional.of(Arrays.copyOfRange(tiff, (int) start, (int) (start + length)));
+            if (ExifData.describesStrips(ifd1)) {
+                thumbnail = Optional.ofNullable(strips(tiff, ifd1));
+            } else {
+                var start = pointer(ifd1.get(ExifData.THUMBNAIL_OFFSET));
+                var length = pointer(ifd1.get(ExifData.THUMBNAIL_LENGTH));
+                if (start >= HEADER_SIZE && length > 0 && start + length <= tiff.length) {
+                    thumbnail = Optional.of(Arrays.copyOfRange(tiff, (int) start, (int) (start + length)));
+                }
             }
         }
         return new ExifData(ifd0, exif, gps, interop, ifd1, thumbnail);
+    }
+
+    /**
+     * Returns the strip ranges of an uncompressed thumbnail.
+     *
+     * @param tiff the block
+     * @param offsets the {@code StripOffsets} entry, or {@code null}
+     * @param counts the {@code StripByteCounts} entry, or {@code null}
+     * @return the offset and length of each strip, in order, or {@code null} when the entries are
+     * absent, differ in count, or a strip is empty or lies outside the block
+     */
+    static long[][] stripRanges(byte[] tiff, ExifValue offsets, ExifValue counts) {
+        if (!(offsets instanceof ExifValue.Integers starts) || !(counts instanceof ExifValue.Integers lengths)
+                || starts.count() == 0 || starts.count() != lengths.count()) {
+            return null;
+        }
+        var result = new long[starts.count()][];
+        var total = 0L;
+        for (var i = 0; i < result.length; i++) {
+            var start = starts.get(i);
+            var length = lengths.get(i);
+            if (start < HEADER_SIZE || length <= 0 || start + length > tiff.length) {
+                return null;
+            }
+            total += length;
+            result[i] = new long[]{start, length};
+        }
+        return total <= tiff.length ? result : null;
+    }
+
+    /**
+     * Concatenates the strips of an uncompressed thumbnail.
+     *
+     * @param tiff the block
+     * @param ifd1 the thumbnail directory
+     * @return the strip data, or {@code null} when a strip lies outside the block
+     */
+    private static byte[] strips(byte[] tiff, Map<Integer, ExifValue> ifd1) {
+        var ranges = stripRanges(tiff, ifd1.get(ExifData.STRIP_OFFSETS), ifd1.get(ExifData.STRIP_BYTE_COUNTS));
+        if (ranges == null) {
+            return null;
+        }
+        var total = 0;
+        for (var range : ranges) {
+            total += (int) range[1];
+        }
+        var result = new byte[total];
+        var at = 0;
+        for (var range : ranges) {
+            System.arraycopy(tiff, (int) range[0], result, at, (int) range[1]);
+            at += (int) range[1];
+        }
+        return result;
     }
 
     /**
@@ -370,12 +430,13 @@ public final class ExifReader {
     private static ExifValue decodeValue(byte[] tiff, int at, ExifValue.Type type, int count, boolean little) {
         return switch (type) {
             case ASCII -> ExifValue.Ascii.decode(tiff, at, count);
+            case UTF8 -> ExifValue.Utf8.decode(tiff, at, count);
             case UNDEFINED -> {
                 var bytes = new byte[count];
                 System.arraycopy(tiff, at, bytes, 0, count);
                 yield new ExifValue.Undefined(bytes);
             }
-            case BYTE, SBYTE, SHORT, SSHORT, LONG, SLONG -> {
+            case BYTE, SBYTE, SHORT, SSHORT, LONG, SLONG, IFD -> {
                 var values = new long[count];
                 for (var i = 0; i < count; i++) {
                     values[i] = switch (type) {
@@ -383,7 +444,7 @@ public final class ExifReader {
                         case SBYTE -> tiff[at + i];
                         case SHORT -> u16(tiff, at + 2 * i, little);
                         case SSHORT -> (short) u16(tiff, at + 2 * i, little);
-                        case LONG -> u32(tiff, at + 4 * i, little);
+                        case LONG, IFD -> u32(tiff, at + 4 * i, little);
                         default -> (int) u32(tiff, at + 4 * i, little);
                     };
                 }

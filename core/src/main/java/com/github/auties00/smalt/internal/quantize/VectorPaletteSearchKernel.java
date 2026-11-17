@@ -14,11 +14,6 @@ import jdk.incubator.vector.VectorSpecies;
  */
 public final class VectorPaletteSearchKernel implements PaletteSearchKernel {
     /**
-     * Whether the platform executes eight 32-bit lanes natively.
-     */
-    static final boolean WIDE = IntVector.SPECIES_PREFERRED.vectorBitSize() >= 256;
-
-    /**
      * The species of eight 32-bit lanes.
      */
     private static final VectorSpecies<Integer> INTS = IntVector.SPECIES_256;

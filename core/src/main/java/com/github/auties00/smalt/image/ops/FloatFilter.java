@@ -43,7 +43,7 @@ final class FloatFilter {
         var taps = new double[2 * radius + 1];
         double sum = 0;
         for (var k = -radius; k <= radius; k++) {
-            var value = Math.exp(-(double) k * k / (2 * sigma * sigma));
+            var value = StrictMath.exp(-(double) k * k / (2 * sigma * sigma));
             taps[k + radius] = value;
             sum += value;
         }

@@ -111,14 +111,16 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
 
     /**
      * The kernels used for the cases this class does not vectorize.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarLoopFilterDsp scalar;
+    private static final ScalarLoopFilterDsp SCALAR = new ScalarLoopFilterDsp();
 
     /**
      * Constructs the kernels.
      */
     private VectorLoopFilterDsp() {
-        this.scalar = new ScalarLoopFilterDsp();
     }
 
     /**
@@ -148,7 +150,7 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
                              int mask2, byte[] lvl, int lvlOff, int b4Stride, FilterLut lut, int length,
                              short[] scratch, int bitdepthMax) {
         if (bitdepthMax > 1023) {
-            scalar.loopFilterSb(plane, dir, dst, dstOff, stride, mask0, mask1, mask2, lvl, lvlOff, b4Stride, lut,
+            SCALAR.loopFilterSb(plane, dir, dst, dstOff, stride, mask0, mask1, mask2, lvl, lvlOff, b4Stride, lut,
                     length, scratch, bitdepthMax);
             return;
         }
@@ -179,7 +181,7 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
             var off = dstOff + 4 * g;
             if (column + 4 * g + 16 > stride || off - before * stride < 0 || off + after * stride + 16 > dst.length) {
                 var selected = 15 << g;
-                scalar.loopFilterSb(plane, dir, dst, dstOff, stride, mask0 & selected, mask1 & selected,
+                SCALAR.loopFilterSb(plane, dir, dst, dstOff, stride, mask0 & selected, mask1 & selected,
                         mask2 & selected, lvl, lvlOff, b4Stride, lut, length, scratch, bitdepthMax);
                 continue;
             }
@@ -294,7 +296,7 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
             var off = dstOff + 4 * g * stride;
             if (off - before < 0 || off + 15 * stride + after > dst.length) {
                 var selected = 15 << g;
-                scalar.loopFilterSb(plane, DIR_COLUMN_EDGES, dst, dstOff, stride, mask0 & selected, mask1 & selected,
+                SCALAR.loopFilterSb(plane, DIR_COLUMN_EDGES, dst, dstOff, stride, mask0 & selected, mask1 & selected,
                         mask2 & selected, lvl, lvlOff, b4Stride, lut, length, scratch, bitdepthMax);
                 continue;
             }
@@ -480,16 +482,20 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
     private static void narrow4(short[] dst, int off, int stride, int e0, int e1, int e2, int e3, int i0, int i1,
             int i2, int i3, int h0, int h1, int h2, int h3, int w0, int w1, int w2, int w3, int diffMin, int diffMax,
             int max) {
-        var e = ShortVector.broadcast(S256, (short) e0).blend(ShortVector.broadcast(S256, (short) e1), FROM_4)
+        var e = SHORT256.cast(ShortVector.broadcast(S256, (short) e0))
+                .blend(ShortVector.broadcast(S256, (short) e1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) e2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) e3), FROM_12);
-        var i = ShortVector.broadcast(S256, (short) i0).blend(ShortVector.broadcast(S256, (short) i1), FROM_4)
+        var i = SHORT256.cast(ShortVector.broadcast(S256, (short) i0))
+                .blend(ShortVector.broadcast(S256, (short) i1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) i2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) i3), FROM_12);
-        var h = ShortVector.broadcast(S256, (short) h0).blend(ShortVector.broadcast(S256, (short) h1), FROM_4)
+        var h = SHORT256.cast(ShortVector.broadcast(S256, (short) h0))
+                .blend(ShortVector.broadcast(S256, (short) h1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) h2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) h3), FROM_12);
-        var w = ShortVector.broadcast(S256, (short) w0).blend(ShortVector.broadcast(S256, (short) w1), FROM_4)
+        var w = SHORT256.cast(ShortVector.broadcast(S256, (short) w0))
+                .blend(ShortVector.broadcast(S256, (short) w1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) w2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) w3), FROM_12);
         var p1 = SHORT256.cast(ShortVector.fromArray(S256, dst, off - 2 * stride));
@@ -566,16 +572,20 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
      */
     private static int decide6(short[] dst, int off, int stride, int e0, int e1, int e2, int e3, int i0, int i1, int i2,
             int i3, int h0, int h1, int h2, int h3, int w0, int w1, int w2, int w3, int flat, short[] scratch) {
-        var e = ShortVector.broadcast(S256, (short) e0).blend(ShortVector.broadcast(S256, (short) e1), FROM_4)
+        var e = SHORT256.cast(ShortVector.broadcast(S256, (short) e0))
+                .blend(ShortVector.broadcast(S256, (short) e1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) e2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) e3), FROM_12);
-        var i = ShortVector.broadcast(S256, (short) i0).blend(ShortVector.broadcast(S256, (short) i1), FROM_4)
+        var i = SHORT256.cast(ShortVector.broadcast(S256, (short) i0))
+                .blend(ShortVector.broadcast(S256, (short) i1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) i2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) i3), FROM_12);
-        var h = ShortVector.broadcast(S256, (short) h0).blend(ShortVector.broadcast(S256, (short) h1), FROM_4)
+        var h = SHORT256.cast(ShortVector.broadcast(S256, (short) h0))
+                .blend(ShortVector.broadcast(S256, (short) h1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) h2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) h3), FROM_12);
-        var w = ShortVector.broadcast(S256, (short) w0).blend(ShortVector.broadcast(S256, (short) w1), FROM_4)
+        var w = SHORT256.cast(ShortVector.broadcast(S256, (short) w0))
+                .blend(ShortVector.broadcast(S256, (short) w1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) w2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) w3), FROM_12);
         var f = ShortVector.broadcast(S256, (short) flat);
@@ -643,16 +653,20 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
      */
     private static int decide8(short[] dst, int off, int stride, int e0, int e1, int e2, int e3, int i0, int i1, int i2,
             int i3, int h0, int h1, int h2, int h3, int w0, int w1, int w2, int w3, int flat, short[] scratch) {
-        var e = ShortVector.broadcast(S256, (short) e0).blend(ShortVector.broadcast(S256, (short) e1), FROM_4)
+        var e = SHORT256.cast(ShortVector.broadcast(S256, (short) e0))
+                .blend(ShortVector.broadcast(S256, (short) e1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) e2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) e3), FROM_12);
-        var i = ShortVector.broadcast(S256, (short) i0).blend(ShortVector.broadcast(S256, (short) i1), FROM_4)
+        var i = SHORT256.cast(ShortVector.broadcast(S256, (short) i0))
+                .blend(ShortVector.broadcast(S256, (short) i1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) i2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) i3), FROM_12);
-        var h = ShortVector.broadcast(S256, (short) h0).blend(ShortVector.broadcast(S256, (short) h1), FROM_4)
+        var h = SHORT256.cast(ShortVector.broadcast(S256, (short) h0))
+                .blend(ShortVector.broadcast(S256, (short) h1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) h2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) h3), FROM_12);
-        var w = ShortVector.broadcast(S256, (short) w0).blend(ShortVector.broadcast(S256, (short) w1), FROM_4)
+        var w = SHORT256.cast(ShortVector.broadcast(S256, (short) w0))
+                .blend(ShortVector.broadcast(S256, (short) w1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) w2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) w3), FROM_12);
         var f = ShortVector.broadcast(S256, (short) flat);
@@ -729,16 +743,20 @@ public final class VectorLoopFilterDsp extends LoopFilterDsp {
      */
     private static int decide16(short[] dst, int off, int stride, int e0, int e1, int e2, int e3, int i0, int i1,
             int i2, int i3, int h0, int h1, int h2, int h3, int w0, int w1, int w2, int w3, int flat, short[] scratch) {
-        var e = ShortVector.broadcast(S256, (short) e0).blend(ShortVector.broadcast(S256, (short) e1), FROM_4)
+        var e = SHORT256.cast(ShortVector.broadcast(S256, (short) e0))
+                .blend(ShortVector.broadcast(S256, (short) e1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) e2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) e3), FROM_12);
-        var i = ShortVector.broadcast(S256, (short) i0).blend(ShortVector.broadcast(S256, (short) i1), FROM_4)
+        var i = SHORT256.cast(ShortVector.broadcast(S256, (short) i0))
+                .blend(ShortVector.broadcast(S256, (short) i1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) i2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) i3), FROM_12);
-        var h = ShortVector.broadcast(S256, (short) h0).blend(ShortVector.broadcast(S256, (short) h1), FROM_4)
+        var h = SHORT256.cast(ShortVector.broadcast(S256, (short) h0))
+                .blend(ShortVector.broadcast(S256, (short) h1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) h2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) h3), FROM_12);
-        var w = ShortVector.broadcast(S256, (short) w0).blend(ShortVector.broadcast(S256, (short) w1), FROM_4)
+        var w = SHORT256.cast(ShortVector.broadcast(S256, (short) w0))
+                .blend(ShortVector.broadcast(S256, (short) w1), FROM_4)
                 .blend(ShortVector.broadcast(S256, (short) w2), FROM_8)
                         .blend(ShortVector.broadcast(S256, (short) w3), FROM_12);
         var f = ShortVector.broadcast(S256, (short) flat);

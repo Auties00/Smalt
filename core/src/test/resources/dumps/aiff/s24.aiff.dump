@@ -1,0 +1,32 @@
+# demux dump of aiff/s24.aiff; regenerate with -Dsmalt.test.updateDumps=true
+format AIFF
+duration 600000
+seekable true
+track 0 AUDIO PCM_S24BE timebase=1/22050 duration=13230 config=none
+  audio rate=22050 bits=24 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 20
+0 t0 pts=0 dts=0 dur=682 flags=KEY size=4092 crc=dfcde998
+1 t0 pts=682 dts=682 dur=682 flags=KEY size=4092 crc=25f63a99
+2 t0 pts=1364 dts=1364 dur=682 flags=KEY size=4092 crc=471340a0
+3 t0 pts=2046 dts=2046 dur=682 flags=KEY size=4092 crc=75eef0f6
+4 t0 pts=2728 dts=2728 dur=682 flags=KEY size=4092 crc=f5d43bfd
+5 t0 pts=3410 dts=3410 dur=682 flags=KEY size=4092 crc=934cfd49
+6 t0 pts=4092 dts=4092 dur=682 flags=KEY size=4092 crc=91427ea0
+7 t0 pts=4774 dts=4774 dur=682 flags=KEY size=4092 crc=23e653c9
+8 t0 pts=5456 dts=5456 dur=682 flags=KEY size=4092 crc=bce077c8
+9 t0 pts=6138 dts=6138 dur=682 flags=KEY size=4092 crc=449b5554
+10 t0 pts=6820 dts=6820 dur=682 flags=KEY size=4092 crc=16296e8b
+11 t0 pts=7502 dts=7502 dur=682 flags=KEY size=4092 crc=8833b273
+12 t0 pts=8184 dts=8184 dur=682 flags=KEY size=4092 crc=5b68bea0
+13 t0 pts=8866 dts=8866 dur=682 flags=KEY size=4092 crc=49384e85
+14 t0 pts=9548 dts=9548 dur=682 flags=KEY size=4092 crc=b1ce16e8
+15 t0 pts=10230 dts=10230 dur=682 flags=KEY size=4092 crc=83b4f4b1
+16 t0 pts=10912 dts=10912 dur=682 flags=KEY size=4092 crc=8dc30db0
+17 t0 pts=11594 dts=11594 dur=682 flags=KEY size=4092 crc=0858705d
+18 t0 pts=12276 dts=12276 dur=682 flags=KEY size=4092 crc=138cc909
+19 t0 pts=12958 dts=12958 dur=272 flags=KEY size=1632 crc=d5d52b5f
+seek 0: t0@0
+seek 200000: t0@pts=4410
+seek 400000: t0@pts=8820
+seek 600000: end
+seek -1000000: t0@0

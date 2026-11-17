@@ -36,14 +36,6 @@ final class ObuWriter {
     private static final int MAX_TILE_AREA_SB = 4096 * 2304 >> 12;
 
     /**
-     * The picture size limits of each level up to 6.0: the {@code seq_level_idx}, the largest
-     * area, the largest width and the largest height (AV1 specification annex A.3).
-     */
-    private static final int[][] LEVELS = {{0, 147456, 2048, 1152}, {1, 278784, 2816, 1584},
-            {4, 665856, 4352, 2448}, {5, 1065024, 5504, 3096}, {8, 2359296, 6144, 3456}, {12, 8912896, 8192, 4352},
-            {16, 35651584, 16384, 8704}};
-
-    /**
      * The scratch writer for header payloads.
      */
     private final HeaderWriter header = new HeaderWriter();
@@ -149,6 +141,38 @@ final class ObuWriter {
     }
 
     /**
+     * Returns the size of the frame OBU {@link #writeFrameObu} writes.
+     *
+     * @param headerBytes the size of the byte-aligned frame header
+     * @param extension whether the OBU carries an extension header
+     * @param nTiles the number of tiles
+     * @param sizes the coded size of each tile, in bytes
+     * @param tileSizeBytes the width of the tile size fields, 1 to 4 bytes
+     * @return the size, in bytes
+     */
+    static int frameObuSize(int headerBytes, boolean extension, int nTiles, int[] sizes, int tileSizeBytes) {
+        var payload = headerBytes + (nTiles > 1 ? 1 : 0) + (nTiles - 1) * tileSizeBytes;
+        for (var i = 0; i < nTiles; i++) {
+            payload += sizes[i];
+        }
+        return obuSize(payload) + (extension ? 1 : 0);
+    }
+
+    /**
+     * Returns the size of an OBU without an extension header.
+     *
+     * @param payload the size of its payload, in bytes
+     * @return the size, in bytes, of the OBU header, the size field and the payload
+     */
+    static int obuSize(int payload) {
+        var lebBytes = 1;
+        for (var v = payload >>> 7; v != 0; v >>>= 7) {
+            lebBytes++;
+        }
+        return 1 + lebBytes + payload;
+    }
+
+    /**
      * Returns the width of the tile size fields a frame needs.
      *
      * @param maxSize the size of the frame's largest tile, in bytes
@@ -185,13 +209,7 @@ final class ObuWriter {
      * @return the {@code seq_level_idx}, or 31 (no level constraint) beyond level 6.0
      */
     static int level(int width, int height) {
-        var area = (long) width * height;
-        for (var l : LEVELS) {
-            if (area <= l[1] && width <= l[2] && height <= l[3]) {
-                return l[0];
-            }
-        }
-        return 31;
+        return LevelLimits.level(width, height);
     }
 
     /**
@@ -228,8 +246,23 @@ final class ObuWriter {
         w.bits(seq.profile, 3);
         w.flag(seq.stillPicture);
         w.flag(false);
-        w.flag(false);
-        w.flag(false);
+        w.flag(seq.timingInfoPresent);
+        if (seq.timingInfoPresent) {
+            w.bits(seq.numUnitsInTick, 32);
+            w.bits(seq.timeScale, 32);
+            w.flag(seq.equalPictureInterval);
+            if (seq.equalPictureInterval) {
+                writeUvlc(w, seq.numTicksPerPicture - 1);
+            }
+            w.flag(seq.decoderModelInfoPresent);
+            if (seq.decoderModelInfoPresent) {
+                w.bits(seq.encoderDecoderBufferDelayLength - 1, 5);
+                w.bits(seq.numUnitsInDecodingTick, 32);
+                w.bits(seq.bufferRemovalDelayLength - 1, 5);
+                w.bits(seq.framePresentationDelayLength - 1, 5);
+            }
+        }
+        w.flag(seq.displayModelInfoPresent);
         w.bits(seq.numOperatingPoints - 1, 5);
         for (var i = 0; i < seq.numOperatingPoints; i++) {
             w.bits(seq.operatingPointIdc[i], 12);
@@ -237,6 +270,20 @@ final class ObuWriter {
             w.bits(levelIdx, 5);
             if (seq.majorLevel[i] > 3) {
                 w.bit(seq.tier[i]);
+            }
+            if (seq.decoderModelInfoPresent) {
+                w.flag(seq.decoderModelParamPresent[i]);
+                if (seq.decoderModelParamPresent[i]) {
+                    w.bits(seq.decoderBufferDelay[i], seq.encoderDecoderBufferDelayLength);
+                    w.bits(seq.encoderBufferDelay[i], seq.encoderDecoderBufferDelayLength);
+                    w.flag(seq.lowDelayMode[i]);
+                }
+            }
+            if (seq.displayModelInfoPresent) {
+                w.flag(seq.displayModelParamPresent[i]);
+                if (seq.displayModelParamPresent[i]) {
+                    w.bits(seq.initialDisplayDelay[i] - 1, 4);
+                }
             }
         }
         w.bits(seq.widthNBits - 1, 4);
@@ -256,30 +303,145 @@ final class ObuWriter {
             w.flag(seq.jntComp);
             w.flag(seq.refFrameMvs);
         }
-        w.flag(false);
-        w.bit(seq.screenContentTools);
+        w.flag(seq.screenContentTools == SequenceHeader.ADAPTIVE);
+        if (seq.screenContentTools != SequenceHeader.ADAPTIVE) {
+            w.bit(seq.screenContentTools);
+        }
+        if (seq.screenContentTools != 0) {
+            w.flag(seq.forceIntegerMv == SequenceHeader.ADAPTIVE);
+            if (seq.forceIntegerMv != SequenceHeader.ADAPTIVE) {
+                w.bit(seq.forceIntegerMv);
+            }
+        }
         if (seq.orderHint) {
             w.bits(seq.orderHintNBits - 1, 3);
         }
         w.flag(seq.superRes);
         w.flag(seq.cdef);
         w.flag(seq.restoration);
-        w.bit(seq.hbd);
-        w.flag(seq.monochrome);
+        writeColorConfig(w, seq);
+        w.flag(seq.filmGrainPresent);
+        w.trailingBits();
+        return Arrays.copyOf(w.buffer(), w.size());
+    }
+
+    /**
+     * Writes the frame size of a frame that does not copy a reference's ({@code frame_size()},
+     * {@code superres_params()} and {@code render_size()}): the size when the header overrides the
+     * sequence's, the super-resolution denominator when the sequence enables it, and a render size
+     * equal to the upscaled frame size.
+     *
+     * @param w the writer
+     * @param seq the sequence header
+     * @param hdr the frame header, with its size, override flag and super-resolution set
+     */
+    static void writeFrameSize(HeaderWriter w, SequenceHeader seq, FrameHeader hdr) {
+        if (hdr.frameSizeOverride) {
+            w.bits(hdr.upscaledWidth - 1, seq.widthNBits);
+            w.bits(hdr.height - 1, seq.heightNBits);
+        }
+        if (seq.superRes) {
+            w.flag(hdr.superResEnabled);
+            if (hdr.superResEnabled) {
+                w.bits(hdr.superResDenominator - 9, 3);
+            }
+        }
+        w.flag(false);
+    }
+
+    /**
+     * Writes an unsigned variable length code ({@code uvlc()}).
+     *
+     * @param w the writer
+     * @param value the value, below {@code 2^32 - 1}
+     */
+    private static void writeUvlc(HeaderWriter w, long value) {
+        var leadingZeros = 63 - Long.numberOfLeadingZeros(value + 1);
+        w.bits(0, leadingZeros);
+        w.bit(1);
+        w.bits(value + 1 - (1L << leadingZeros), leadingZeros);
+    }
+
+    /**
+     * Writes the decoder model fields of a frame header: whether the header carries the frame's
+     * removal times and, when it does, the removal time of every operating point with decoder
+     * model parameters that decodes the frame's temporal layer ({@code buffer_removal_time}).
+     *
+     * @param w the writer
+     * @param seq the sequence header
+     * @param hdr the frame header, with its temporal layer and removal times set
+     */
+    static void writeRemovalTimes(HeaderWriter w, SequenceHeader seq, FrameHeader hdr) {
+        if (!seq.decoderModelInfoPresent) {
+            return;
+        }
+        w.flag(hdr.bufferRemovalTimePresent);
+        if (!hdr.bufferRemovalTimePresent) {
+            return;
+        }
+        for (var i = 0; i < seq.numOperatingPoints; i++) {
+            if (seq.decoderModelParamPresent[i]) {
+                var idc = seq.operatingPointIdc[i];
+                if (idc == 0 || ((idc >> hdr.temporalId) & 1) != 0 && ((idc >> (hdr.spatialId + 8)) & 1) != 0) {
+                    w.bits(hdr.bufferRemovalTime[i], seq.bufferRemovalDelayLength);
+                }
+            }
+        }
+    }
+
+    /**
+     * Writes the presentation time of a shown frame ({@code temporal_point_info()}) when the
+     * sequence signals the decoder model without equal picture intervals.
+     *
+     * @param w the writer
+     * @param seq the sequence header
+     * @param presentationTime the presentation time in display clock ticks
+     */
+    static void writePresentationTime(HeaderWriter w, SequenceHeader seq, long presentationTime) {
+        if (seq.decoderModelInfoPresent && !seq.equalPictureInterval) {
+            w.bits(presentationTime, seq.framePresentationDelayLength);
+        }
+    }
+
+    /**
+     * Writes the color configuration of a sequence header ({@code color_config()}): the bit
+     * depth, monochrome, the color description, the range, the chroma subsampling of the
+     * professional profile, the chroma sample position and the separate chroma quantizer deltas.
+     *
+     * @param w the writer
+     * @param seq the sequence header
+     */
+    static void writeColorConfig(HeaderWriter w, SequenceHeader seq) {
+        w.flag(seq.hbd > 0);
+        if (seq.profile == 2 && seq.hbd > 0) {
+            w.flag(seq.hbd == 2);
+        }
+        if (seq.profile != 1) {
+            w.flag(seq.monochrome);
+        }
         w.flag(seq.colorDescriptionPresent);
         if (seq.colorDescriptionPresent) {
             w.bits(seq.pri, 8);
             w.bits(seq.trc, 8);
             w.bits(seq.mtrx, 8);
         }
-        w.flag(seq.colorRange);
-        if (!seq.monochrome) {
-            w.bits(seq.chr, 2);
-            w.flag(seq.separateUvDeltaQ);
+        if (seq.monochrome) {
+            w.flag(seq.colorRange);
+            return;
         }
-        w.flag(seq.filmGrainPresent);
-        w.trailingBits();
-        return Arrays.copyOf(w.buffer(), w.size());
+        if (!(seq.pri == 1 && seq.trc == 13 && seq.mtrx == 0)) {
+            w.flag(seq.colorRange);
+            if (seq.profile == 2 && seq.hbd == 2) {
+                w.bit(seq.ssHor);
+                if (seq.ssHor != 0) {
+                    w.bit(seq.ssVer);
+                }
+            }
+            if (seq.ssHor != 0 && seq.ssVer != 0) {
+                w.bits(seq.chr, 2);
+            }
+        }
+        w.flag(seq.separateUvDeltaQ);
     }
 
     /**
@@ -299,14 +461,18 @@ final class ObuWriter {
      * Writes the header of a frame that shows the frame of a reference slot
      * ({@code show_existing_frame}), followed by the trailing bits of a frame header OBU.
      *
+     * @param seq the sequence header
      * @param slot the reference slot
+     * @param presentationTime the presentation time of the frame in display clock ticks, written
+     * when the sequence signals the decoder model without equal picture intervals
      * @return the header writer holding the bits, valid until the next call
      */
-    HeaderWriter showExistingHeader(int slot) {
+    HeaderWriter showExistingHeader(SequenceHeader seq, int slot, long presentationTime) {
         var w = header;
         w.reset();
         w.flag(true);
         w.bits(slot, 3);
+        writePresentationTime(w, seq, presentationTime);
         w.trailingBits();
         return w;
     }
@@ -330,20 +496,29 @@ final class ObuWriter {
         w.flag(false);
         w.bits(hdr.frameType, 2);
         w.flag(hdr.showFrame);
-        if (!hdr.showFrame) {
+        if (hdr.showFrame) {
+            writePresentationTime(w, seq, hdr.framePresentationTime);
+        } else {
             w.flag(hdr.showableFrame);
         }
         if (!(hdr.frameType == FrameHeader.KEY && hdr.showFrame) && hdr.frameType != FrameHeader.SWITCH) {
             w.flag(hdr.errorResilientMode);
         }
         w.flag(hdr.disableCdfUpdate);
-        w.flag(false);
+        if (seq.screenContentTools == SequenceHeader.ADAPTIVE) {
+            w.flag(hdr.allowScreenContentTools);
+        }
+        if (hdr.allowScreenContentTools && seq.forceIntegerMv == SequenceHeader.ADAPTIVE) {
+            w.flag(hdr.forceIntegerMv && hdr.isInterOrSwitch());
+        }
+        w.flag(hdr.frameSizeOverride);
         if (seq.orderHint) {
             w.bits(hdr.frameOffset, seq.orderHintNBits);
         }
         if (!hdr.errorResilientMode && hdr.isInterOrSwitch()) {
             w.bits(hdr.primaryRefFrame, 3);
         }
+        writeRemovalTimes(w, seq, hdr);
         if (hdr.isKeyOrIntra()) {
             if (!(hdr.frameType == FrameHeader.KEY && hdr.showFrame)) {
                 w.bits(hdr.refreshFrameFlags, 8);
@@ -353,7 +528,10 @@ final class ObuWriter {
                     w.bits(refHint[i], seq.orderHintNBits);
                 }
             }
-            w.flag(false);
+            writeFrameSize(w, seq, hdr);
+            if (hdr.allowScreenContentTools && hdr.codedWidth == hdr.upscaledWidth) {
+                w.flag(false);
+            }
         } else {
             w.bits(hdr.refreshFrameFlags, 8);
             if (hdr.errorResilientMode && seq.orderHint) {
@@ -367,8 +545,15 @@ final class ObuWriter {
             for (var i = 0; i < 7; i++) {
                 w.bits(hdr.refidx[i], 3);
             }
-            w.flag(false);
-            w.flag(hdr.hp);
+            if (hdr.frameSizeOverride && !hdr.errorResilientMode) {
+                for (var i = 0; i < 7; i++) {
+                    w.flag(false);
+                }
+            }
+            writeFrameSize(w, seq, hdr);
+            if (!hdr.forceIntegerMv) {
+                w.flag(hdr.hp);
+            }
             var switchable = hdr.subpelFilterMode == FrameHeader.FILTER_SWITCHABLE;
             w.flag(switchable);
             if (!switchable) {
@@ -397,13 +582,15 @@ final class ObuWriter {
             }
         }
         if (!hdr.allLossless) {
-            writeLoopFilter(w, hdr);
+            writeLoopFilter(w, seq, hdr);
             if (seq.cdef) {
                 w.bits(hdr.cdefDamping - 3, 2);
                 w.bits(hdr.cdefNBits, 2);
                 for (var i = 0; i < (1 << hdr.cdefNBits); i++) {
                     w.bits(hdr.cdefYStrength[i], 6);
-                    w.bits(hdr.cdefUvStrength[i], 6);
+                    if (!seq.monochrome) {
+                        w.bits(hdr.cdefUvStrength[i], 6);
+                    }
                 }
             }
             if (seq.restoration) {
@@ -425,6 +612,9 @@ final class ObuWriter {
             for (var i = 0; i < 7; i++) {
                 w.flag(false);
             }
+        }
+        if (seq.filmGrainPresent && (hdr.showFrame || hdr.showableFrame)) {
+            FilmGrains.write(w, seq, hdr, refs);
         }
         w.byteAlign();
         return w;
@@ -586,12 +776,13 @@ final class ObuWriter {
      * deltas disabled.
      *
      * @param w the writer
+     * @param seq the sequence header
      * @param hdr the frame header
      */
-    private static void writeLoopFilter(HeaderWriter w, FrameHeader hdr) {
+    private static void writeLoopFilter(HeaderWriter w, SequenceHeader seq, FrameHeader hdr) {
         w.bits(hdr.loopfilterLevelY[0], 6);
         w.bits(hdr.loopfilterLevelY[1], 6);
-        if (hdr.loopfilterLevelY[0] != 0 || hdr.loopfilterLevelY[1] != 0) {
+        if (!seq.monochrome && (hdr.loopfilterLevelY[0] != 0 || hdr.loopfilterLevelY[1] != 0)) {
             w.bits(hdr.loopfilterLevelU, 6);
             w.bits(hdr.loopfilterLevelV, 6);
         }

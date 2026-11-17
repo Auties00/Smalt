@@ -28,7 +28,8 @@ import java.util.Objects;
  * a local color table as {@link GifEncoderOptions#paletteMode()} decides, and the palettes are
  * built and applied as for {@link GifEncoder}. The animation loops
  * {@link GifEncoderOptions#loopCount()} times through the {@code NETSCAPE2.0} application
- * extension; an animation that plays once has no such extension. An animation whose frames all
+ * extension; an animation that plays once has no such extension. The ICC profile of
+ * {@link GifEncoderOptions#colorProfile()} applies to every frame. An animation whose frames all
  * collapse into one is written as a still image.
  *
  * <p>An encoder is single-use: add every frame, then call {@link #finish()} once. It holds three
@@ -188,8 +189,7 @@ public final class GifAnimationEncoder {
      * @throws IllegalArgumentException if the frame size differs from the canvas size, the
      * duration is negative, or the delay exceeds 65535 hundredths of a second
      * @throws IllegalStateException if {@link #finish()} was called
-     * @throws MediaException.Unsupported if the frame's color matrix cannot be converted to RGB, or
-     * lossless coding is requested and the frame cannot be coded exactly
+     * @throws MediaException.Unsupported if lossless coding is requested and the frame cannot be coded exactly
      * @throws MediaException.LimitExceeded if encoding runs out of memory
      */
     public void addFrame(Picture frame, Duration duration) {

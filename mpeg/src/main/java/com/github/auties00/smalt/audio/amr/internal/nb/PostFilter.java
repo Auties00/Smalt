@@ -177,12 +177,12 @@ final class PostFilter {
         for (var iSubfr = 0; iSubfr < L_FRAME; iSubfr += L_SUBFR) {
             Filters.weightAi(az, azOffset, wide ? GAMMA3_MR122 : GAMMA3, 0, ap3, 0);
             Filters.weightAi(az, azOffset, wide ? GAMMA4_MR122 : GAMMA4, 0, ap4, 0);
-            Filters.residu(ap3, 0, synthBuf, M + iSubfr, res2, 0, L_SUBFR, work);
+            Filters.residu(ap3, 0, synthBuf, M + iSubfr, res2, 0, L_SUBFR, work, overflow);
             System.arraycopy(ap3, 0, h, 0, M + 1);
             for (var i = M + 1; i < L_H; i++) {
                 h[i] = 0;
             }
-            Filters.synFilt(ap4, 0, h, 0, h, 0, L_H, h, M + 1, false);
+            Filters.synFilt(ap4, 0, h, 0, h, 0, L_H, h, M + 1, false, overflow);
             var sum = 0;
             for (var i = L_H - 1; i >= 0; i--) {
                 var product = h[i] * h[i];
@@ -218,7 +218,7 @@ final class PostFilter {
                 temp2 = divS(temp2, temp1);
             }
             preemphasis(res2, temp2, L_SUBFR, overflow);
-            Filters.synFilt(ap4, 0, res2, 0, syn, iSubfr, L_SUBFR, memSynPst, 0, true);
+            Filters.synFilt(ap4, 0, res2, 0, syn, iSubfr, L_SUBFR, memSynPst, 0, true, overflow);
             agc.apply(synthBuf, M + iSubfr, syn, iSubfr, AGC_FAC, L_SUBFR, overflow);
             azOffset += MP1;
         }

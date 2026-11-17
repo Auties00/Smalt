@@ -3,7 +3,9 @@ package com.github.auties00.smalt.capture.internal.windows;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.capture.CaptureDevice;
+import com.github.auties00.smalt.capture.ScreenCaptureOptions;
 import com.github.auties00.smalt.capture.VideoCaptureSession;
+import com.github.auties00.smalt.capture.internal.CaptureArea;
 import com.github.auties00.smalt.capture.internal.FrameExchange;
 import com.github.auties00.smalt.capture.internal.FramePacing;
 import com.github.auties00.smalt.capture.internal.PumpThread;
@@ -12,26 +14,29 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.Rational;
 
 import java.io.IOException;
+import java.lang.foreign.MemorySegment;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
- * Captures a monitor at a fixed frame rate.
+ * Captures a monitor or a window at a fixed frame rate.
  *
- * <p>The session owns a platform thread that uses physical pixel coordinates, opens a
- * {@link DuplicationGrabber} for the monitor (or a {@link GdiGrabber} when desktop duplication is
- * unavailable, or stops working, for this monitor) and wakes at the requested rate: at every tick
- * it asks the grabber for the monitor's image, publishing a new picture when the image changed
- * and the previous picture again, with a new timestamp, when it did not, so a reader receives
- * frames at the requested pace even while nothing on the screen moves. Ticks follow an absolute
- * schedule; a capture thread that falls more than one tick behind skips the missed ticks instead
- * of bursting. Pictures have the monitor's size when the session opened, cropped to even
- * dimensions, and are converted from sRGB to BT.709 limited range
- * ({@link YuvCoefficients#BT709_LIMITED}).
+ * <p>The session owns a platform thread in the COM multithreaded apartment that uses physical pixel
+ * coordinates, opens the preferred {@link ScreenGrabber} of the source (desktop duplication for a monitor,
+ * Windows Graphics Capture for a window) or its fallback when that is unavailable or stops working (GDI,
+ * {@code PrintWindow}), and wakes at the requested rate: at every tick it asks the grabber for the
+ * source's image, publishing a new picture when the image changed and the previous picture again, with a
+ * new timestamp, when it did not, so a reader receives frames at the requested pace even while nothing
+ * moves. Ticks follow an absolute schedule; a capture thread that falls more than one tick behind skips
+ * the missed ticks instead of bursting. Pictures have the size of the captured area when the session
+ * opened (the source, or the part of the options' region on it), cropped to even dimensions, and are
+ * converted from sRGB to BT.709 limited range ({@link YuvCoefficients#BT709_LIMITED}); the pointer is drawn
+ * unless the options leave it out.
  */
 final class ScreenSession implements VideoCaptureSession {
     /**
-     * The longest wait for the capture thread to open the monitor.
+     * The longest wait for the capture thread to open the source.
      */
     private static final Duration OPEN_TIMEOUT = Duration.ofSeconds(15);
 
@@ -46,9 +51,9 @@ final class ScreenSession implements VideoCaptureSession {
     private static final int MAX_RATE = 1_000;
 
     /**
-     * The monitor.
+     * The monitor or window.
      */
-    private final CaptureDevice.Screen device;
+    private final CaptureDevice device;
 
     /**
      * The capture thread's state.
@@ -68,11 +73,11 @@ final class ScreenSession implements VideoCaptureSession {
     /**
      * Creates a session over an opened capture thread.
      *
-     * @param device the monitor
+     * @param device the monitor or window
      * @param worker the capture thread's state
      * @param pump the capture thread
      */
-    private ScreenSession(CaptureDevice.Screen device, Worker worker, PumpThread pump) {
+    private ScreenSession(CaptureDevice device, Worker worker, PumpThread pump) {
         this.device = device;
         this.worker = worker;
         this.pump = pump;
@@ -82,29 +87,64 @@ final class ScreenSession implements VideoCaptureSession {
      * Opens a monitor with desktop duplication, falling back to GDI.
      *
      * @param screen the monitor
-     * @param frameRate the frames per second
+     * @param options the frame rate, region and pointer settings
      * @return the session
      * @throws MediaException.Io if the monitor does not exist or cannot be captured
+     * @throws MediaException.Unsupported if the captured area is smaller than 2x2 pixels
      */
-    static VideoCaptureSession open(CaptureDevice.Screen screen, Rational frameRate) {
-        return open(screen, frameRate, false);
+    static VideoCaptureSession open(CaptureDevice.Screen screen, ScreenCaptureOptions options) {
+        return open(screen, options, false);
     }
 
     /**
      * Opens a monitor.
      *
      * @param screen the monitor
-     * @param frameRate the frames per second, served at 1000 when higher
+     * @param options the frame rate, served at 1000 when higher, region and pointer settings
      * @param gdi whether to use GDI without trying desktop duplication
      * @return the session
      * @throws MediaException.Io if the monitor does not exist or cannot be captured
+     * @throws MediaException.Unsupported if the captured area is smaller than 2x2 pixels
      */
-    static VideoCaptureSession open(CaptureDevice.Screen screen, Rational frameRate, boolean gdi) {
+    static ScreenSession open(CaptureDevice.Screen screen, ScreenCaptureOptions options, boolean gdi) {
+        Supplier<ScreenGrabber> primary = gdi || !Dxgi.available() ? null : () -> new DuplicationGrabber(screen.id());
+        return start(screen, "the screen " + screen.name(), options, primary, () -> new GdiGrabber(screen.id(), null));
+    }
+
+    /**
+     * Opens a window with Windows Graphics Capture, falling back to {@code PrintWindow}.
+     *
+     * @param window the window to capture, as listed
+     * @param options the frame rate, served at 1000 when higher, region and pointer settings
+     * @param print whether to use {@code PrintWindow} without trying Windows Graphics Capture
+     * @return the session
+     * @throws MediaException.Io if the window no longer exists or cannot be captured
+     * @throws MediaException.Unsupported if the captured area is smaller than 2x2 pixels
+     */
+    static ScreenSession open(CaptureDevice.Window window, ScreenCaptureOptions options, boolean print) {
+        var handle = TopWindows.handle(window.id());
+        if (handle.equals(MemorySegment.NULL) || !TopWindows.exists(handle)) {
+            throw new MediaException.Io("the window " + window.name() + " no longer exists",
+                    new IOException("IsWindow(" + window.id() + ") is false"));
+        }
+        Supplier<ScreenGrabber> primary = print || !GraphicsCapture.linked() ? null : () -> new WgcGrabber(handle);
+        return start(window, "the window " + window.name(), options, primary, () -> new PrintWindowGrabber(handle));
+    }
+
+    /**
+     * Starts the capture thread and waits for it to open the source.
+     *
+     * @param what the source, named in failures
+     * @param primary opens the preferred grabber, or {@code null} to use the fallback only
+     * @param fallback opens the fallback grabber
+     */
+    private static ScreenSession start(CaptureDevice device, String what, ScreenCaptureOptions options,
+                                       Supplier<ScreenGrabber> primary, Supplier<ScreenGrabber> fallback) {
         var pump = new PumpThread("smalt-screen-capture", Thread.NORM_PRIORITY);
-        var worker = new Worker(screen, frameRate, gdi, pump);
+        var worker = new Worker(what, options, primary, fallback, pump);
         pump.start(worker);
-        pump.awaitOpen(OPEN_TIMEOUT, "the screen " + screen.name(), worker::abandon);
-        return new ScreenSession(screen, worker, pump);
+        pump.awaitOpen(OPEN_TIMEOUT, what, worker::abandon);
+        return new ScreenSession(device, worker, pump);
     }
 
     @Override
@@ -130,10 +170,19 @@ final class ScreenSession implements VideoCaptureSession {
     /**
      * Returns whether the session captures with desktop duplication.
      *
-     * @return {@code true} for desktop duplication, {@code false} for GDI
+     * @return {@code true} for desktop duplication
      */
     boolean duplicating() {
         return worker.grabber instanceof DuplicationGrabber;
+    }
+
+    /**
+     * Returns whether the session captures with Windows Graphics Capture.
+     *
+     * @return {@code true} for Windows Graphics Capture
+     */
+    boolean graphicsCapture() {
+        return worker.grabber instanceof WgcGrabber;
     }
 
     @Override
@@ -150,9 +199,9 @@ final class ScreenSession implements VideoCaptureSession {
      */
     private static final class Worker implements Runnable {
         /**
-         * The monitor.
+         * The source, named in failures.
          */
-        private final CaptureDevice.Screen screen;
+        private final String what;
 
         /**
          * The frames per second, at most {@link #MAX_RATE}.
@@ -165,22 +214,37 @@ final class ScreenSession implements VideoCaptureSession {
         private final long periodNanos;
 
         /**
-         * Whether to use GDI without trying desktop duplication.
+         * The region, frame rate and pointer settings.
          */
-        private final boolean gdi;
+        private final ScreenCaptureOptions options;
 
         /**
-         * The capture thread, told when the monitor is open.
+         * Opens the preferred grabber, or {@code null}.
+         */
+        private final Supplier<ScreenGrabber> primary;
+
+        /**
+         * Opens the fallback grabber.
+         */
+        private final Supplier<ScreenGrabber> fallback;
+
+        /**
+         * The capture thread, told when the source is open.
          */
         private final PumpThread pump;
 
         /**
-         * The exchange of the session's pictures, set before the pump is told the monitor is open.
+         * The captured area, set when the source is open.
+         */
+        private CaptureArea area;
+
+        /**
+         * The exchange of the session's pictures, set before the pump is told the source is open.
          */
         private volatile FrameExchange exchange;
 
         /**
-         * The grabber in use; replaced by the capture thread when it falls back to GDI.
+         * The grabber in use; replaced by the capture thread when it falls back.
          */
         private volatile ScreenGrabber grabber;
 
@@ -192,16 +256,20 @@ final class ScreenSession implements VideoCaptureSession {
         /**
          * Creates the state of a capture.
          *
-         * @param screen the monitor
-         * @param frameRate the frames per second
-         * @param gdi whether to use GDI without trying desktop duplication
+         * @param what the source, named in failures
+         * @param options the frame rate, region and pointer settings
+         * @param primary opens the preferred grabber, or {@code null}
+         * @param fallback opens the fallback grabber
          * @param pump the capture thread
          */
-        Worker(CaptureDevice.Screen screen, Rational frameRate, boolean gdi, PumpThread pump) {
-            this.screen = screen;
-            this.rate = FramePacing.atMost(frameRate, MAX_RATE);
+        Worker(String what, ScreenCaptureOptions options, Supplier<ScreenGrabber> primary,
+               Supplier<ScreenGrabber> fallback, PumpThread pump) {
+            this.what = what;
+            this.options = options;
+            this.rate = FramePacing.atMost(options.frameRate(), MAX_RATE);
             this.periodNanos = FramePacing.periodNanos(rate);
-            this.gdi = gdi;
+            this.primary = primary;
+            this.fallback = fallback;
             this.pump = pump;
         }
 
@@ -218,24 +286,43 @@ final class ScreenSession implements VideoCaptureSession {
 
         @Override
         public void run() {
+            var initialized = false;
+            try {
+                try {
+                    initialized = Com.available() && Com.initialize();
+                } catch (MediaException exception) {
+                    // without an apartment only Windows Graphics Capture fails, and its fallback takes over
+                }
+                runInApartment();
+            } finally {
+                if (initialized) {
+                    Com.uninitialize();
+                }
+            }
+        }
+
+        /**
+         * Opens the source and captures it; runs on the capture thread in the multithreaded apartment.
+         */
+        private void runInApartment() {
             long start;
             try {
                 Gdi.usePhysicalPixels();
                 grabber = openGrabber();
-                var width = grabber.width() & ~1;
-                var height = grabber.height() & ~1;
-                if (width == 0 || height == 0) {
-                    throw Com.failure("the screen " + screen.name() + " is " + grabber.width() + "x" + grabber.height(), 0);
+                if ((grabber.width() & ~1) == 0 || (grabber.height() & ~1) == 0) {
+                    throw Com.failure(what + " is " + grabber.width() + "x" + grabber.height(), 0);
                 }
-                LimitChecks.checkPicture(MediaLimits.DEFAULT, width, height);
-                exchange = new FrameExchange(width, height, YuvCoefficients.BT709_LIMITED.color());
+                area = CaptureArea.of(options, grabber.width(), grabber.height(), what);
+                grabber.configure(area, options.cursor());
+                LimitChecks.checkPicture(MediaLimits.DEFAULT, area.width(), area.height());
+                exchange = new FrameExchange(area.width(), area.height(), YuvCoefficients.BT709_LIMITED.color());
                 start = System.nanoTime();
             } catch (MediaException exception) {
                 pump.failOpen(exception);
                 closeGrabber();
                 return;
             } catch (RuntimeException exception) {
-                var message = "cannot capture the screen " + screen.name();
+                var message = "cannot capture " + what;
                 pump.failOpen(new MediaException.Io(message, new IOException(message, exception)));
                 closeGrabber();
                 return;
@@ -249,7 +336,7 @@ final class ScreenSession implements VideoCaptureSession {
             } catch (MediaException exception) {
                 exchange.fail(exception);
             } catch (RuntimeException exception) {
-                var message = "the capture of the screen " + screen.name() + " failed";
+                var message = "the capture of " + what + " failed";
                 exchange.fail(new MediaException.Io(message, new IOException(message, exception)));
             } finally {
                 closeGrabber();
@@ -257,24 +344,24 @@ final class ScreenSession implements VideoCaptureSession {
         }
 
         /**
-         * Opens the grabber of the monitor.
+         * Opens the grabber of the source.
          *
-         * @return desktop duplication when available, otherwise GDI
-         * @throws MediaException.Io if the monitor does not exist or GDI cannot capture it
+         * @return the preferred grabber when it opens, otherwise the fallback
+         * @throws MediaException.Io if the fallback cannot capture the source either
          */
         private ScreenGrabber openGrabber() {
-            if (!gdi && Dxgi.available()) {
+            if (primary != null) {
                 try {
-                    return new DuplicationGrabber(screen.id());
+                    return primary.get();
                 } catch (MediaException exception) {
-                    // Desktop duplication is unavailable for this monitor: GDI captures it instead
+                    // The preferred API is unavailable for this source: the fallback captures it instead
                 }
             }
-            return new GdiGrabber(screen.id(), null);
+            return fallback.get();
         }
 
         /**
-         * Captures at the requested rate until the session closes or the monitor disappears.
+         * Captures at the requested rate until the session closes or the source disappears.
          *
          * @param start the {@link System#nanoTime()} of the first tick
          */
@@ -286,7 +373,8 @@ final class ScreenSession implements VideoCaptureSession {
                 var result = grabber.grab(picture);
                 if (result == ScreenGrabber.Result.FALLBACK) {
                     grabber.close();
-                    grabber = new GdiGrabber(screen.id(), null);
+                    grabber = fallback.get();
+                    grabber.configure(area, options.cursor());
                     result = grabber.grab(picture);
                 }
                 switch (result) {

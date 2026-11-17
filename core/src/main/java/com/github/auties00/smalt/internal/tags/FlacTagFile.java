@@ -3,6 +3,8 @@ package com.github.auties00.smalt.internal.tags;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Chapter;
+import com.github.auties00.smalt.container.mpeg.internal.TrailingTags;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.edit.EditPlan;
@@ -11,7 +13,10 @@ import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Edits the metadata blocks of a native FLAC file.
@@ -19,10 +24,19 @@ import java.util.List;
  * <p>The file is an optional ID3v2 prefix, the {@code fLaC} marker, metadata blocks (each a
  * four-byte header: a last-block flag, a seven-bit type and a 24-bit length) and the audio
  * frames. The rewrite keeps {@code STREAMINFO} and {@code SEEKTABLE} (whose offsets are relative
- * to the first frame and so survive any metadata change), keeps {@code APPLICATION},
- * {@code CUESHEET} and unknown blocks when unknown items are preserved, and replaces
- * {@code VORBIS_COMMENT}, {@code PICTURE} and {@code PADDING}. When the new blocks fit the space
+ * to the first frame and so survive any metadata change), keeps {@code APPLICATION} and unknown
+ * blocks when unknown items are preserved, and replaces {@code VORBIS_COMMENT}, {@code PICTURE}
+ * and {@code PADDING}. The chapters are the {@code CHAPTERxxx} comments or, without any, the
+ * tracks of the {@code CUESHEET} block ({@link FlacCuesheet}); the {@code CUESHEET} is kept while
+ * the chapters do not change, and is otherwise replaced by one built from the new chapters
+ * (removed without chapters), which are also written as comments. When the new blocks fit the space
  * of the old ones, a padding block fills the rest and the frames do not move.
+ *
+ * <p>Tags after the frames are read after the metadata blocks: an APE tag and then an ID3v1 tag
+ * add the keys the Vorbis comments lack, and the APE cover art counts when there is no
+ * {@code PICTURE} block. They follow their {@link TagWriteOptions} modes on a rewrite; Lyrics3v2
+ * blocks and ID3v2 tags, leading or appended, are kept unchanged and not read, a Lyrics3v1 block
+ * is kept while an ID3v1 tag follows it, and an enhanced {@code TAG+} block is dropped.
  */
 final class FlacTagFile implements TagFile {
     /**
@@ -44,6 +58,11 @@ final class FlacTagFile implements TagFile {
      * The {@code VORBIS_COMMENT} block type.
      */
     private static final int VORBIS_COMMENT = 4;
+
+    /**
+     * The {@code CUESHEET} block type.
+     */
+    private static final int CUESHEET = 5;
 
     /**
      * The {@code PICTURE} block type.
@@ -76,9 +95,34 @@ final class FlacTagFile implements TagFile {
     private final List<Block> blocks;
 
     /**
-     * The size of the file.
+     * The source.
      */
-    private final long fileSize;
+    private final MediaSource source;
+
+    /**
+     * The resource bounds.
+     */
+    private final MediaLimits limits;
+
+    /**
+     * The offset where the frames end and the trailing tags start.
+     */
+    private final long audioEnd;
+
+    /**
+     * The trailing tags, in file order.
+     */
+    private final List<TrailingTags.Region> trailing;
+
+    /**
+     * The APE tag, or {@code null}.
+     */
+    private final ApeTag ape;
+
+    /**
+     * The ID3v1 tag, or {@code null}.
+     */
+    private final byte[] id3v1;
 
     /**
      * Parses the metadata blocks.
@@ -90,7 +134,8 @@ final class FlacTagFile implements TagFile {
      */
     FlacTagFile(MediaSource source, MediaLimits limits) {
         var size = source.size();
-        this.fileSize = size;
+        this.source = source;
+        this.limits = limits;
         var position = 0L;
         for (var count = 0; count < 64 && size - position >= Id3v2Tag.HEADER_SIZE; count++) {
             var header = TagIo.read(source, position, Id3v2Tag.HEADER_SIZE, limits);
@@ -133,6 +178,19 @@ final class FlacTagFile implements TagFile {
         }
         this.blocks = List.copyOf(parsed);
         this.audioStart = position;
+        this.trailing = TrailingTags.regions(source, audioStart, size);
+        this.audioEnd = trailing.isEmpty() ? size : trailing.getFirst().offset();
+        ApeTag apeTag = null;
+        byte[] v1 = null;
+        for (var region : trailing) {
+            if (region.kind() == TrailingTags.Kind.ID3V1) {
+                v1 = TagIo.read(source, region.offset(), region.length(), limits);
+            } else if (region.kind() == TrailingTags.Kind.APE && apeTag == null) {
+                apeTag = ApeTag.parse(TagIo.read(source, region.offset(), region.length(), limits));
+            }
+        }
+        this.ape = apeTag;
+        this.id3v1 = v1;
     }
 
     @Override
@@ -147,6 +205,9 @@ final class FlacTagFile implements TagFile {
             }
         }
         var builder = comments.toBuilder();
+        if (comments.chapters().isEmpty()) {
+            builder.chapters(cuesheetChapters());
+        }
         var pictures = new ArrayList<AttachedPicture>();
         for (var block : blocks) {
             if (block.type() == PICTURE) {
@@ -157,7 +218,85 @@ final class FlacTagFile implements TagFile {
             }
         }
         pictures.addAll(comments.pictures());
+        var keys = new HashSet<String>();
+        for (var entry : comments.entries()) {
+            keys.add(entry.key().toLowerCase(Locale.ROOT));
+        }
+        if (ape != null) {
+            var content = ape.decode();
+            addMissing(builder, keys, content.entries());
+            if (pictures.isEmpty()) {
+                pictures.addAll(content.pictures());
+            }
+        }
+        if (id3v1 != null) {
+            addMissing(builder, keys, Id3v1Tag.parse(id3v1, 0));
+        }
         return builder.pictures(pictures).build();
+    }
+
+    /**
+     * Adds the entries whose key was not read before.
+     *
+     * @param builder the tags being read
+     * @param keys the lower-case keys read so far, which receives the keys added
+     * @param entries the entries of one tag
+     */
+    private static void addMissing(MediaTags.Builder builder, Set<String> keys, List<MediaTags.Entry> entries) {
+        var added = new HashSet<String>();
+        for (var entry : entries) {
+            var key = entry.key().toLowerCase(Locale.ROOT);
+            if (!keys.contains(key)) {
+                builder.add(entry.key(), entry.value());
+                added.add(key);
+            }
+        }
+        keys.addAll(added);
+    }
+
+    /**
+     * {@return the chapters of the first {@code CUESHEET} block, empty without one or when it is damaged}
+     */
+    private List<Chapter> cuesheetChapters() {
+        for (var block : blocks) {
+            if (block.type() == CUESHEET) {
+                try {
+                    return FlacCuesheet.decode(block.body(), 0, block.body().length, sampleRate());
+                } catch (MediaException.Malformed ignored) {
+                    // a damaged cue sheet gives no chapters; the block is kept as it is
+                    return List.of();
+                }
+            }
+        }
+        return List.of();
+    }
+
+    /**
+     * {@return whether the {@code VORBIS_COMMENT} block holds chapters}
+     */
+    private boolean commentHasChapters() {
+        for (var block : blocks) {
+            if (block.type() == VORBIS_COMMENT) {
+                var parsed = VorbisComment.parse(block.body(), 0, block.body().length);
+                return !VorbisComment.decode(parsed.fields(), durationMicros()).chapters().isEmpty();
+            }
+        }
+        return false;
+    }
+
+    /**
+     * {@return the sampling rate recorded in {@code STREAMINFO}, in hertz}
+     */
+    private int sampleRate() {
+        return (ByteArrays.u24be(blocks.getFirst().body(), 10) >>> 4) & 0xFFFFF;
+    }
+
+    /**
+     * {@return the number of samples recorded in {@code STREAMINFO}, 0 when unknown}
+     */
+    private long totalSamples() {
+        var info = blocks.getFirst().body();
+        return ((info[13] & 0x0FL) << 32) | ByteArrays.u32be(info, 14);
     }
 
     /**
@@ -175,7 +314,7 @@ final class FlacTagFile implements TagFile {
 
     @Override
     public EditPlan plan(MediaTags tags, TagWriteOptions options) {
-        var current = read();
+        var current = blockPictures();
         var vendor = VorbisComment.DEFAULT_VENDOR;
         var hadComment = false;
         for (var block : blocks) {
@@ -185,8 +324,14 @@ final class FlacTagFile implements TagFile {
                 break;
             }
         }
-        var commentTags = tags.toBuilder().pictures(List.of()).build();
-        var keepPictures = current.pictures().equals(tags.pictures());
+        var commentTags = tags.toBuilder().pictures(List.of()).tracks(List.of()).build();
+        var keepPictures = current.equals(tags.pictures());
+        var read = read();
+        var keepChapters = read.chapters().equals(tags.chapters());
+        if (keepChapters && !commentHasChapters()) {
+            commentTags = commentTags.toBuilder().chapters(List.of()).build();
+        }
+        var cuesheet = keepChapters ? null : FlacCuesheet.encode(tags.chapters(), sampleRate(), totalSamples());
         var out = new ByteWriter(4096);
         var pending = new ArrayList<Block>();
         for (var block : blocks) {
@@ -196,6 +341,11 @@ final class FlacTagFile implements TagFile {
                 }
                 case PICTURE -> {
                     if (keepPictures) {
+                        pending.add(block);
+                    }
+                }
+                case CUESHEET -> {
+                    if (keepChapters) {
                         pending.add(block);
                     }
                 }
@@ -209,6 +359,9 @@ final class FlacTagFile implements TagFile {
         var insertAt = 1;
         while (insertAt < pending.size() && pending.get(insertAt).type() == SEEKTABLE) {
             insertAt++;
+        }
+        if (cuesheet != null) {
+            pending.add(insertAt, new Block(CUESHEET, cuesheet.length, cuesheet));
         }
         if (hadComment || !commentTags.isEmpty()) {
             var comment = VorbisComment.encode(vendor, commentTags, false);
@@ -259,11 +412,88 @@ final class FlacTagFile implements TagFile {
                 remaining = leftover;
             }
         }
-        return EditPlan.builder()
+        var plan = EditPlan.builder()
                 .copy(0, markerOffset + 4)
                 .bytes(out.toByteArray())
-                .copy(audioStart, fileSize - audioStart)
-                .build();
+                .copy(audioStart, audioEnd - audioStart);
+        writeTrailing(plan, tags, options);
+        return plan.build();
+    }
+
+    /**
+     * {@return the pictures of the {@code PICTURE} blocks and the Vorbis comments, which a rewrite keeps unchanged
+     * when the new tags hold the same pictures}
+     */
+    private List<AttachedPicture> blockPictures() {
+        var pictures = new ArrayList<AttachedPicture>();
+        var comments = MediaTags.empty();
+        for (var block : blocks) {
+            if (block.type() == VORBIS_COMMENT) {
+                comments = VorbisComment.decode(VorbisComment.parse(block.body(), 0, block.body().length).fields(), -1);
+                break;
+            }
+        }
+        for (var block : blocks) {
+            if (block.type() == PICTURE) {
+                var picture = FlacPicture.decode(block.body(), 0, block.body().length);
+                if (picture != null) {
+                    pictures.add(picture);
+                }
+            }
+        }
+        pictures.addAll(comments.pictures());
+        return pictures;
+    }
+
+    /**
+     * Plans the tags after the frames: the APE and ID3v1 tags by their modes, Lyrics3 blocks and
+     * appended ID3v2 tags unchanged, except a Lyrics3v1 block left without the ID3v1 tag it needs.
+     *
+     * @param plan the plan, positioned after the frames
+     * @param tags the tags to write
+     * @param options the write options
+     */
+    private void writeTrailing(EditPlan.Builder plan, MediaTags tags, TagWriteOptions options) {
+        var preserved = ape != null && options.preserveUnknown() ? ape.decode().opaque() : List.<ApeTag.Item>of();
+        var apeBytes = switch (options.apeMode()) {
+            case REMOVE -> null;
+            case UPDATE_EXISTING -> ape != null ? ApeTag.encode(tags, preserved) : null;
+            case ALWAYS -> ApeTag.encode(tags, preserved);
+        };
+        if (apeBytes != null && apeBytes.length == 0) {
+            apeBytes = null;
+        }
+        var writeV1 = switch (options.id3v1Mode()) {
+            case REMOVE -> false;
+            case UPDATE_EXISTING -> id3v1 != null && Id3v1Tag.hasFields(tags);
+            case ALWAYS -> Id3v1Tag.hasFields(tags);
+        };
+        var apeWritten = false;
+        if (ape == null && apeBytes != null) {
+            plan.bytes(apeBytes);
+            apeWritten = true;
+        }
+        for (var region : trailing) {
+            switch (region.kind()) {
+                case APE -> {
+                    if (!apeWritten && apeBytes != null) {
+                        plan.bytes(apeBytes);
+                    }
+                    apeWritten = true;
+                }
+                case LYRICS3, ID3V2 -> {
+                    var block = TagIo.read(source, region.offset(), region.length(), limits);
+                    if (writeV1 || region.kind() == TrailingTags.Kind.ID3V2 || !TagIo.isLyrics3v1(block)) {
+                        plan.bytes(block);
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+        if (writeV1) {
+            plan.bytes(Id3v1Tag.encode(tags));
+        }
     }
 
     /**

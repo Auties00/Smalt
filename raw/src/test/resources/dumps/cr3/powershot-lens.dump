@@ -1,0 +1,15 @@
+# image dump of cr3/powershot-lens; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=632, height=440, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 632x440 rgba8 alpha=false crc=88e3945d
+  format=RAW orientation=NORMAL source=632x440
+  icc=520:86132914 exif=156:b0d2087b xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+scaled 158x110
+picture 316x220 rgba8 alpha=false crc=e344177a
+  format=RAW orientation=NORMAL source=632x440
+  icc=520:86132914 exif=156:b0d2087b xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 632x440 channels=1 cfa=RGGB neutral=[0.512, 1.0, 0.64] crc=be8a781b

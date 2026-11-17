@@ -1,0 +1,12 @@
+# name	codec	channels	bytes per trial (a fresh decoder), 0 for one stream
+coverage-mac3	MAC3	1	256
+stress-mac3	MAC3	1	128
+encoded-mac3	MAC3	1	0
+encoded-stereo-mac3	MAC3	2	0
+random-stereo-mac3	MAC3	2	0
+coverage-mac6	MAC6	1	256
+stress-mac6	MAC6	1	128
+encoded-mac6	MAC6	1	0
+encoded-stereo-mac6	MAC6	2	0
+random-stereo-mac6	MAC6	2	0
+boundaries-mac3	MAC3	1	128

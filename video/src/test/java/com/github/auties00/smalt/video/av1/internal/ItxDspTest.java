@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.video.av1.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -370,7 +370,7 @@ class ItxDspTest {
     @MethodSource("groups")
     @DisplayName("the vector kernels match dav1d's C kernels bit for bit")
     void vectorMatchesDav1d(int bitdepth, int txSize, int txType, long expected) {
-        Assumptions.assumeTrue(Simd.ENABLED, "the Vector API is unavailable");
+        Skip.unlessVector(Simd.ENABLED);
         assertEquals(Long.toHexString(expected), Long.toHexString(group(VectorItxDsp.create(), bitdepth, txSize, txType)));
     }
 

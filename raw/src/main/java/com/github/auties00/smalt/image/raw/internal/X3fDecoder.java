@@ -1,15 +1,17 @@
 /* Ports X3F tools (x3f_io.c: x3f_load_true, true_decode_one_color, get_true_diff, x3f_load_huffman,
-   huffman_decode_row) at commit e8b48ca. Copyright 2015 Roland and Erik Karlsson; BSD 3-Clause License.
-   Modified for Smalt. */
+   huffman_decode_row, simple_decode_row) at commit e8b48ca. Copyright 2015 Roland and Erik Karlsson; BSD 3-Clause
+   License. Modified for Smalt. */
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
+import java.util.Arrays;
+
 /**
- * Decodes the two raw image codings of Sigma X3F files this decoder reads into the three color
- * layers of a Foveon sensor, interleaved bottom, middle, top.
+ * Decodes the raw image codings of Sigma X3F files into the three color layers of a Foveon sensor,
+ * bottom, middle and top, and the Huffman coded 8-bit RGB thumbnails.
  *
  * <p>The TRUE coding (raw image type 3 or 1, format 30) stores each layer as its own Huffman coded
  * stream. Its header holds three 16-bit seeds, a 16-bit reserved value, the code table as pairs of
@@ -19,13 +21,23 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
  * A difference of {@code n} bits whose first bit is 0 is negative, the bits minus {@code 2^n - 1}.
  * Each layer value is the difference plus the previous value of the same column parity on the row;
  * the first two values of a row add to the first two values of the row two rows above, the first
- * rows to the seed.
+ * rows to the seed. The Quattro variants (type 1, formats 35, 37 and 39) code each layer at its own
+ * size: the header starts with the 16-bit columns and rows of each layer and has a 32-bit reserved
+ * value after the code table; a layer may code more columns than the image keeps.
  *
- * <p>The older Huffman coding (raw image type 3, format 6, with a row size of 0) holds a table of
- * 1024 signed 16-bit difference values, 1024 codes (a 5-bit length above a 27-bit code), the rows
- * and finally the offset of each row from the first coded byte. A row codes the bottom, middle and
- * top values of each pixel in turn; each value is a signed 16-bit running sum of its layer's
- * differences from 0 at the row start, so it can be negative.
+ * <p>The older Huffman coding (raw image type 3, format 6 or the Polaroid x530's format 5, with a
+ * row size of 0) holds a table of 1024 signed 16-bit difference values, 1024 codes (a 5-bit length
+ * above a 27-bit code), the rows and finally the offset of each row from the first coded byte. A
+ * row codes the bottom, middle and top values of each pixel in turn; each value is a signed 16-bit
+ * running sum of its layer's differences from 0 at the row start, so it can be negative. With a
+ * row size other than 0 the rows are not Huffman coded: after the difference table, each row of
+ * that many bytes holds a 32-bit little-endian word per pixel whose bits 0 to 9, 10 to 19 and 20 to
+ * 29 index the table for the bottom, middle and top differences; the 16-bit running sums are kept
+ * where positive and 0 otherwise.
+ *
+ * <p>A Huffman coded thumbnail (type 2, format 11) holds a table of 256 codes, the rows and the
+ * offset of each row, as the older coding does; the value of a code is its index in the table, and
+ * each red, green and blue value is the 8-bit running sum of its channel's values on the row.
  *
  * <p>Codes are read most significant bit first. A stream that uses a code its table does not
  * assign, or runs past its end, is malformed.
@@ -218,8 +230,10 @@ final class X3fDecoder {
      * @param table the index of the code table in the section body
      * @param starts the index of each layer's stream in the section body
      * @param lengths the byte length of each layer's stream
+     * @param columns the columns each layer codes
+     * @param rows the rows each layer codes
      */
-    record TrueLayout(int[] seeds, int table, int[] starts, int[] lengths) {
+    record TrueLayout(int[] seeds, int table, int[] starts, int[] lengths, int[] columns, int[] rows) {
     }
 
     /**
@@ -227,11 +241,26 @@ final class X3fDecoder {
      *
      * @param body the section from its 28-byte image header on, or its first bytes
      * @param size the full length of the section
+     * @param quattro whether the header is of a Quattro variant, which gives each layer's size
+     * @param width the image width, the columns of each layer of the other variants
+     * @param height the image height, the rows of each layer of the other variants
      * @return the layout
      * @throws MediaException.Malformed if the header is truncated or the streams overrun the section
      */
-    static TrueLayout trueLayout(byte[] body, long size) {
+    static TrueLayout trueLayout(byte[] body, long size, boolean quattro, int width, int height) {
         var position = 28;
+        var columns = new int[]{width, width, width};
+        var rows = new int[]{height, height, height};
+        if (quattro) {
+            if (body.length < position + 12) {
+                throw new MediaException.Malformed("truncated X3F Quattro header");
+            }
+            for (var layer = 0; layer < 3; layer++) {
+                columns[layer] = ByteArrays.u16(body, position + 4 * layer, true);
+                rows[layer] = ByteArrays.u16(body, position + 4 * layer + 2, true);
+            }
+            position += 12;
+        }
         if (body.length < position + 10) {
             throw new MediaException.Malformed("truncated X3F TRUE header");
         }
@@ -249,6 +278,9 @@ final class X3fDecoder {
                 break;
             }
         }
+        if (quattro) {
+            position += 4;
+        }
         if (position + 12 > body.length) {
             throw new MediaException.Malformed("truncated X3F TRUE header");
         }
@@ -264,23 +296,52 @@ final class X3fDecoder {
             lengths[layer] = (int) length;
             start += (length + 15) / 16 * 16;
         }
-        return new TrueLayout(seeds, table, starts, lengths);
+        return new TrueLayout(seeds, table, starts, lengths, columns, rows);
     }
 
     /**
-     * Decodes the three layers of a TRUE section, in parallel.
+     * Decodes the three layers of a TRUE section, in parallel, into an interleaved image; columns a
+     * layer codes past the image width are dropped.
      *
      * @param body the whole section
-     * @param layout its layout
-     * @param width the width of each layer
-     * @param height the height of each layer
+     * @param layout its layout, whose layers have {@code height} rows and at least {@code width}
+     * columns
+     * @param width the image width
+     * @param height the image height
      * @param out the interleaved output, {@code 3 * width * height} values
      * @throws MediaException.Malformed if a stream is corrupt
      */
     static void decodeTrue(byte[] body, TrueLayout layout, int width, int height, short[] out) {
         var lookup = trueLookup(body, layout.table, body.length);
         ParallelBands.run(3, layer -> decodeLayer(body, layout.starts[layer], layout.lengths[layer], lookup,
-                layout.seeds[layer], width, height, out, layer));
+                layout.seeds[layer], layout.columns[layer], height, out, width, 3, layer));
+    }
+
+    /**
+     * Decodes the layers of a Quattro section, in parallel: the bottom and middle layers into the
+     * first two samples of an interleaved image of three samples per pixel, the top layer, every
+     * column it codes, into its own plane.
+     *
+     * @param body the whole section
+     * @param layout its layout, whose middle layer has the bottom layer's rows and at least its
+     * columns
+     * @param low the interleaved output of the bottom and middle layers,
+     * {@code 3 * columns[0] * rows[0]} values; the third samples are left unchanged
+     * @param top the output of the top layer, {@code columns[2] * rows[2]} values
+     * @throws MediaException.Malformed if a stream is corrupt
+     */
+    static void decodeQuattro(byte[] body, TrueLayout layout, short[] low, short[] top) {
+        var lookup = trueLookup(body, layout.table, body.length);
+        var width = layout.columns[0];
+        ParallelBands.run(3, layer -> {
+            if (layer < 2) {
+                decodeLayer(body, layout.starts[layer], layout.lengths[layer], lookup, layout.seeds[layer],
+                        layout.columns[layer], layout.rows[0], low, width, 3, layer);
+            } else {
+                decodeLayer(body, layout.starts[2], layout.lengths[2], lookup, layout.seeds[2], layout.columns[2],
+                        layout.rows[2], top, layout.columns[2], 1, 0);
+            }
+        });
     }
 
     /**
@@ -291,14 +352,16 @@ final class X3fDecoder {
      * @param length the byte length of the stream
      * @param lookup the code lookup
      * @param seed the layer's seed
-     * @param width the layer width
-     * @param height the layer height
-     * @param out the interleaved output
-     * @param layer the layer, the offset of its values in each pixel
+     * @param width the columns the layer codes
+     * @param height the rows the layer codes
+     * @param out the output
+     * @param kept the columns written to the output, at most {@code width}
+     * @param channels the samples of each output pixel
+     * @param layer the offset of the layer's values in each output pixel
      * @throws MediaException.Malformed if the stream is corrupt or runs past its end
      */
     private static void decodeLayer(byte[] data, int start, int length, int[] lookup, int seed, int width,
-                                    int height, short[] out, int layer) {
+                                    int height, short[] out, int kept, int channels, int layer) {
         var end = start + length;
         var position = start;
         var buffer = 0L;
@@ -309,7 +372,7 @@ final class X3fDecoder {
         var odd1 = seed;
         var mask = (1 << LOOKUP_BITS) - 1;
         for (var row = 0; row < height; row++) {
-            var target = row * width * 3 + layer;
+            var target = row * kept * channels + layer;
             var accumulator0 = (row & 1) == 0 ? even0 : odd0;
             var accumulator1 = (row & 1) == 0 ? even1 : odd1;
             for (var column = 0; column < width; column++) {
@@ -356,8 +419,10 @@ final class X3fDecoder {
                         odd1 = accumulator1;
                     }
                 }
-                out[target] = (short) Math.clamp(value, 0, 0xFFFF);
-                target += 3;
+                if (column < kept) {
+                    out[target] = (short) Math.clamp(value, 0, 0xFFFF);
+                    target += channels;
+                }
             }
             if (width == 1) {
                 if ((row & 1) == 0) {
@@ -415,6 +480,190 @@ final class X3fDecoder {
                 decodeRow(body, data + (int) offset, offsets, tree, out, row * width * 3, width);
             }
         });
+    }
+
+    /**
+     * Decodes the rows of the older coding stored without Huffman codes, in parallel bands.
+     *
+     * @param body the whole section
+     * @param width the image width
+     * @param height the image height
+     * @param rowSize the bytes of each row, from the image header
+     * @param out the interleaved output, {@code 3 * width * height} values, each the 16-bit running
+     * sum where it is positive as a signed value and 0 otherwise
+     * @throws MediaException.Malformed if the rows are shorter than their pixels or overrun the
+     * section
+     */
+    static void decodeUncompressed(byte[] body, int width, int height, long rowSize, short[] out) {
+        var data = 28 + 2 * HUFFMAN_ENTRIES;
+        if (rowSize < 4L * width || data + (height - 1) * rowSize + 4L * width > body.length) {
+            throw new MediaException.Malformed("X3F uncompressed rows of " + rowSize + " bytes overrun their section");
+        }
+        var values = new short[HUFFMAN_ENTRIES];
+        for (var index = 0; index < HUFFMAN_ENTRIES; index++) {
+            values[index] = (short) ByteArrays.u16(body, 28 + 2 * index, true);
+        }
+        var bands = ParallelBands.bands(height, (long) width * height * 3);
+        ParallelBands.run(bands, band -> {
+            var first = ParallelBands.start(band, bands, height);
+            var last = ParallelBands.start(band + 1, bands, height);
+            for (var row = first; row < last; row++) {
+                var position = (int) (data + row * rowSize);
+                var target = row * width * 3;
+                short bottom = 0;
+                short middle = 0;
+                short top = 0;
+                for (var column = 0; column < width; column++) {
+                    var word = (int) ByteArrays.u32(body, position, true);
+                    bottom += values[word & 0x3FF];
+                    middle += values[(word >>> 10) & 0x3FF];
+                    top += values[(word >>> 20) & 0x3FF];
+                    out[target] = (short) Math.max(bottom, 0);
+                    out[target + 1] = (short) Math.max(middle, 0);
+                    out[target + 2] = (short) Math.max(top, 0);
+                    position += 4;
+                    target += 3;
+                }
+            }
+        });
+    }
+
+    /**
+     * Decodes a Huffman coded 8-bit RGB thumbnail.
+     *
+     * @param body the whole section
+     * @param width the thumbnail width
+     * @param height the thumbnail height
+     * @return the red, green and blue values of each pixel, row by row
+     * @throws MediaException.Malformed if the table, the row offsets or a row are corrupt
+     */
+    static byte[] decodeThumbnail(byte[] body, int width, int height) {
+        var entries = 256;
+        var data = 28 + 4 * entries;
+        var offsets = body.length - 4L * height;
+        if (offsets < data) {
+            throw new MediaException.Malformed("X3F thumbnail section too short for " + height + " rows");
+        }
+        var values = new int[entries];
+        var lengths = new int[entries];
+        var codes = new int[entries];
+        for (var index = 0; index < entries; index++) {
+            var entry = ByteArrays.u32(body, 28 + 4 * index, true);
+            values[index] = index;
+            lengths[index] = (int) (entry >>> 27);
+            codes[index] = (int) (entry & 0x07FFFFFF);
+        }
+        var tree = HuffmanTree.of(values, lengths, codes);
+        var rgb = new byte[3 * width * height];
+        var bits = new TreeBits(body, (int) offsets);
+        var sums = new int[3];
+        for (var row = 0; row < height; row++) {
+            var offset = ByteArrays.u32(body, (int) offsets + 4 * row, true);
+            if (offset > offsets - data) {
+                throw new MediaException.Malformed("X3F row offset " + offset + " out of range");
+            }
+            bits.start(data + (int) offset);
+            Arrays.fill(sums, 0);
+            for (var index = 0; index < 3 * width; index++) {
+                var channel = index % 3;
+                sums[channel] += bits.next(tree);
+                rgb[row * width * 3 + index] = (byte) sums[channel];
+            }
+        }
+        return rgb;
+    }
+
+    /**
+     * Reads codes of a {@link HuffmanTree} most significant bit first, supplying zero bits past
+     * the end of the data.
+     */
+    private static final class TreeBits {
+        /**
+         * The data.
+         */
+        private final byte[] data;
+
+        /**
+         * The index after the data.
+         */
+        private final int end;
+
+        /**
+         * The index of the next byte to load.
+         */
+        private int position;
+
+        /**
+         * The buffered bits, in the low {@link #count} bits.
+         */
+        private long buffer;
+
+        /**
+         * The number of buffered bits.
+         */
+        private int count;
+
+        /**
+         * Constructs a reader; {@link #start(int)} positions it.
+         *
+         * @param data the bytes
+         * @param end the index after the last byte
+         */
+        TreeBits(byte[] data, int end) {
+            this.data = data;
+            this.end = end;
+        }
+
+        /**
+         * Positions the reader at a byte, dropping the buffered bits.
+         *
+         * @param start the index of the next byte to read
+         */
+        void start(int start) {
+            position = start;
+            buffer = 0;
+            count = 0;
+        }
+
+        /**
+         * Decodes one code.
+         *
+         * @param tree the codes
+         * @return the code's value
+         * @throws MediaException.Malformed if the code is not in the table
+         */
+        int next(HuffmanTree tree) {
+            while (count <= 56) {
+                buffer = (buffer << 8) | (position < end ? data[position] & 0xFF : 0);
+                position++;
+                count += 8;
+            }
+            var entry = tree.lookup[(int) (buffer >>> (count - LOOKUP_BITS)) & ((1 << LOOKUP_BITS) - 1)];
+            if ((entry & FUSED) != 0) {
+                count -= entry & 0x1F;
+                return entry >> 8;
+            }
+            if (entry == 0) {
+                throw new MediaException.Malformed("X3F code not in its table");
+            }
+            count -= LOOKUP_BITS;
+            var node = entry >>> 8;
+            while (true) {
+                if (count == 0) {
+                    buffer = (buffer << 8) | (position < end ? data[position] & 0xFF : 0);
+                    position++;
+                    count = 8;
+                }
+                count--;
+                node = tree.children[2 * node + (int) ((buffer >>> count) & 1)];
+                if (node == 0) {
+                    throw new MediaException.Malformed("X3F code not in its table");
+                }
+                if (node < 0) {
+                    return tree.leaves[-node - 1];
+                }
+            }
+        }
     }
 
     /**
@@ -593,7 +842,7 @@ final class X3fDecoder {
          */
         private int node() {
             if (2 * nodes + 2 > children.length) {
-                children = java.util.Arrays.copyOf(children, children.length * 2);
+                children = Arrays.copyOf(children, children.length * 2);
             }
             return nodes++;
         }

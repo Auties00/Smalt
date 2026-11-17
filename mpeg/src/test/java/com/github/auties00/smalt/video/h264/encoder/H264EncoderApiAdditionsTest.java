@@ -94,6 +94,33 @@ class H264EncoderApiAdditionsTest {
     }
 
     @Test
+    @DisplayName("a 4:4:0 picture codes as its 4:2:0 reduction by ImageOps")
+    void yuv440Input() {
+        try (var direct = new H264Encoder(34, 30); var reduced = new H264Encoder(34, 30)) {
+            var first = new ArrayList<Packet>();
+            var second = new ArrayList<Packet>();
+            for (var i = 0; i < 3; i++) {
+                var source = EncoderHarness.synthetic(34, 30, i, 5, 1.0);
+                var full = com.github.auties00.smalt.image.ops.ImageOps.toYuv(source,
+                        com.github.auties00.smalt.image.ChromaFormat.YUV444, source.color());
+                var picture = com.github.auties00.smalt.image.ops.ImageOps.toYuv(full,
+                        com.github.auties00.smalt.image.ChromaFormat.YUV440, source.color());
+                assertEquals(com.github.auties00.smalt.image.ChromaFormat.YUV440, picture.chromaFormat());
+                var halved = com.github.auties00.smalt.image.ops.ImageOps.toYuv(picture,
+                        com.github.auties00.smalt.image.ChromaFormat.YUV420, source.color());
+                direct.encode(new VideoFrame(picture, i * 3000L, 3000, false), first::add);
+                reduced.encode(new VideoFrame(halved, i * 3000L, 3000, false), second::add);
+            }
+            direct.flush(first::add);
+            reduced.flush(second::add);
+            assertEquals(second.size(), first.size());
+            for (var i = 0; i < first.size(); i++) {
+                assertArrayEquals(second.get(i).data(), first.get(i).data(), "packet " + i);
+            }
+        }
+    }
+
+    @Test
     @DisplayName("H264Encoder(width, height) rejects sizes outside 1 to 16384")
     void defaultConstructorRejectsSize() {
         assertThrows(IllegalArgumentException.class, () -> new H264Encoder(0, 32));

@@ -1,0 +1,39 @@
+# audio decode dump of ts/h264-ac3.m2ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration 2016000
+seekable true
+track 4352 AC3 rate=48000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=3f5e47bd
+1 frames=4096 crc16=05061c9f
+2 frames=4096 crc16=93b2c5bd
+3 frames=4096 crc16=caa74370
+4 frames=4096 crc16=93aa87b3
+5 frames=4096 crc16=fe3cdb0e
+6 frames=4096 crc16=ae97a65a
+7 frames=4096 crc16=ad84102d
+8 frames=4096 crc16=b71023d5
+9 frames=4096 crc16=615648de
+10 frames=4096 crc16=dc80fba5
+11 frames=4096 crc16=61ca59bf
+12 frames=4096 crc16=f4ffa2d7
+13 frames=4096 crc16=191f2267
+14 frames=4096 crc16=c4e9b2b0
+15 frames=4096 crc16=a93f84ea
+16 frames=4096 crc16=907d874d
+17 frames=4096 crc16=a28a2a2a
+18 frames=4096 crc16=07745ebb
+19 frames=4096 crc16=79b8e080
+20 frames=4096 crc16=d523d661
+21 frames=4096 crc16=5714b6fb
+22 frames=4096 crc16=332a1961
+23 frames=2560 crc16=d3ada561
+seek 0: @sample 0
+seek 672000: @sample 32256
+seek 1344000: @sample 64512
+seek 2016000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 4352 AC3 rate=48000 layout=[FRONT_CENTER]

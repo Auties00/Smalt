@@ -208,7 +208,9 @@ final class VectorEncDsp extends EncDsp {
                     kept.compare(VectorOperators.NE, INTS_8.cast(zero))));
         }
         if (INTS_8.cast(big).reduceLanes(VectorOperators.OR) >= HUGE_MAGNITUDE) {
-            return scalar.quantizeDz(coeff, n, iscan, qcoeff, zbinDc, zbinAc, roundDc, roundAc, quantDc, quantAc,
+            // the static kernel, so that no reference to this kernel is live across the loop's safepoint poll
+            // (see the JVM flags section of the README)
+            return EncDsp.SCALAR.quantizeDz(coeff, n, iscan, qcoeff, zbinDc, zbinAc, roundDc, roundAc, quantDc, quantAc,
                     shiftDc, shiftAc, limit);
         }
         return INTS_8.cast(eobs).reduceLanes(VectorOperators.MAX);
@@ -516,11 +518,11 @@ final class VectorEncDsp extends EncDsp {
         if (iscan == null || (n & 7) != 0) {
             return scalar.quantizeLp(coeff, coeffOff, n, roundFp, quantFp, dequant, scan, iscan, qcoeff, dqcoeff);
         }
-        var zero = IntVector.zero(I256);
+        var zero = INTS_8.cast(IntVector.zero(I256));
         var max16 = INTS_8.cast(INT16_MAX_8);
-        var roundAc = IntVector.broadcast(I256, roundFp[1]);
-        var quantAc = IntVector.broadcast(I256, quantFp[1]);
-        var dequantAc = IntVector.broadcast(I256, dequant[1]);
+        var roundAc = INTS_8.cast(IntVector.broadcast(I256, roundFp[1]));
+        var quantAc = INTS_8.cast(IntVector.broadcast(I256, quantFp[1]));
+        var dequantAc = INTS_8.cast(IntVector.broadcast(I256, dequant[1]));
         var round0 = roundAc.blend(IntVector.broadcast(I256, roundFp[0]), DC_LANE);
         var quant0 = quantAc.blend(IntVector.broadcast(I256, quantFp[0]), DC_LANE);
         var dequant0 = dequantAc.blend(IntVector.broadcast(I256, dequant[0]), DC_LANE);

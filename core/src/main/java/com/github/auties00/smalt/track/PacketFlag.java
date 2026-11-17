@@ -22,7 +22,8 @@ public enum PacketFlag {
 
     /**
      * The packet must be decoded, because later packets depend on it, but its output must not be
-     * presented (the Matroska invisible flag, the pre-roll before a seek target).
+     * presented (the Matroska invisible flag, the pre-roll before a seek target, the decode-only
+     * pre-roll of an MP4 edit list segment).
      */
     DISCARD,
 

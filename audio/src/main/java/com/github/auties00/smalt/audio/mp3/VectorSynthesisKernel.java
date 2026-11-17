@@ -1,6 +1,7 @@
 /* Ports minimp3 (minimp3.h). By lieff; CC0 1.0. Modified for Smalt. */
 package com.github.auties00.smalt.audio.mp3;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -40,11 +41,6 @@ final class VectorSynthesisKernel implements SynthesisKernel {
 
 
     /**
-     * Whether the platform's preferred vectors are wide enough for the eight-lane window path.
-     */
-    private static final boolean PREFER_WIDE = FloatVector.SPECIES_PREFERRED.vectorBitSize() >= 256;
-
-    /**
      * Holds, for each of the seven output-position pairs {@code (13 - 2p, 14 - 2p)} and each of
      * the eight window steps, the coefficient {@code w0} broadcast over the four lanes of each
      * position followed by {@code w1} likewise: 16 floats per step.
@@ -52,12 +48,17 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     private static final float[] PAIR_WEIGHTS = pairWeights();
 
     /**
-     * Whether this instance runs the eight-lane window path.
+     * Whether this instance runs the eight-lane window path, which it does only where
+     * {@link Simd#WIDE} holds.
      */
     private final boolean wide;
 
     /**
      * The scalar kernel that handles the two leftover time slots of each granule.
+     *
+     * <p>It holds scratch arrays, so it cannot be shared; the methods run it before their vector
+     * loops, so that no reference to this kernel is live across a loop's safepoint poll (see the
+     * JVM flags section of the README).
      */
     private final ScalarSynthesisKernel tail = new ScalarSynthesisKernel();
 
@@ -67,8 +68,8 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     private final float[] rows = new float[32 * 4];
 
     /**
-     * The window results of one or two output positions: the {@code a} lanes then the {@code b}
-     * lanes.
+     * The window results of one or two output positions, before the output scaling: the {@code a}
+     * lanes then the {@code b} lanes.
      */
     private final float[] results = new float[16];
 
@@ -93,7 +94,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
      * @return the kernel
      */
     static SynthesisKernel create() {
-        return new VectorSynthesisKernel(PREFER_WIDE);
+        return new VectorSynthesisKernel(true);
     }
 
     /**
@@ -147,8 +148,11 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     public void dct(float[] grbuf, int base, int slots) {
         var sec = Mp3Tables.DCT_SECANTS;
         var t = rows;
-        var k = 0;
-        for (; k + 4 <= slots; k += 4) {
+        var vectorSlots = slots & ~3;
+        if (vectorSlots < slots) {
+            tail.dct(grbuf, base + vectorSlots, slots - vectorSlots);
+        }
+        for (var k = 0; k < vectorSlots; k += 4) {
             var y = base + k;
             for (var i = 0; i < 8; i++) {
                 var x0 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + i * 18));
@@ -219,18 +223,18 @@ final class VectorSynthesisKernel implements SynthesisKernel {
             FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (8 + 7) * 4)).intoArray(grbuf, y + 36);
             FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (24 + 7) * 4)).intoArray(grbuf, y + 54);
         }
-        if (k < slots) {
-            tail.dct(grbuf, base + k, slots - k);
-        }
     }
 
     @Override
     public void imdct36(float[] grbuf, int base, float[] overlap, int ovl, float[] window, int bands) {
         var tw = Mp3Tables.TWIDDLE_36;
-        var done = 0;
-        if (wide) {
+        var vectorBands = Simd.WIDE && wide ? bands & ~7 : 0;
+        if (vectorBands < bands) {
+            tail.imdct36(grbuf, base + 18 * vectorBands, overlap, ovl + 9 * vectorBands, window, bands - vectorBands);
+        }
+        if (vectorBands > 0) {
             var lanes = laneRows;
-            for (; done + 8 <= bands; done += 8, base += 8 * 18, ovl += 8 * 9) {
+            for (var done = 0; done < vectorBands; done += 8, base += 8 * 18, ovl += 8 * 9) {
                 for (var l = 0; l < 8; l++) {
                     var src = base + 18 * l;
                     for (var k = 0; k < 18; k++) {
@@ -256,9 +260,6 @@ final class VectorSynthesisKernel implements SynthesisKernel {
                     }
                 }
             }
-        }
-        if (done < bands) {
-            tail.imdct36(grbuf, base, overlap, ovl, window, bands - done);
         }
     }
 
@@ -594,7 +595,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
         ScalarSynthesisKernel.pair(outRight, outOffset + 32, lins, linsOffset + 4 * 15 + 64 + 1);
         ScalarSynthesisKernel.pair(outLeft, outOffset, lins, linsOffset + 4 * 15);
         ScalarSynthesisKernel.pair(outLeft, outOffset + 32, lins, linsOffset + 4 * 15 + 64);
-        if (wide) {
+        if (Simd.WIDE && wide) {
             windowWide(grbuf, left, right, outLeft, outRight, outOffset, lins, z);
             return;
         }
@@ -650,7 +651,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     /**
      * Computes the 32 windowed sums of one 128-bit column group of time slot position {@code zi}:
      * the four even-indexed outputs into {@code r[0..3]} and the four odd-indexed ones into
-     * {@code r[4..7]}, scaled to the output range.
+     * {@code r[4..7]}, unscaled.
      *
      * @implNote This implementation unrolls the eight window taps into straight-line code, so no
      * vector crosses a loop back edge or a control-flow merge (the alternating sign of the odd taps
@@ -667,64 +668,65 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     private static void accumulateNarrow(float[] lins, int zi, float[] w, int wi, float[] r) {
         var w0 = FloatVector.broadcast(SPECIES, w[wi]);
         var w1 = FloatVector.broadcast(SPECIES, w[wi + 1]);
-        var vz = FloatVector.fromArray(SPECIES, lins, zi);
-        var vy = FloatVector.fromArray(SPECIES, lins, zi - 15 * 64);
+        var vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi));
+        var vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 15 * 64));
         var b = vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0));
         var a = vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 2]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 3]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 64);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 896);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 64));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 896));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 4]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 5]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 128);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 832);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 128));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 832));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 6]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 7]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 192);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 768);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 192));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 768));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 8]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 9]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 256);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 704);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 256));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 704));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 10]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 11]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 320);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 640);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 320));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 640));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 12]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 13]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 384);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 576);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 384));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 576));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 14]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 15]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 448);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 512);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 448));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 512));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
-        var scale = FloatVector.broadcast(SPECIES, ScalarSynthesisKernel.OUTPUT_SCALE);
-        a.lanewise(VectorOperators.MUL, scale).intoArray(r, 0);
-        b.lanewise(VectorOperators.MUL, scale).intoArray(r, 4);
+        a.intoArray(r, 0);
+        b.intoArray(r, 4);
     }
 
     /**
      * Computes the windowed sums of two positions at once with 256-bit vectors, the pair weights
      * starting at {@code wb}: the even-indexed outputs into {@code r[0..7]} and the odd-indexed ones
-     * into {@code r[8..15]}, scaled to the output range.
+     * into {@code r[8..15]}, unscaled.
      *
      * @implNote This implementation unrolls the taps for the reasons given on
-     * {@link #accumulateNarrow(float[], int, float[], int, float[])}.
+     * {@link #accumulateNarrow(float[], int, float[], int, float[])}. The output scaling is left to
+     * {@link #scatter}: as the last vector operation of this method, a multiplication by the
+     * broadcast scale was intermittently left on the allocating fallback in mixed JVMs.
      *
      * @param lins the filterbank history
      * @param zi the index in {@code lins} of the first sample of the lower position
@@ -735,55 +737,54 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     private static void accumulateWide(float[] lins, int zi, float[] pw, int wb, float[] r) {
         var w0 = FloatVector.fromArray(WIDE, pw, wb);
         var w1 = FloatVector.fromArray(WIDE, pw, wb + 8);
-        var vz = FloatVector.fromArray(WIDE, lins, zi);
-        var vy = FloatVector.fromArray(WIDE, lins, zi - 15 * 64);
+        var vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi));
+        var vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 15 * 64));
         var b = vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0));
         var a = vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 16);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 24);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 64);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 896);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 64));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 896));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 32);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 40);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 128);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 832);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 128));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 832));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 48);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 56);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 192);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 768);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 192));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 768));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 64);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 72);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 256);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 704);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 256));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 704));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 80);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 88);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 320);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 640);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 320));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 640));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 96);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 104);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 384);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 576);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 384));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 576));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 112);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 120);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 448);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 512);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 448));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 512));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
-        var scale = FloatVector.broadcast(WIDE, ScalarSynthesisKernel.OUTPUT_SCALE);
-        a.lanewise(VectorOperators.MUL, scale).intoArray(r, 0);
-        b.lanewise(VectorOperators.MUL, scale).intoArray(r, 8);
+        a.intoArray(r, 0);
+        b.intoArray(r, 8);
     }
 
     /**
@@ -809,8 +810,9 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     }
 
     /**
-     * Writes the eight output samples of one output position, right channel first so that the
-     * left value wins when both planes are the same array.
+     * Writes the eight output samples of one output position, scaled to the output range as
+     * {@link ScalarSynthesisKernel} scales them, right channel first so that the left value wins
+     * when both planes are the same array.
      *
      * @param r the results
      * @param a the index of the position's four {@code a} lanes
@@ -821,13 +823,14 @@ final class VectorSynthesisKernel implements SynthesisKernel {
      * @param outOffset the index of the first output sample
      */
     private static void scatter(float[] r, int a, int b, int i, float[] outLeft, float[] outRight, int outOffset) {
-        outRight[outOffset + 15 - i] = r[a + 1];
-        outRight[outOffset + 17 + i] = r[b + 1];
-        outLeft[outOffset + 15 - i] = r[a];
-        outLeft[outOffset + 17 + i] = r[b];
-        outRight[outOffset + 47 - i] = r[a + 3];
-        outRight[outOffset + 49 + i] = r[b + 3];
-        outLeft[outOffset + 47 - i] = r[a + 2];
-        outLeft[outOffset + 49 + i] = r[b + 2];
+        var scale = ScalarSynthesisKernel.OUTPUT_SCALE;
+        outRight[outOffset + 15 - i] = r[a + 1] * scale;
+        outRight[outOffset + 17 + i] = r[b + 1] * scale;
+        outLeft[outOffset + 15 - i] = r[a] * scale;
+        outLeft[outOffset + 17 + i] = r[b] * scale;
+        outRight[outOffset + 47 - i] = r[a + 3] * scale;
+        outRight[outOffset + 49 + i] = r[b + 3] * scale;
+        outLeft[outOffset + 47 - i] = r[a + 2] * scale;
+        outLeft[outOffset + 49 + i] = r[b + 2] * scale;
     }
 }
