@@ -128,9 +128,10 @@ class HttpSourceFuzzTest {
                 if (name.isEmpty()) {
                     continue;
                 }
-                // a Retry-After the source waits for would stall the fuzzer, so the short delays become zero
-                if (name.equalsIgnoreCase("Retry-After") && value.matches("[0-9]{1,18}")
-                        && Long.parseLong(value) <= 60) {
+                // a Retry-After the source waits for would stall the fuzzer, so the short delays become zero; the
+                // value is compared as HttpHeaders keeps it, without the control characters trim() removes
+                if (name.equalsIgnoreCase("Retry-After") && value.trim().matches("[0-9]{1,18}")
+                        && Long.parseLong(value.trim()) <= 60) {
                     value = "0";
                 }
                 headers.computeIfAbsent(name, ignored -> new ArrayList<>()).add(value);
