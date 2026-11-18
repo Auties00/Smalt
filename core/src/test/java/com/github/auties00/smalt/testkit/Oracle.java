@@ -508,7 +508,14 @@ public final class Oracle {
         return result.stdout();
     }
 
-    /** The most times an ffmpeg or ffprobe run that crashed is made. */
+    /** A tool run that outlived its timeout; it was killed. */
+    private static final class TimedOutException extends IllegalStateException {
+        TimedOutException(String message) {
+            super(message);
+        }
+    }
+
+    /** The most times an ffmpeg or ffprobe run that crashed or hung is made. */
     private static final int CRASH_ATTEMPTS = 3;
 
     /**
@@ -517,15 +524,25 @@ public final class Oracle {
      *
      * <p>ffmpeg 7.1's libaom wrapper crashes now and then in its muxing thread on macOS (a released buffer is
      * released again, in about one run in fifteen of a realtime AV1 fixture under a test suite's load, and in
-     * Homebrew's build too); the run is otherwise deterministic, so a repeat yields the fixture. A crash that
-     * repeats, or one of another tool, is returned as it is.
+     * Homebrew's build too); the run is otherwise deterministic, so a repeat yields the fixture. A run that hangs
+     * past its timeout is repeated the same way: a five-frame libx265 encode on a loaded Linux runner once ran for
+     * the full 300 seconds. A crash or hang that repeats, or one of another tool, is returned or thrown as it is.
      */
     private static Result execute(Path executable, Duration timeout, byte[] stdin, List<String> arguments,
                                   java.io.OutputStream stdout) {
         var name = executable.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
         var repeatable = stdout == null && (name.startsWith("ffmpeg") || name.startsWith("ffprobe"));
         for (var attempt = 1; ; attempt++) {
-            var result = executeOnce(executable, timeout, stdin, arguments, stdout);
+            Result result;
+            try {
+                result = executeOnce(executable, timeout, stdin, arguments, stdout);
+            } catch (TimedOutException exception) {
+                if (!repeatable || attempt == CRASH_ATTEMPTS) {
+                    throw exception;
+                }
+                System.err.println(exception.getMessage() + ", running it again");
+                continue;
+            }
             if (!repeatable || !crashed(result.exitCode()) || attempt == CRASH_ATTEMPTS) {
                 return result;
             }
@@ -570,7 +587,7 @@ public final class Oracle {
                 process.getOutputStream().close();
             }
             if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
-                throw new IllegalStateException(executable.getFileName() + " timed out: " + command);
+                throw new TimedOutException(executable.getFileName() + " timed out: " + command);
             }
             out.join();
             err.join();

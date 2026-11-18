@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   batch:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 330
     steps:
       - name: Build the fuzz targets
@@ -41,7 +41,7 @@ jobs:
 
   prune:
     needs: batch
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Build the fuzz targets

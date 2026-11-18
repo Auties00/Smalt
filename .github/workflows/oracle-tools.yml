@@ -20,7 +20,7 @@ on:
       os:
         description: JSON list of runners
         type: string
-        default: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+        default: '["ubuntu-24.04","ubuntu-24.04-arm","windows-latest","macos-latest"]'
       tools:
         description: Install the oracle tools on the runners and make sure that the cache holds the clips; false leaves both to the caller's jobs (package.yml's test jobs install their own)
         type: boolean
@@ -41,7 +41,7 @@ on:
     inputs:
       os:
         description: JSON list of runners
-        default: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+        default: '["ubuntu-24.04","ubuntu-24.04-arm","windows-latest","macos-latest"]'
 
 permissions:
   contents: read
@@ -76,9 +76,9 @@ jobs:
           retention-days: 14
 
   clips:
-    name: clips (ubuntu-latest)
+    name: clips (ubuntu-24.04)
     if: inputs.tools != false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4

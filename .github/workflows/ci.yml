@@ -42,7 +42,7 @@ jobs:
     # may be evicted between the oracle jobs and the tests; the artifacts of this run stand in for them.
     uses: ./.github/workflows/oracle-tools.yml
     with:
-      os: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+      os: '["ubuntu-24.04","ubuntu-24.04-arm","windows-latest","macos-latest"]'
       clips-artifact: true
       data-artifact: true
 
@@ -59,12 +59,12 @@ jobs:
         include:
           # Vector API kernels on x86 (AVX2/AVX-512) and on arm64 (NEON, macOS); each module's kernel JIT guard
           # (*KernelGuardTest) runs with its suite.
-          - { os: ubuntu-latest, simd: vector, modules: '', tests: '', set: smoke }
+          - { os: ubuntu-24.04, simd: vector, modules: '', tests: '', set: smoke }
           - { os: windows-latest, simd: vector, modules: '', tests: '', set: smoke }
           - { os: macos-latest, simd: vector, modules: '', tests: '', set: smoke }
           # Scalar twins only. The it module is left out: its JIT tests (the guard's self-test, the stress test)
           # need the Vector API.
-          - { os: ubuntu-latest, simd: scalar, modules: '-pl !it', tests: '', set: smoke }
+          - { os: ubuntu-24.04, simd: scalar, modules: '-pl !it', tests: '', set: smoke }
           # NEON on Linux, cheaply: the kernel suites that compare every Vector API kernel with its scalar twin
           # (the whole suite runs on Linux arm64 nightly).
           - { os: ubuntu-24.04-arm, simd: vector, modules: '-pl !it', set: kernels,
@@ -174,7 +174,7 @@ jobs:
     name: skips run elsewhere
     needs: test
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -235,7 +235,7 @@ jobs:
     name: hostile inputs (256 MiB heap)
     needs: oracles
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -271,7 +271,7 @@ jobs:
 
   javadoc:
     name: javadoc
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -303,7 +303,7 @@ jobs:
 
   lint:
     name: comment lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -342,7 +342,7 @@ jobs:
 
   codegen:
     name: generated code
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -357,7 +357,7 @@ jobs:
 
   notices:
     name: third-party notices
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -380,7 +380,7 @@ jobs:
   api-compat:
     name: API compatibility
     if: vars.SMALT_API_BASELINE != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

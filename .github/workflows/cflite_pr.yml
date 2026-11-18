@@ -18,7 +18,7 @@ permissions: read-all
 
 jobs:
   pr:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}

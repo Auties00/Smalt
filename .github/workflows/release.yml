@@ -35,7 +35,7 @@ env:
 jobs:
   verify:
     name: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
       SMALT_CONFORMANCE_DOWNLOAD: 'false'
@@ -67,7 +67,7 @@ jobs:
   publish:
     name: publish
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     # Add required reviewers to this environment to gate every upload behind an approval.
     environment: release

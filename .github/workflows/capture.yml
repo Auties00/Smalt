@@ -36,7 +36,7 @@ on:
     inputs:
       os:
         description: JSON list of runners
-        default: '["ubuntu-latest", "windows-latest", "macos-latest"]'
+        default: '["ubuntu-24.04", "windows-latest", "macos-latest"]'
       tests:
         description: Optional surefire -Dtest filter of the capture tests
         default: ''
@@ -65,7 +65,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.os || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
+        os: ${{ fromJSON(inputs.os || '["ubuntu-24.04", "windows-latest", "macos-latest"]') }}
         attempt: ${{ fromJSON(inputs.attempts || '[1]') }}
     env:
       # the suffix of the artifact names of the attempts after the first

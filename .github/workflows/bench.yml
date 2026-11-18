@@ -83,7 +83,7 @@ jobs:
   alloc:
     name: allocation per operation
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'ab')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -153,7 +153,7 @@ jobs:
   ab:
     name: A/B timing
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'alloc')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 340
     permissions:
       # the results on the gh-pages branch

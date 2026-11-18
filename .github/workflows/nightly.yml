@@ -35,7 +35,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.jobs != 'capture'
     uses: ./.github/workflows/oracle-tools.yml
     with:
-      os: '["ubuntu-latest","ubuntu-24.04-arm"]'
+      os: '["ubuntu-24.04","ubuntu-24.04-arm"]'
       clips-artifact: true
       data-artifact: true
 
@@ -48,7 +48,7 @@ jobs:
     name: full conformance tier
     needs: oracles
     if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'conformance') }}
-    runs-on: ${{ vars.SMALT_NIGHTLY_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.SMALT_NIGHTLY_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 330
     env:
       SMALT_CONFORMANCE_DOWNLOAD: 'false'
@@ -200,7 +200,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -267,7 +267,7 @@ jobs:
     name: bit-exact suites (${{ matrix.tier }})
     needs: oracles
     if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'jit-tiers') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
       fail-fast: false
@@ -327,7 +327,7 @@ jobs:
     name: coverage map
     needs: oracles
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
       SMALT_CONFORMANCE_DOWNLOAD: 'false'
@@ -394,7 +394,7 @@ jobs:
   # The findings are uploaded; tools/fuzz/README.md describes how to reproduce and save one.
   fuzz-small-heap:
     name: fuzz shard (256 MiB heap)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
@@ -431,7 +431,7 @@ jobs:
     name: JDK early access
     needs: oracles
     if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'early-access') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     continue-on-error: true
     env:
@@ -474,7 +474,7 @@ jobs:
   argon:
     name: Argon AV1 streams (${{ matrix.shard }})
     if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'argon') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 330
     strategy:
       fail-fast: false
@@ -552,7 +552,7 @@ jobs:
     name: opt-in tests
     needs: oracles
     if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'opt-in') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
       SMALT_CONFORMANCE_DOWNLOAD: 'false'
@@ -781,7 +781,7 @@ jobs:
   # nightly (or when dispatched with jobs=weekly), and the it module (the JIT guard) on Windows and macOS every other
   # night (Linux runs it in the full conformance tier and the arm64 suite).
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.day.outputs.matrix }}
@@ -819,7 +819,7 @@ jobs:
     timeout-minutes: 330
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix || '{"os":["ubuntu-latest"],"module":["core"]}') }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix || '{"os":["ubuntu-24.04"],"module":["core"]}') }}
     env:
       SMALT_CONFORMANCE_DOWNLOAD: 'true'
     steps:
@@ -921,7 +921,7 @@ jobs:
     name: skips run elsewhere
     needs: [full-conformance, arm64, argon, opt-in, opt-in-windows, raw-coverage, capture, weekly-full]
     if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

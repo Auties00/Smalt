@@ -40,12 +40,12 @@ jobs:
   oracles:
     uses: ./.github/workflows/oracle-tools.yml
     with:
-      os: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+      os: '["ubuntu-24.04","ubuntu-24.04-arm","windows-latest","macos-latest"]'
 
   # The smoke tier, one cross-OS entry; an older entry seeds the fetch of the vectors that changed.
   smoke:
     name: smoke vectors
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

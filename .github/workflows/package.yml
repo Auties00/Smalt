@@ -13,9 +13,11 @@ on:
       modules:
         description: Comma-separated modules whose suites run (for example core,image)
         required: true
+      # Linux runners are pinned to ubuntu-24.04 (also in every other workflow): the oracle packages of
+      # tools/testdata/oracles.tsv are the 24.04 archive's, and 26.04 dropped gpac (MP4Box).
       os:
         description: JSON list of runners
-        default: '["ubuntu-latest"]'
+        default: '["ubuntu-24.04"]'
       tests:
         description: Optional surefire -Dtest filter
         default: ''
@@ -55,7 +57,7 @@ env:
 jobs:
   key:
     name: key
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       hash: ${{ steps.hash.outputs.hash }}
@@ -75,13 +77,13 @@ jobs:
   # pin the x86-64 clips); the other runners restore them. When the cache already holds them, as it does once the
   # default branch has run warm-caches.yml, this job only looks the entry up.
   clips:
-    name: clips (ubuntu-latest)
+    name: clips (ubuntu-24.04)
     needs: key
     concurrency:
       group: package-${{ github.ref }}-${{ needs.key.outputs.hash }}-clips
       cancel-in-progress: true
     if: contains(inputs.os, 'windows') || contains(inputs.os, 'macos') || contains(inputs.os, 'arm')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
