@@ -51,8 +51,9 @@ jobs:
     needs: oracles
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
-    # The macOS runners have three cores: the suite takes them about three hours.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 330 || 150 }}
+    # The macOS runners have three cores: the suite takes them about three hours. The Windows suite runs the scalar
+    # kernels (the default there) and takes about two hours and a quarter.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 330 || matrix.os == 'windows-latest' && 210 || 150 }}
     strategy:
       fail-fast: false
       matrix:
