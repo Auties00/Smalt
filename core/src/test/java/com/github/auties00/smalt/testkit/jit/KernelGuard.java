@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.testkit.jit;
 
+import com.github.auties00.smalt.testkit.ChildJvm;
 import org.junit.jupiter.api.DynamicTest;
 
 import java.io.IOException;
@@ -249,8 +250,16 @@ public final class KernelGuard {
                     case "polluted" -> List.of(polluted(true));
                     case "polluted-c2-only" -> List.of(polluted(false));
                     case "avx2" -> List.of(narrow("avx2", "-XX:UseAVX=2"));
-                    case "avx3" -> List.of(narrow("avx3", "-XX:UseAVX=3"));
-                    case "vector-256" -> List.of(narrow("vector-256", "-XX:MaxVectorSize=32"));
+                    case "avx3", "vector-256" -> {
+                        if (System.getProperty("os.name", "").startsWith("Windows")) {
+                            System.err.println("KernelGuard: scenario " + trimmed + " skipped on Windows: it would lift the"
+                                    + " -XX:MaxVectorSize=16 cap the test JVMs run with for JDK-8365196"
+                                    + " (https://bugs.openjdk.org/browse/JDK-8365196)");
+                            yield List.<Scenario>of();
+                        }
+                        yield List.of(trimmed.equals("avx3") ? narrow("avx3", "-XX:UseAVX=3")
+                                : narrow("vector-256", "-XX:MaxVectorSize=32"));
+                    }
                     case "vector-128" -> List.of(narrow("vector-128", "-XX:MaxVectorSize=16"));
                     case "aot" -> List.of(aot());
                     default -> {
@@ -488,12 +497,13 @@ public final class KernelGuard {
                 </configuration>
                 """);
         var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "--add-modules", "jdk.incubator.vector", "-XX:+UseSerialGC", "-Xmx1g", "-Xbatch",
+                "--add-modules", "jdk.incubator.vector", "-Dsmalt.simd=true", "-XX:+UseSerialGC", "-Xmx1g", "-Xbatch",
                 "-XX:+UnlockDiagnosticVMOptions", "-XX:CompilerDirectivesFile=" + directives,
                 "-XX:+PrintCompilation", "-XX:+DisplayVMOutputToStderr",
                 "-XX:StartFlightRecording=settings=" + settingsFile,
                 "-javaagent:" + agentJar() + "=" + agentConfig,
                 "-Dsmalt.threads=1", "-Djunit.jupiter.execution.parallel.enabled=false"));
+        command.addAll(ChildJvm.cpuArgs());
         command.addAll(scenario.flags());
         command.addAll(settings.extraFlags());
         var problems = new ArrayList<String>();
@@ -1109,8 +1119,10 @@ public final class KernelGuard {
                 return flags;
             }
             try {
-                var process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                        "-XX:+PrintFlagsFinal", "-version").redirectErrorStream(true).start();
+                var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString()));
+                command.addAll(ChildJvm.cpuArgs());
+                command.addAll(List.of("-XX:+PrintFlagsFinal", "-version"));
+                var process = new ProcessBuilder(command).redirectErrorStream(true).start();
                 var output = new String(process.getInputStream().readAllBytes());
                 process.waitFor();
                 var parsed = new HashMap<String, String>();

@@ -41,8 +41,8 @@ JNI, no per-platform binaries to ship, sign or keep patched: the same jar runs e
 - **Bit-exact where it matters:** the decoders reproduce the reference decoders' output byte for byte on the
   official conformance suites (JVT for H.264, libvpx for VP9, libaom for AV1), and Opus matches libopus
   packet for packet.
-- **Fast:** hot kernels use the [Vector API][vector-api] and run within a small factor of native C and
-  assembly, with scalar twins wherever SIMD is unavailable. Work is spread over one bounded thread pool.
+- **Fast:** hot kernels use the [Vector API][vector-api] (an opt-in on Windows, see [JVM flags](#jvm-flags))
+  and run within a small factor of native C and assembly, with scalar twins wherever SIMD is unavailable. Work is spread over one bounded thread pool.
 - **Safe on hostile input:** every decoder and demuxer runs mutation and truncation suites; malformed data
   raises `MediaException`, never a hang or an unbounded allocation, within the limits you set with
   `MediaLimits`.
@@ -228,11 +228,16 @@ fallback, many times slower, so the tests alone do not show it; three checks do:
   on what keeps C2 from compiling a Vector API operation (calls on vectors of unknown class, vectors in
   and out of methods, operators that are not constants, oversized kernels, wide species outside
   `Simd.WIDE`) and on a kernel reading its own reference after a vector loop (the exposure to the
-  Windows AVX-512 defect described under [JVM flags](#jvm-flags)), printing `File.java:line` and a rule
+  Windows defect described under [JVM flags](#jvm-flags)), printing `File.java:line` and a rule
   id; `internal.simd.KernelLintSuppress` with a reason, or a row of the shrink-only
   `tools/lint/kernel-baseline.tsv`, accepts a finding. forbidden-apis bans the Vector API's convenience
   methods, `jdk.incubator.vector` outside the `Vector*` classes and the transcendental `java.lang.Math`
   methods, whose results may depend on the CPU (`StrictMath` does not).
+- On Windows x64 every test JVM, and every child JVM a test starts (through the test kit's `ChildJvm`), runs
+  with `-XX:UseAVX=2 -XX:MaxVectorSize=16` (the root pom's OS-activated `windows-x64` profile), the mitigation
+  for [JDK-8365196](https://bugs.openjdk.org/browse/JDK-8365196) described under [JVM flags](#jvm-flags):
+  Windows CI tests the vector kernels at 128 bits, and the guard's `avx3` and `vector-256` scenarios do not run
+  there. Linux and macOS CI keep covering 256-bit AVX2, AVX-512 and NEON.
 - On Windows CI every test JVM installs the test kit's `NativeCrashDumps` (through
   `SMALT_TEST_NATIVE_CRASH_DUMPS`): an unhandled exception filter that writes a minidump of a crash on a
   thread the JVM did not create, which the JVM reports nowhere, and a vectored handler that records every
@@ -2688,16 +2693,24 @@ implementation 'com.github.auties00:smalt-image'
 ### JVM flags
 
 - `--add-modules jdk.incubator.vector` turns on the SIMD kernels. It is optional: without it every kernel
-  runs its scalar twin, correct but several times slower for video. `MediaRuntime.isVectorized()` tells
-  you which one you got.
+  runs its scalar twin, correct but several times slower for video. `-Dsmalt.simd=false` turns them off.
+  On x86 the SIMD kernels also need AVX2 (and a JVM not started with `-XX:UseAVX=0` or `1`): below it
+  the JIT compiler cannot compile all their operations, so Smalt runs the scalar twins. Smalt reads the AVX
+  level through the `jdk.management` module, which the class path resolves by default; a module-path
+  application that does not resolve it gets the SIMD kernels on x86 only when they are 256 bits wide.
+  `MediaRuntime.isVectorized()` tells you which one you got.
+- On Windows the SIMD kernels are off by default; `-Dsmalt.simd=true` together with
+  `--add-modules jdk.incubator.vector` opts in. On affected Windows hosts (seen on Windows Server 2025),
+  JIT-compiled code that keeps vector state live across a hardware trap can lose it, which crashes the JVM
+  or corrupts a vector kernel's result ([JDK-8365196](https://bugs.openjdk.org/browse/JDK-8365196)). On such a
+  host:
+  - `-XX:UseAVX=0` is the only fully safe setting. It also turns off FMA, so `Math.fma`, which several audio
+    kernels use (true peak, resampling filters), runs in software, many times slower. Smalt then runs scalar.
+  - `-XX:UseAVX=2 -XX:MaxVectorSize=16` is the practical mitigation: compiled code keeps its vectors in the
+    lower 128 bits, so no upper register state is live across a trap, but it is not proven safe for the JDK's
+    own intrinsics. The SIMD kernels then run at 128 bits.
 - `--enable-native-access=com.github.auties00.smalt.capture` (or `ALL-UNNAMED` on the class path) is
   needed only by `smalt-capture`.
-- On Windows x64 with AVX-512, HotSpot 26 can lose a value C2 keeps in one of the registers `xmm16` to
-  `xmm31` across a safepoint, which crashes the JVM, or corrupts the result, in a vector kernel (a JDK
-  defect, seen on GitHub's Windows runners; Linux and AVX2 machines are not affected). Smalt's kernels keep
-  no reference to themselves live across a vector loop, which removes the instances seen so far, but
-  the arrays a loop works on stay exposed; `-XX:UseAVX=2` avoids it fully, at the cost of the 512-bit
-  instructions.
 - `-XX:AOTCache=app.aot` starts with an ahead-of-time cache recorded from a training run; see
   [Start fast with an AOT cache](#start-fast-with-an-aot-cache).
 
@@ -3714,7 +3727,9 @@ java --add-modules jdk.incubator.vector -XX:AOTCache=app.aot -cp "app.jar:lib/*"
 
 `-Xbatch` makes the training compile in the foreground, so two trainings record the same compilations;
 `JDK_AOT_VM_OPTIONS` turns background compilation back on for the cache-creation phase, whose code is worse
-with `-Xbatch`. A training run takes several minutes. A cache belongs to one JDK build, one OS and CPU, the
+with `-Xbatch`. The training runs the kernels its JVM selects, so on Windows an application that opts in to the
+SIMD kernels adds `-Dsmalt.simd=true` to both commands. A training run takes
+several minutes. A cache belongs to one JDK build, one OS and CPU, the
 exact jars and the same `--add-modules`, `--enable-native-access` and `-XX:StartFlightRecording` options:
 record it again after any of them changes, as the last step of your build. A JVM that rejects a cache
 says so on standard error and runs without it.

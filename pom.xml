@@ -81,7 +81,15 @@
             and a core dump or, on Windows, a minidump in the module directory. CI uploads both.
         -->
         <smalt.test.crashArgs>-XX:ErrorFile=target/hs_err_pid%p.log -XX:+CreateCoredumpOnCrash</smalt.test.crashArgs>
-        <smalt.test.argLine>${smalt.test.agent} --add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -XX:+EnableDynamicAgentLoading ${smalt.test.crashArgs} -Dsmalt.simd=${smalt.test.simd} ${smalt.test.heap} ${smalt.test.jvmArgs}</smalt.test.argLine>
+        <!--
+            CPU-feature options of every test JVM, passed on to the child JVMs the tests start through the test kit's
+            ChildJvm (the smalt.test.cpuArgs system property): empty, the host's full features, except under the
+            windows-x64 profile. smalt.test.cpuArgList holds the same options separated by commas, for the system
+            property.
+        -->
+        <smalt.test.cpuArgs></smalt.test.cpuArgs>
+        <smalt.test.cpuArgList></smalt.test.cpuArgList>
+        <smalt.test.argLine>${smalt.test.agent} --add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -XX:+EnableDynamicAgentLoading ${smalt.test.crashArgs} -Dsmalt.simd=${smalt.test.simd} ${smalt.test.cpuArgs} -Dsmalt.test.cpuArgs=${smalt.test.cpuArgList} ${smalt.test.heap} ${smalt.test.jvmArgs}</smalt.test.argLine>
         <!--
             The forbidden-apis check of the Vector API bans (tools/lint/forbidden-vector.txt) runs in verify only when
             the Maven JVM has the incubator module, which this repository's .mvn/jvm.config adds and .mvn/maven.config
@@ -406,6 +414,30 @@ jdk.incubator.vector.**
     </build>
 
     <profiles>
+        <!--
+            Windows x64: the test JVMs, and the child JVMs they start, run with -XX:UseAVX=2 -XX:MaxVectorSize=16. On
+            affected Windows hosts (seen on Windows Server 2025, the GitHub runners) JIT-compiled code can lose the
+            vector state it keeps live across a hardware trap, AVX2 and AVX-512 alike (JDK-8365196). Upper ymm/zmm
+            state matters only when live across a trap: C2 code capped at 16-byte vectors uses VEX-encoded xmm
+            only, which leaves the upper halves clean, and the JDK's intrinsic stubs (arraycopy, strings) are leaf
+            code without safepoint polls. -XX:UseAVX=0, the proven-safe setting, also turns FMA off, and Math.fma in
+            software makes the audio suites too slow for the job timeout. The vector kernels run at 128 bits here
+            (Simd.WIDE false), so the 256-bit ones run scalar.
+        -->
+        <!-- TODO: remove this profile once JDK-8365196 (https://bugs.openjdk.org/browse/JDK-8365196) is fixed and the fixed JDK is the minimum -->
+        <profile>
+            <id>windows-x64</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                    <arch>amd64</arch>
+                </os>
+            </activation>
+            <properties>
+                <smalt.test.cpuArgs>-XX:UseAVX=2 -XX:MaxVectorSize=16</smalt.test.cpuArgs>
+                <smalt.test.cpuArgList>-XX:UseAVX=2,-XX:MaxVectorSize=16</smalt.test.cpuArgList>
+            </properties>
+        </profile>
         <!--
             Javadoc lints, two runs of the javadoc tool (CLAUDE.md, Documentation section 11):
             - javadoc:javadoc-no-fork (default-cli): doclint "reference" on every member, private included; fails on

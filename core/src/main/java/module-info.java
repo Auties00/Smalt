@@ -6,7 +6,9 @@
  *
  * <p>Smalt never loads native code for coding. DSP kernels use the incubating Vector API when the
  * JVM is started with {@code --add-modules jdk.incubator.vector} and fall back to scalar code
- * otherwise; {@link com.github.auties00.smalt.MediaRuntime} reports the choice.
+ * otherwise. On Windows they also need {@code -Dsmalt.simd=true}, an opt-in that is not safe on
+ * the Windows hosts affected by JDK-8365196;
+ * {@link com.github.auties00.smalt.MediaRuntime} reports the choice.
  *
  * <p>Image operations (resizing, color conversion, orientation), the JPEG decoder and encoder,
  * the PNG and GIF decoders, the WebP encoders and decoders and the VP8 decoder split large work
@@ -52,6 +54,9 @@
 module com.github.auties00.smalt {
     // Vector API: optional, selected at runtime by internal.simd.Simd
     requires static jdk.incubator.vector;
+
+    // HotSpot flags: optional, read by internal.simd.Simd for the AVX level of an x86 JVM
+    requires static jdk.management;
 
     // HTTP sources: MediaSource.of(URI) and HttpSourceOptions, which takes an HttpClient
     requires transitive java.net.http;

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.capture;
 
+import com.github.auties00.smalt.testkit.ChildJvm;
 import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.testkit.Skip;
 
@@ -151,6 +152,7 @@ public final class FixtureWindow implements AutoCloseable {
             }
             var command = new ArrayList<String>();
             command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+            command.addAll(ChildJvm.cpuArgs());
             command.add("-Dsun.java2d.uiScale=1");
             command.add("-Djava.awt.headless=false");
             command.add(source.toString());

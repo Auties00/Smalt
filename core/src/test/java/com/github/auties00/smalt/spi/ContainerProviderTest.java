@@ -11,6 +11,7 @@ import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.subtitle.SubtitleCue;
 import com.github.auties00.smalt.subtitle.SubtitleMarkup;
 import com.github.auties00.smalt.subtitle.Subtitles;
+import com.github.auties00.smalt.testkit.ChildJvm;
 import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.track.Codec;
 import org.junit.jupiter.api.DisplayName;
@@ -114,6 +115,7 @@ class ContainerProviderTest {
         var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString()));
         // the scenarios exercise most of the provider code, so under -Pcoverage the children report to this JVM's file
         command.addAll(coverageAgents());
+        command.addAll(ChildJvm.cpuArgs());
         command.addAll(List.of("--add-modules", "jdk.incubator.vector", "-Xmx256m", "-cp",
                 services + File.pathSeparator + classPath, ContainerProviderScenarios.class.getName()));
         command.addAll(List.of(args));

@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.property;
 
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.testkit.ChildJvm;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -171,11 +172,12 @@ class ThreadCountInvarianceTest {
 
     private static Map<String, String> fork(int threads) throws Exception {
         var output = Files.createTempFile(Path.of("target"), "thread-digest-" + threads + "-", ".txt");
-        var command = List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+        var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "--add-modules", "jdk.incubator.vector", "-Xmx1g", "-Dsmalt.threads=" + threads,
-                "-Dsmalt.simd=" + System.getProperty("smalt.simd", "true"),
-                "-cp", System.getProperty("surefire.test.class.path", System.getProperty("java.class.path")),
-                ThreadDigest.class.getName());
+                "-Dsmalt.simd=" + System.getProperty("smalt.simd", "true")));
+        command.addAll(ChildJvm.cpuArgs());
+        command.addAll(List.of("-cp", System.getProperty("surefire.test.class.path", System.getProperty("java.class.path")),
+                ThreadDigest.class.getName()));
         var process = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(output.toFile()).start();
         if (!process.waitFor(Duration.ofMinutes(10).toSeconds(), TimeUnit.SECONDS)) {
             process.destroyForcibly();

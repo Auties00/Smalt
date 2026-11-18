@@ -2,6 +2,7 @@ package com.github.auties00.smalt.aot;
 
 import com.github.auties00.smalt.aot.internal.CompilationWatch;
 import com.github.auties00.smalt.aot.internal.Workloads;
+import com.github.auties00.smalt.MediaRuntime;
 
 import java.lang.management.ManagementFactory;
 import java.time.Duration;
@@ -46,6 +47,13 @@ import java.util.concurrent.TimeUnit;
  * {@code premain} branch with the Vector API patches
  * ({@code https://github.com/Auties00/leyden/tree/premain-vector-aot}) stores linked classes,
  * profiles and compiled vector code, and production runs compiled kernels from its first frame.
+ *
+ * <p>The training runs the kernels its JVM selects
+ * ({@link com.github.auties00.smalt.MediaRuntime#isVectorized()}) and never forces the Vector API
+ * ones, so it is launched with the kernel options production uses. On Windows the Vector API
+ * kernels are an opt-in ({@code -Dsmalt.simd=true}, see
+ * {@link com.github.auties00.smalt.MediaRuntime}); a Windows application that opts in passes it to
+ * the training run too.
  *
  * @apiNote An application on the class path can train without code changes, running this class as
  *          the main class of the training run and its own main after it:
@@ -294,8 +302,9 @@ public final class SmaltTraining {
      * </ul>
      *
      * <p>The run prints a one-line summary to the standard error stream, and warns there when the
-     * JVM is not recording an AOT cache or does not resolve {@code jdk.incubator.vector}: a cache
-     * recorded without the Vector API does not match a vectorized production run.
+     * JVM is not recording an AOT cache, does not resolve {@code jdk.incubator.vector}, or resolves
+     * it on Windows without {@code -Dsmalt.simd=true}: a cache recorded without the Vector API
+     * kernels does not match a vectorized production run.
      *
      * @param args the command-line arguments
      * @throws IllegalArgumentException if an option is unknown, is missing its value, or names no
@@ -339,6 +348,10 @@ public final class SmaltTraining {
         }
         if (ModuleLayer.boot().findModule("jdk.incubator.vector").isEmpty()) {
             System.err.println("smalt-aot: jdk.incubator.vector is not resolved; train with the --add-modules option production uses");
+        } else if (!MediaRuntime.isVectorized() && System.getProperty("os.name", "").startsWith("Windows")
+                && System.getProperty("smalt.simd") == null) {
+            System.err.println("smalt-aot: training the scalar kernels, the Windows default; a production run with"
+                    + " -Dsmalt.simd=true needs a training run with it");
         }
         var report = train(builder.build());
         System.err.println("smalt-aot: " + report.summary());

@@ -504,20 +504,6 @@ final class VectorResampleKernel implements ResampleKernel {
      */
     @Override
     public void unpremultiply(int[] src, int sOff, int width, int scale, byte[] dst, int dOff) {
-        var x = unpremultiplyVectors(src, sOff, width, scale, dst, dOff);
-        ScalarResampleKernel.unpremultiplyRange(src, sOff, width, scale, dst, dOff, x, width);
-    }
-
-    /**
-     * Unpremultiplies the pixels of whole vectors, as {@link #unpremultiply} describes.
-     *
-     * @implNote This implementation keeps the vector loop in a method of its own, so that C2 compiles it apart from
-     * the call to the scalar tail: C2 for Windows on AVX-512 hosts can corrupt the arguments of that call (a null
-     * array, a zero scale) when both share one compilation.
-     *
-     * @return the first pixel left for the scalar tail
-     */
-    private int unpremultiplyVectors(int[] src, int sOff, int width, int scale, byte[] dst, int dOff) {
         var x = 0;
         if (D4 != null) {
             var alphaFactor = DOUBLE_VECTOR.cast(DoubleVector.broadcast(D4, 1.0 / (510.0 * scale)));
@@ -569,6 +555,6 @@ final class VectorResampleKernel implements ResampleKernel {
                 PIXEL4_VECTOR.cast(INT4_VECTOR.cast(packed).reinterpretShape(BP4, 0)).intoArray(dst, dOff + 4 * x);
             }
         }
-        return x;
+        ScalarResampleKernel.unpremultiplyRange(src, sOff, width, scale, dst, dOff, x, width);
     }
 }

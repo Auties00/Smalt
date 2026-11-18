@@ -1,11 +1,14 @@
 package com.github.auties00.smalt;
 
+import com.github.auties00.smalt.testkit.ChildJvm;
 import com.github.auties00.smalt.testkit.NativeCrashDumps;
 import com.github.auties00.smalt.testkit.Skip;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.util.List;
+import java.util.ArrayList;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -171,8 +174,11 @@ class NativeCrashDumpsTest {
      */
     private static Process child(String argument) throws Exception {
         var java = ProcessHandle.current().info().command().orElseThrow();
-        return new ProcessBuilder(java, "--enable-native-access=ALL-UNNAMED", "-Xmx64m", "-cp", classRoot().toString(),
-                NativeCrashDumps.class.getName(), argument).redirectErrorStream(true).start();
+        var command = new ArrayList<>(List.of(java));
+        command.addAll(ChildJvm.cpuArgs());
+        command.addAll(List.of("--enable-native-access=ALL-UNNAMED", "-Xmx64m", "-cp", classRoot().toString(),
+                NativeCrashDumps.class.getName(), argument));
+        return new ProcessBuilder(command).redirectErrorStream(true).start();
     }
 
     /**

@@ -9,8 +9,19 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
  * <p><b>Kernels.</b> Every hot kernel has a scalar implementation and a Vector API
  * implementation. The vector implementations are used only when the JVM was started with
  * {@code --add-modules jdk.incubator.vector}, the platform's preferred vectors are at least 128
- * bits wide, and the {@code smalt.simd} system property is not {@code false}; otherwise every
- * kernel runs its scalar code. The choice is made once per JVM and never changes, so
+ * bits wide, the processor and JVM support AVX2 on x86 (below it, C2 cannot compile every vector
+ * operation the kernels use), and the {@code smalt.simd} system property is not {@code false};
+ * otherwise every kernel runs its scalar code. On Windows the vector implementations are an opt-in: they are used
+ * only when {@code smalt.simd} is {@code true} ({@code -Dsmalt.simd=true}) and the other conditions
+ * hold. On affected Windows hosts (seen on Windows Server 2025), JIT-compiled code that keeps vector
+ * state live across a hardware trap can lose it
+ * (<a href="https://bugs.openjdk.org/browse/JDK-8365196">JDK-8365196</a>), which crashes the JVM or
+ * corrupts a vector kernel's result; only {@code -XX:UseAVX=0} avoids it fully (it also disables
+ * FMA, and runs every kernel scalar), so opting in there is not safe until the operating system or
+ * the JDK is fixed. {@code -XX:UseAVX=2 -XX:MaxVectorSize=16} is a practical mitigation, which keeps
+ * compiled vector code in the lower 128 bits of each register but is not proven safe for the JDK's
+ * intrinsics; the kernels then run at 128 bits. The choice is made once per JVM and
+ * never changes, so
  * {@link #isVectorized()} and {@link #vectorBits()} return constants. The kernels written for
  * 256-bit vectors, which include most of the video codecs' kernels, run their scalar code where
  * {@link #vectorBits()} is below {@code 256} (ARM NEON and 128-bit SVE, x86 without AVX2), since

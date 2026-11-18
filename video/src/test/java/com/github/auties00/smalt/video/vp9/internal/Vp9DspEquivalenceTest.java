@@ -28,7 +28,7 @@ class Vp9DspEquivalenceTest {
 
     @BeforeAll
     static void vectorAvailable() {
-        Skip.unless(VECTOR instanceof VectorVp9Dsp, "simd:narrow", "no 256-bit vectors on this machine");
+        Skip.unless(VECTOR instanceof VectorVp9Dsp, "simd:narrow", "no 256-bit vectors on this machine (Windows CI caps them for JDK-8365196)");
     }
 
     static byte[] randomPlane(Random random, int size) {

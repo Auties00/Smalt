@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.jit;
 
+import com.github.auties00.smalt.testkit.ChildJvm;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.Skip;
@@ -203,7 +204,8 @@ class JitStressTest {
         var log = directory.resolve("stdout.log");
         var errors = directory.resolve("stderr.log");
         var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "--add-modules", "jdk.incubator.vector", "-Xmx512m", "-XX:+UseSerialGC"));
+                "--add-modules", "jdk.incubator.vector", "-Dsmalt.simd=true", "-Xmx512m", "-XX:+UseSerialGC"));
+        command.addAll(ChildJvm.cpuArgs());
         for (var option : System.getProperty("jit.childArgs", "").split(",")) {
             if (!option.isBlank()) {
                 command.add(option.strip());

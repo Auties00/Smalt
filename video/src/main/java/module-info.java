@@ -11,8 +11,9 @@
  * whenever this module is present; the AVIF
  * decoder registers with {@code Images} the same way.
  *
- * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}) and the threading
- * model are those of the core module ({@code com.github.auties00.smalt}).
+ * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}, with
+ * {@code -Dsmalt.simd=true} on Windows) and the threading model are those of the core module
+ * ({@code com.github.auties00.smalt}).
  *
  * @provides com.github.auties00.smalt.spi.VideoCodecProvider VP9, AV1, ProRes, DNxHD/DNxHR, DV, Theora, FFV1,
  *           QuickTime Animation and CineForm

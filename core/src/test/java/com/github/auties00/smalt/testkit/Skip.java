@@ -168,8 +168,8 @@ public final class Skip {
 
     /**
      * Skips the calling test unless the Vector API kernels run; the test kit cannot read the internal selector, so
-     * the caller passes it ({@code Simd.ENABLED}, false under {@code -Dsmalt.simd=false} or without the incubator
-     * module).
+     * the caller passes it ({@code Simd.ENABLED}, false under {@code -Dsmalt.simd=false}, without the incubator
+     * module, or on Windows without {@code -Dsmalt.simd=true}).
      *
      * @param enabled whether the vector kernels are selected
      */

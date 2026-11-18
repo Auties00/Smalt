@@ -3,6 +3,7 @@ package com.github.auties00.smalt.video.h264.encoder;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.testkit.ChildJvm;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.h264.encoder.H264Profile;
@@ -156,9 +157,11 @@ class SharedPoolEncoderTest {
         var expected = HexFormat.of().formatHex(hash(encode(config(H264EncoderSpeed.BALANCED, 1), pictures(), -1)));
         var classpath = System.getProperty("surefire.test.class.path", Path.of("target", "test-classes").toAbsolutePath() + File.pathSeparator
                 + Path.of("target", "classes").toAbsolutePath());
-        var command = List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "--add-modules", "jdk.incubator.vector", "-Xmx256m", "-XX:+UseSerialGC", "-Dsmalt.threads=1",
-                "-cp", classpath, LoneCallerEncode.class.getName());
+        var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "--add-modules", "jdk.incubator.vector", "-Dsmalt.simd=" + System.getProperty("smalt.simd", "true"),
+                "-Xmx256m", "-XX:+UseSerialGC", "-Dsmalt.threads=1"));
+        command.addAll(ChildJvm.cpuArgs());
+        command.addAll(List.of("-cp", classpath, LoneCallerEncode.class.getName()));
         var process = new ProcessBuilder(command).redirectErrorStream(true).start();
         var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertTrue(process.waitFor(120, TimeUnit.SECONDS), "the child did not finish: " + output);

@@ -952,6 +952,7 @@ windows-x64-vector-full	raw	com.github.auties00.smalt.image.raw.internal.SrwPars
 windows-x64-vector-full	raw	com.github.auties00.smalt.image.raw.internal.Vc5DecoderTest	opt-in:fuzz-seeds	1
 windows-x64-vector-full	raw	com.github.auties00.smalt.image.raw.internal.VendorOracleTest	data:raw-oracle-coverage	1
 windows-x64-vector-full	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	opt-in:fuzz-seeds	1
+windows-x64-vector-full	video	com.github.auties00.smalt.video.av1.internal.VectorCdfDspTest	simd:narrow	18
 windows-x64-vector-smoke	audio	com.github.auties00.smalt.audio.alac.AlacDecoderTest	data:vector	3
 windows-x64-vector-smoke	audio	com.github.auties00.smalt.audio.alac.AlacEncoderInteropTest	platform:macos	1
 windows-x64-vector-smoke	audio	com.github.auties00.smalt.audio.dst.DstConformanceTest	data:vector	51
@@ -1135,5 +1136,6 @@ windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fPar
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fReferenceTest	data:vector	19
 windows-x64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConformanceTest	data:vector	27
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
+windows-x64-vector-smoke	video	com.github.auties00.smalt.video.av1.internal.VectorCdfDspTest	simd:narrow	18
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAlphaTest	data:vector	2
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAvidAlphaTest	data:vector	2

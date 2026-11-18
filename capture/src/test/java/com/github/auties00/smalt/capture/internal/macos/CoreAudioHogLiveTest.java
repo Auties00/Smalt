@@ -5,6 +5,7 @@ import com.github.auties00.smalt.capture.audio.AudioDevice;
 import com.github.auties00.smalt.capture.audio.AudioDevices;
 import com.github.auties00.smalt.capture.audio.AudioShareMode;
 import com.github.auties00.smalt.capture.audio.AudioStreamOptions;
+import com.github.auties00.smalt.testkit.ChildJvm;
 import com.github.auties00.smalt.testkit.Skip;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.util.ArrayList;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -298,8 +300,11 @@ class CoreAudioHogLiveTest {
         var source = directory.resolve("Holder.java");
         Files.writeString(source, HOLDER);
         var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        var holder = new ProcessBuilder(java, "--enable-native-access=ALL-UNNAMED", source.toString(),
-                Integer.toString(CoreAudioDevices.resolve(device.id())))
+        var command = new ArrayList<>(List.of(java));
+        command.addAll(ChildJvm.cpuArgs());
+        command.addAll(List.of("--enable-native-access=ALL-UNNAMED", source.toString(),
+                Integer.toString(CoreAudioDevices.resolve(device.id()))));
+        var holder = new ProcessBuilder(command)
                 .redirectError(ProcessBuilder.Redirect.INHERIT).start();
         try (var reader = new BufferedReader(new InputStreamReader(holder.getInputStream()))) {
             assertEquals("held 0", reader.readLine());

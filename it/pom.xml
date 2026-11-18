@@ -312,7 +312,7 @@
                                         <argument>-t</argument>
                                         <argument>PendingStress|RowProgressStress|RowWavefrontStress|WavefrontStress</argument>
                                         <argument>-jvmArgsPrepend</argument>
-                                        <argument>--add-modules=jdk.incubator.vector -Dsmalt.threads=1</argument>
+                                        <argument>--add-modules=jdk.incubator.vector -Dsmalt.simd=true -Dsmalt.threads=1 ${smalt.test.cpuArgs}</argument>
                                         <argument>-r</argument>
                                         <argument>${project.build.directory}/jcstress/single</argument>
                                     </arguments>
@@ -336,7 +336,7 @@
                                         <argument>-t</argument>
                                         <argument>BandsStress</argument>
                                         <argument>-jvmArgsPrepend</argument>
-                                        <argument>--add-modules=jdk.incubator.vector -Dsmalt.threads=4</argument>
+                                        <argument>--add-modules=jdk.incubator.vector -Dsmalt.simd=true -Dsmalt.threads=4 ${smalt.test.cpuArgs}</argument>
                                         <argument>-r</argument>
                                         <argument>${project.build.directory}/jcstress/pool</argument>
                                     </arguments>

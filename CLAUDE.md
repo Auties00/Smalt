@@ -82,7 +82,15 @@ packages (`internal.*`) are exported only to the artifacts that need them.
 - **Pure Java.** No native code for coding. FFM only in `capture` (`--enable-native-access`).
 - **Vector API behind scalar twins.** Every vector kernel has a bit-identical scalar twin and an
   equivalence test; `internal.simd.Simd` decides availability once per JVM and a kernel family's selector
-  is `Simd.ENABLED ? vector : scalar`. There is no runtime warm-up: the start-up cost of the Vector API is
+  is `Simd.ENABLED ? vector : scalar`. On Windows the vector kernels are an opt-in (`-Dsmalt.simd=true`) until
+  JDK-8365196 (vector state lost across hardware traps on affected Windows hosts, such as Server 2025; only
+  `-XX:UseAVX=0` avoids it) is fixed; the test argLine passes it on every platform, and a test that starts a
+  child JVM for vector kernels passes it too. For the same defect the root pom's `windows-x64` profile
+  (OS-activated) runs every Windows x64 test JVM with `-XX:UseAVX=2 -XX:MaxVectorSize=16` (`smalt.test.cpuArgs`,
+  and `smalt.test.cpuArgList` for the system property: no upper ymm/zmm state in C2 code; `-XX:UseAVX=0` would
+  turn FMA off and `Math.fma` into a software path too slow for CI), so Windows CI tests the vector kernels at
+  128 bits; every test that launches `java` adds the test kit's `ChildJvm.cpuArgs()` before its own options, so
+  its children run the same way; KernelGuard's `avx3` and `vector-256` scenarios do not run on Windows. There is no runtime warm-up: the start-up cost of the Vector API is
   for an application's AOT cache, trained with `smalt-aot`, to remove; a kernel that falls back to the
   allocating path costs the codec thread directly. Every codec and kernel gets a workload in its artifact's
   `TrainingFamily` (`aot.internal.<Artifact>Workloads`), on synthetic content, in the coding modes, thread

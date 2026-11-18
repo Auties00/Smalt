@@ -9,8 +9,9 @@
  * {@code AudioEncoders} encodes Opus, FLAC, ALAC, MP3, MP2, Vorbis and the ADPCM and telephony codecs, whenever
  * this module is present.
  *
- * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}) and the threading
- * model are those of the core module ({@code com.github.auties00.smalt}).
+ * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}, with
+ * {@code -Dsmalt.simd=true} on Windows) and the threading model are those of the core module
+ * ({@code com.github.auties00.smalt}).
  *
  * @provides com.github.auties00.smalt.spi.AudioCodecProvider ALAC, FLAC, MP3 (and MP2), Opus, Vorbis, IMA and
  * Microsoft ADPCM, G.722, G.726, GSM 06.10, MACE, Speex, WavPack and ATRAC9

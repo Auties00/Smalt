@@ -14,8 +14,9 @@
  * TIFF, ICO, ANI, JPEG 2000, animated WebP, GIF, APNG and ANI, Motion-JPEG, Motion JPEG 2000, PNG, TIFF and HAP video
  * and VP8, whenever this module is present.
  *
- * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}) and the threading
- * model are those of the core module ({@code com.github.auties00.smalt}).
+ * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}, with
+ * {@code -Dsmalt.simd=true} on Windows) and the threading model are those of the core module
+ * ({@code com.github.auties00.smalt}).
  *
  * @provides com.github.auties00.smalt.spi.ImageCodecProvider ANI, BMP, GIF, ICO and CUR, JPEG 2000, JPEG,
  * JPEG XL, PNG and APNG, TIFF and WebP
