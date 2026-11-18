@@ -126,14 +126,7 @@ public final class Simd {
      * @return whether vector kernels should be used
      */
     private static boolean detect() {
-        var property = System.getProperty("smalt.simd");
-        if ("false".equalsIgnoreCase(property)) {
-            return false;
-        }
-        // TODO: select the vector kernels by default on Windows again once JDK-8365196
-        //  (https://bugs.openjdk.org/browse/JDK-8365196, vector state lost across hardware traps on affected
-        //  Windows hosts) is fixed and the fixed JDK is the minimum Smalt supports
-        if (System.getProperty("os.name", "").startsWith("Windows") && !"true".equalsIgnoreCase(property)) {
+        if (!permitted(System.getProperty("smalt.simd"), System.getProperty("os.name", ""))) {
             return false;
         }
         if (ModuleLayer.boot().findModule("jdk.incubator.vector").isEmpty()) {
@@ -145,14 +138,33 @@ public final class Simd {
         } catch (LinkageError error) {
             return false;
         }
-        return preferredBits >= 128 && (!isX86() || x86VectorsCompile(preferredBits));
+        return preferredBits >= 128 && (!isX86(System.getProperty("os.arch", "")) || x86VectorsCompile(preferredBits));
     }
 
     /**
-     * {@return whether this JVM runs on x86 or x86-64}
+     * Applies the {@code smalt.simd} system property and the platform default described on the class.
+     *
+     * @param property the value of {@code smalt.simd}, or {@code null} when it is not set
+     * @param osName the value of {@code os.name}
+     * @return whether the vector kernels may be selected, subject to the hardware checks
      */
-    private static boolean isX86() {
-        return switch (System.getProperty("os.arch", "")) {
+    static boolean permitted(String property, String osName) {
+        if ("false".equalsIgnoreCase(property)) {
+            return false;
+        }
+        // TODO: select the vector kernels by default on Windows again once JDK-8365196
+        //  (https://bugs.openjdk.org/browse/JDK-8365196, vector state lost across hardware traps on affected
+        //  Windows hosts) is fixed and the fixed JDK is the minimum Smalt supports
+        return !osName.startsWith("Windows") || "true".equalsIgnoreCase(property);
+    }
+
+    /**
+     * {@return whether an architecture is x86 or x86-64}
+     *
+     * @param arch the value of {@code os.arch}
+     */
+    static boolean isX86(String arch) {
+        return switch (arch) {
             case "amd64", "x86_64", "x86", "i386", "i486", "i586", "i686" -> true;
             default -> false;
         };

@@ -465,6 +465,9 @@ public final class VvcSliceHeader {
                 s.numRefIdxActive[i] = 0;
             }
         }
+        if (s.sliceType != I && (s.numRefIdxActive[0] == 0 || (s.sliceType == B && s.numRefIdxActive[1] == 0))) {
+            throw new MediaException.Malformed("vvc inter slice with an empty active reference list");
+        }
         if (s.sliceType != I) {
             if (pps.cabacInitPresent) {
                 s.cabacInit = r.readFlag();

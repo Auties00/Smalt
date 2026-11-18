@@ -121,8 +121,10 @@ public final class ExrDwa {
             rules = readRules(data, position + 2, position + ruleSize);
             position += ruleSize;
         }
-        var total = unknownCompressed + acCompressed + dcCompressed + rleCompressed;
-        if (total > end - position) {
+        long available = end - position;
+        if (unknownCompressed > available || acCompressed > available - unknownCompressed
+                || dcCompressed > available - unknownCompressed - acCompressed
+                || rleCompressed > available - unknownCompressed - acCompressed - dcCompressed) {
             throw new MediaException.Malformed("the OpenEXR DWA sections run past their chunk");
         }
         var channels = block.channels();
