@@ -165,8 +165,14 @@ def retrying(action):
             time.sleep(pause)
 
 
-def download(url, target, expected):
-    """Downloads url to target through a temporary file, verifying the SHA-256."""
+class ContentMismatch(OSError):
+    """A download whose bytes differ from the pinned ones; retried, since some hosts serve a damaged body
+    with a success status now and then."""
+
+
+def download(url, target, expected, size=None):
+    """Downloads url to target through a temporary file, verifying the SHA-256 and, when given, the size in
+    bytes the manifest lists."""
     os.makedirs(os.path.dirname(target), exist_ok=True)
     handle, temporary = tempfile.mkstemp(dir=os.path.dirname(target), prefix='download-', suffix='.part')
     os.close(handle)
@@ -180,11 +186,13 @@ def download(url, target, expected):
                 announced = response.headers.get('Content-Length')
                 if announced is not None and announced.isdigit() and sink.tell() != int(announced):
                     raise ConnectionError(f'short download of {url}: {sink.tell()} of {announced} bytes')
+                if size is not None and sink.tell() != size:
+                    raise ContentMismatch(f'download of {url} holds {sink.tell()} bytes, the manifest lists {size}')
+            actual = sha256(temporary)
+            if actual != expected:
+                raise ContentMismatch(f'SHA-256 mismatch for {url}: expected {expected}, got {actual}')
 
         retrying(copy)
-        actual = sha256(temporary)
-        if actual != expected:
-            raise ValueError(f'SHA-256 mismatch for {url}: expected {expected}, got {actual}')
         os.replace(temporary, target)
     finally:
         if os.path.exists(temporary):
@@ -205,7 +213,7 @@ def fetch_vectors(tier, jobs, hosts=(), excluded=()):
 
     def one(row):
         try:
-            download(row['url'], os.path.join(directory, row['name']), row['sha256'])
+            download(row['url'], os.path.join(directory, row['name']), row['sha256'], int(row['size']))
             return None
         except Exception as exception:  # reported below; one dead link must not stop the others
             return f'{row["name"]}: {exception}'
