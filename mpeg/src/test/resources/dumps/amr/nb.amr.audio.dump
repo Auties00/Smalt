@@ -1,0 +1,19 @@
+# audio decode dump of amr/nb.amr; regenerate with -Dsmalt.test.updateDumps=true
+format AMR
+duration 2020000
+seekable true
+track 0 AMR_NB rate=8000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=eb80c1e4
+1 frames=4096 crc16=591e981f
+2 frames=4096 crc16=c6813a91
+3 frames=3872 crc16=a91a3b6e
+seek 0: @sample 0
+seek 673333: @sample 5387
+seek 1346666: @sample 10773
+seek 2020000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AMR
+  duration -1
+  seekable false
+  track 0 AMR_NB rate=8000 layout=[FRONT_CENTER]

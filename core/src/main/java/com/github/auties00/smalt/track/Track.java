@@ -12,6 +12,7 @@ import java.util.OptionalLong;
  * <ul>
  *   <li>H.264: an {@code AVCDecoderConfigurationRecord} ({@code avcC})</li>
  *   <li>HEVC: an {@code HEVCDecoderConfigurationRecord} ({@code hvcC})</li>
+ *   <li>VVC: a {@code VvcDecoderConfigurationRecord}, the {@code vvcC} box body without its full box header</li>
  *   <li>VP9 and AV1: the {@code vpcC} and {@code av1C} record bodies</li>
  *   <li>AAC: an {@code AudioSpecificConfig}</li>
  *   <li>Opus: an {@code OpusHead} packet</li>
@@ -20,6 +21,8 @@ import java.util.OptionalLong;
  *   <li>ALAC: the {@code ALACSpecificConfig}</li>
  *   <li>ProRes and DNxHD: the four-character QuickTime sample entry type in ASCII (for example
  *       {@code apch} or {@code AVdh}), which names the ProRes flavor</li>
+ *   <li>Motion-JPEG: the default tables of a QuickTime sample description, as a DQT marker segment (the {@code mjqt}
+ *       box) followed by a DHT marker segment (the {@code mjht} box), either one absent when its box is</li>
  * </ul>
  * and is empty when the codec needs none or the container stores the configuration in band.
  *

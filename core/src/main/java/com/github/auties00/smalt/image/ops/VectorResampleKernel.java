@@ -150,15 +150,20 @@ final class VectorResampleKernel implements ResampleKernel {
     private static final double QUOTIENT_MARGIN = 0x1p-40;
 
     /**
-     * The scalar kernel handling the samples the vector loops do not cover.
+     * The scalar kernel handling the shapes the vector paths do not cover.
+     *
+     * <p>The kernel keeps no reference of its own: the scalar tails after the vector loops are
+     * static, so no reference besides the loops' operands is live across a loop's safepoint poll.
+     * C2 on Windows with AVX-512 can keep such a reference in an upper-bank XMM register across
+     * the poll and reload it as {@code null} after a safepoint (a HotSpot defect, seen in
+     * {@link #unpremultiply}).
      */
-    private final ScalarResampleKernel scalar;
+    private static final ScalarResampleKernel SCALAR = new ScalarResampleKernel();
 
     /**
      * Constructs the kernel.
      */
     private VectorResampleKernel() {
-        this.scalar = new ScalarResampleKernel();
     }
 
     /**
@@ -288,7 +293,7 @@ final class VectorResampleKernel implements ResampleKernel {
             }
             INT_VECTOR.cast(INT_VECTOR.cast(a0).lanewise(VectorOperators.ASHR, shift)).intoArray(dst, x);
         }
-        scalar.verticalRange(src, offsets, weights, wOff, taps, dst, shift, x, length);
+        ScalarResampleKernel.verticalRange(src, offsets, weights, wOff, taps, dst, shift, x, length);
     }
 
     @Override
@@ -321,13 +326,13 @@ final class VectorResampleKernel implements ResampleKernel {
                 INT_VECTOR.cast(a1).intoArray(dst, x + L);
             }
         }
-        scalar.verticalWideRange(src, offsets, weights, wOff, taps, dst, accumulate, shift, x, length);
+        ScalarResampleKernel.verticalWideRange(src, offsets, weights, wOff, taps, dst, accumulate, shift, x, length);
     }
 
     @Override
     public void gatherRows(int[][] rows, int rowCount, int offset, int pixelStride, int length, int lanes, int[] dst) {
         if (L != 8 || rowCount != 8 || pixelStride != 1) {
-            scalar.gatherRows(rows, rowCount, offset, pixelStride, length, lanes, dst);
+            SCALAR.gatherRows(rows, rowCount, offset, pixelStride, length, lanes, dst);
             return;
         }
         var x = 0;
@@ -463,7 +468,7 @@ final class VectorResampleKernel implements ResampleKernel {
                 PIXEL_VECTOR.cast(INT_VECTOR.cast(packed).reinterpretShape(BP, 0)).intoArray(dst, dOff + 4 * x);
             }
         }
-        scalar.interleaveRange(planes, pOff, width, opaque, dst, dOff, end, width);
+        ScalarResampleKernel.interleaveRange(planes, pOff, width, opaque, dst, dOff, end, width);
     }
 
     @Override
@@ -484,7 +489,7 @@ final class VectorResampleKernel implements ResampleKernel {
             SHORT_VECTOR.cast(a.lanewise(VectorOperators.MUL, MAX_SAMPLE).convertShape(VectorOperators.I2S, S, 0))
                     .intoCharArray(dst, dOff + 3 * width + x);
         }
-        scalar.premultiplyRange(src, sOff, width, dst, dOff, x, width);
+        ScalarResampleKernel.premultiplyRange(src, sOff, width, dst, dOff, x, width);
     }
 
     /**
@@ -550,6 +555,6 @@ final class VectorResampleKernel implements ResampleKernel {
                 PIXEL4_VECTOR.cast(INT4_VECTOR.cast(packed).reinterpretShape(BP4, 0)).intoArray(dst, dOff + 4 * x);
             }
         }
-        scalar.unpremultiplyRange(src, sOff, width, scale, dst, dOff, x, width);
+        ScalarResampleKernel.unpremultiplyRange(src, sOff, width, scale, dst, dOff, x, width);
     }
 }

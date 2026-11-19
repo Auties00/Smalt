@@ -3,30 +3,41 @@ package com.github.auties00.smalt.image.metadata;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ImageFormat;
+import com.github.auties00.smalt.image.gif.internal.GifIccExtension;
 import com.github.auties00.smalt.internal.edit.EditPlan;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.XmpPacket;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Reads and rewrites the comment extensions and the XMP application extension of a GIF file.
+ * Reads and rewrites the comment extensions, the XMP application extension and the ICC profile
+ * application extension of a GIF file.
  *
  * <p>The XMP application extension ({@code XMP DataXMP}) stores the packet raw after its
  * identifier, followed by a 258-byte "magic trailer" that makes any GIF reader walking the
- * sub-blocks land on the block terminator. A rewrite drops the blocks of every changed kind and
- * writes the new ones before the first graphic control extension or image; image data is copied
- * unchanged.
+ * sub-blocks land on the block terminator. The ICC profile application extension
+ * ({@code ICCRGBG1} with authentication code {@code 012}, ICC.1 Annex B) stores the profile in its
+ * data sub-blocks; the profile read is that of the first such extension. A rewrite drops the
+ * blocks of every changed kind and writes the new ones before the first graphic control extension
+ * or image; image data is copied unchanged.
  */
 final class GifFile implements ImageFile {
     /**
      * The application identifier and authentication code of the XMP extension.
      */
     private static final byte[] XMP_IDENTIFIER = "XMP DataXMP".getBytes(StandardCharsets.ISO_8859_1);
+
+    /**
+     * The application identifier and authentication code of the ICC profile extension.
+     */
+    private static final byte[] ICC_IDENTIFIER = "ICCRGBG1012".getBytes(StandardCharsets.ISO_8859_1);
 
     /**
      * The largest number of blocks read.
@@ -179,8 +190,11 @@ final class GifFile implements ImageFile {
     public ImageMetadata metadata() {
         var comments = new ArrayList<String>();
         XmpPacket xmp = null;
+        byte[] icc = null;
         for (var block : blocks) {
-            if (block.label() == 0xFE) {
+            if (isIcc(block) && icc == null) {
+                icc = subBlockData(block.start() + 14, block.end());
+            } else if (block.label() == 0xFE) {
                 var data = subBlockData(block.start() + 2, block.end());
                 comments.add(ImageFiles.text(data, 0, data.length));
             } else if (isXmp(block) && xmp == null) {
@@ -195,7 +209,7 @@ final class GifFile implements ImageFile {
                 }
             }
         }
-        return new ImageMetadata(ImageFormat.GIF, null, xmp, null, null, comments, Map.of());
+        return new ImageMetadata(ImageFormat.GIF, null, xmp, null, icc, comments, Map.of());
     }
 
     /**
@@ -212,6 +226,7 @@ final class GifFile implements ImageFile {
             if (length == 0) {
                 break;
             }
+            LimitChecks.checkAllocation(limits, (long) out.size() + length);
             out.writeBytes(bytes(position + 1, length));
             position += 1 + length;
         }
@@ -225,7 +240,17 @@ final class GifFile implements ImageFile {
      * @return {@code true} for an application extension identified {@code XMP DataXMP}
      */
     private static boolean isXmp(Block block) {
-        return block.label() == 0xFF && java.util.Arrays.equals(block.identifier(), XMP_IDENTIFIER);
+        return block.label() == 0xFF && Arrays.equals(block.identifier(), XMP_IDENTIFIER);
+    }
+
+    /**
+     * Returns whether a block is the ICC profile application extension.
+     *
+     * @param block the extension block to test
+     * @return {@code true} for an application extension identified {@code ICCRGBG1} {@code 012}
+     */
+    private static boolean isIcc(Block block) {
+        return block.label() == 0xFF && Arrays.equals(block.identifier(), ICC_IDENTIFIER);
     }
 
     @Override
@@ -233,8 +258,9 @@ final class GifFile implements ImageFile {
         if (target.exif() instanceof ImageMetadataEdit.Change.Replace) {
             throw ImageFiles.unsupported(ImageFormat.GIF, "EXIF");
         }
-        if (target.icc() instanceof ImageMetadataEdit.Change.Replace) {
-            throw ImageFiles.unsupported(ImageFormat.GIF, "ICC profiles");
+        var profile = target.iccProfile();
+        if (profile != null && !isRgb(profile)) {
+            throw ImageFiles.unsupported(ImageFormat.GIF, "ICC profiles of a color space other than RGB");
         }
         if (target.iptc() instanceof ImageMetadataEdit.Change.Replace && target.iptcData() != null && !target.iptcData().isEmpty()) {
             throw ImageFiles.unsupported(ImageFormat.GIF, "IPTC-IIM data");
@@ -243,6 +269,9 @@ final class GifFile implements ImageFile {
             throw ImageFiles.unsupported(ImageFormat.GIF, "text");
         }
         var inserted = new ArrayList<byte[]>();
+        if (profile != null) {
+            inserted.add(GifIccExtension.of(profile));
+        }
         if (target.xmp() instanceof ImageMetadataEdit.Change.Replace) {
             inserted.add(xmpExtension(target.xmpPacket()));
         }
@@ -262,7 +291,9 @@ final class GifFile implements ImageFile {
             }
             var drop = (block.label() == 0xFE && !(target.comments() instanceof ImageMetadataEdit.Change.Keep))
                     || (isXmp(block) && !(target.xmp() instanceof ImageMetadataEdit.Change.Keep))
-                    || (target.removeOther() && block.label() == 0xFF && !isXmp(block) && !isLoop(block));
+                    || (isIcc(block) && !(target.icc() instanceof ImageMetadataEdit.Change.Keep))
+                    || (target.removeOther() && block.label() == 0xFF && !isXmp(block) && !isIcc(block)
+                    && !isLoop(block));
             if (!drop) {
                 plan.copy(block.start(), block.end() - block.start());
             }
@@ -288,6 +319,17 @@ final class GifFile implements ImageFile {
         }
         var name = new String(block.identifier(), StandardCharsets.ISO_8859_1);
         return name.equals("NETSCAPE2.0") || name.equals("ANIMEXTS1.0");
+    }
+
+    /**
+     * Returns whether ICC profile bytes declare the RGB data color space.
+     *
+     * @param profile the profile bytes
+     * @return {@code true} when the header's data color space field is {@code RGB }
+     */
+    private static boolean isRgb(byte[] profile) {
+        return profile.length >= 20 && profile[16] == 'R' && profile[17] == 'G' && profile[18] == 'B'
+                && profile[19] == ' ';
     }
 
     /**

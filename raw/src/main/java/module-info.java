@@ -7,8 +7,9 @@
  * registry, so {@code Images} decodes DNG and camera raw files whenever this module is present.
  * This product includes DNG technology under license by Adobe.
  *
- * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}) and the threading
- * model are those of the core module ({@code com.github.auties00.smalt}).
+ * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}, with
+ * {@code -Dsmalt.simd=true} on Windows) and the threading model are those of the core module
+ * ({@code com.github.auties00.smalt}).
  *
  * @provides com.github.auties00.smalt.spi.ImageCodecProvider DNG and the camera raw formats
  */

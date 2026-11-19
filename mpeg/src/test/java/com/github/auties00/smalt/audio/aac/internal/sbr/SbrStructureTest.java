@@ -177,6 +177,27 @@ class SbrStructureTest {
             assertTrue(valid > 0, "some headers are valid at " + rate + " Hz");
         }
 
+        @Test
+        @DisplayName("builds the six patches a linear table from subband 8 to 43 at 44.1 kHz needs, beyond the five an encoder may use")
+        void sixPatches() {
+            // the header of er_eld_sbr_gh_*_44 frames 199, 491 and 783: start 0, stop 8, linear scale
+            var header = new SbrHeader();
+            header.startFrequency = 0;
+            header.stopFrequency = 8;
+            header.frequencyScale = 0;
+            header.alterScale = 0;
+            header.noiseBands = 0;
+            header.crossoverBand = 0;
+            var tables = new SbrFrequencies();
+            assertTrue(tables.update(header, 44100));
+            assertEquals(8, tables.kx);
+            assertEquals(35, tables.m);
+            assertEquals(6, tables.patches);
+            assertArrayEquals(new int[]{6, 6, 6, 6, 6, 5}, Arrays.copyOf(tables.patchSubbands, 6));
+            assertArrayEquals(new int[]{2, 2, 2, 2, 2, 2}, Arrays.copyOf(tables.patchStart, 6));
+            check(tables);
+        }
+
         static void check(SbrFrequencies tables) {
             var kx = tables.kx;
             var end = kx + tables.m;
@@ -192,7 +213,7 @@ class SbrStructureTest {
             assertEquals(kx, tables.noise[0]);
             assertEquals(end, tables.noise[tables.noiseBands]);
             assertTrue(tables.noiseBands >= 1 && tables.noiseBands <= SbrFrequencies.MAX_NOISE_BANDS);
-            assertTrue(tables.patches >= 1 && tables.patches <= SbrFrequencies.MAX_PATCHES);
+            assertTrue(tables.patches >= 1, "at least one patch");
             var covered = 0;
             for (var p = 0; p < tables.patches; p++) {
                 var from = tables.patchStart[p];

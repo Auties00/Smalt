@@ -252,7 +252,47 @@ class AvifStructureTest {
         }
 
         @Test
-        @DisplayName("reject an alpha item of another size and ignore one with an unknown URN")
+        @DisplayName("divide premultiplied 10-bit color by its alpha at 16 bits when the depth is kept")
+        void premultipliedHighDepth() {
+            var wide = ImageDecoderOptions.builder().highBitDepth(true).build();
+            var color = encode("scale=96:64", 96, 64, "yuv420p10le");
+            var alpha = encode("scale=96:64,format=gray,geq=lum='X*2+Y*3'", 96, 64, "gray10le");
+            var straight = new HeifBuilder();
+            var plainImage = still(straight, color);
+            var plainAux = straight.item("av01", alpha.payload(), plain(HeifBuilder.ispe(96, 64)),
+                    essential(HeifBuilder.av1C(alpha.config())), essential(HeifBuilder.alpha()));
+            straight.reference("auxl", plainAux, plainImage).primary(plainImage);
+            var source = assertInstanceOf(Yuv16Picture.class, AvifDecoder.decode(MediaSource.of(straight.build()), wide)
+                    .picture());
+            assertTrue(source.hasAlpha());
+            var builder = new HeifBuilder();
+            var image = still(builder, color);
+            var aux = builder.item("av01", alpha.payload(), plain(HeifBuilder.ispe(96, 64)),
+                    essential(HeifBuilder.av1C(alpha.config())), essential(HeifBuilder.alpha()));
+            builder.reference("auxl", aux, image).reference("prem", image, aux).primary(image);
+            var data = builder.build();
+            var decoded = assertInstanceOf(com.github.auties00.smalt.image.Rgba16Picture.class,
+                    AvifDecoder.decode(MediaSource.of(data), wide).picture());
+            var premultiplied = ImageOps.toRgba16(source);
+            var partial = 0;
+            for (var i = 0; i < 96 * 64; i++) {
+                var p = (i / 96) * premultiplied.stride() + 4 * (i % 96);
+                var q = (i / 96) * decoded.stride() + 4 * (i % 96);
+                long a = premultiplied.pixels()[p + 3] & 0xFFFF;
+                assertEquals(a, decoded.pixels()[q + 3] & 0xFFFF);
+                partial += a > 0 && a < 0xFFFF ? 1 : 0;
+                for (var c = 0; c < 3; c++) {
+                    long value = premultiplied.pixels()[p + c] & 0xFFFF;
+                    var expected = a == 0 ? 0 : Math.min(65535, (value * 131070 + a) / (2 * a));
+                    assertEquals(expected, decoded.pixels()[q + c] & 0xFFFF, "pixel " + i + " channel " + c);
+                }
+            }
+            assertTrue(partial > 1000, partial + " translucent pixels");
+            assertInstanceOf(RgbaPicture.class, AvifDecoder.decode(MediaSource.of(data)).picture());
+        }
+
+        @Test
+        @DisplayName("resample an alpha item of another size and ignore one with an unknown URN")
         void mismatched() {
             var color = encode("scale=96:64", 96, 64, "yuv420p");
             var alpha = alphaPlane(64, 64);
@@ -262,7 +302,9 @@ class AvifStructureTest {
                     essential(HeifBuilder.av1C(alpha.config())), essential(HeifBuilder.alpha()));
             builder.reference("auxl", aux, image).primary(image);
             var data = builder.build();
-            assertThrows(MediaException.Unsupported.class, () -> AvifDecoder.decode(MediaSource.of(data)));
+            var resampled = decode(data);
+            assertTrue(resampled.hasAlpha());
+            assertEquals(96, resampled.width());
             var depth = new HeifBuilder();
             var main = still(depth, color);
             var other = depth.item("av01", alpha.payload(), plain(HeifBuilder.ispe(64, 64)),

@@ -6,11 +6,11 @@ package com.github.auties00.smalt.image.jxl.internal.header;
  * Holds the default weights of the non-separable upsampling kernels (ISO/IEC 18181-1 table
  * A.21), used when the image header does not override them.
  */
-final class UpsamplingWeights {
+public final class UpsamplingWeights {
     /**
      * The default 2x upsampling weights.
      */
-    static final float[] UP2 = {
+    public static final float[] UP2 = {
             -0.01716200f, -0.03452303f, -0.04022174f, -0.02921014f, -0.00624645f,
             0.14111091f, 0.28896755f, 0.00278718f, -0.01610267f, 0.56661550f,
             0.03777607f, -0.01986694f, -0.03144731f, -0.01185068f, -0.00213539f,
@@ -19,7 +19,7 @@ final class UpsamplingWeights {
     /**
      * The default 4x upsampling weights.
      */
-    static final float[] UP4 = {
+    public static final float[] UP4 = {
             -0.02419067f, -0.03491987f, -0.03693351f, -0.03094285f, -0.00529785f,
             -0.01663432f, -0.03556863f, -0.03888905f, -0.03516850f, -0.00989469f,
             0.23651958f, 0.33392945f, -0.01073543f, -0.01313181f, -0.03556694f,
@@ -36,7 +36,7 @@ final class UpsamplingWeights {
     /**
      * The default 8x upsampling weights.
      */
-    static final float[] UP8 = {
+    public static final float[] UP8 = {
             -0.02928613f, -0.03706353f, -0.03783812f, -0.03324558f, -0.00447632f,
             -0.02519406f, -0.03752601f, -0.03901508f, -0.03663285f, -0.00646649f,
             -0.02066407f, -0.03838633f, -0.04002101f, -0.03900035f, -0.00901973f,

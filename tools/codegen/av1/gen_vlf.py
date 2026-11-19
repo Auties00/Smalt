@@ -46,7 +46,7 @@ def off_expr(r):
     return "off %s %d * stride" % ("+" if m > 0 else "-", abs(m))
 
 def lane_param(L, name, args):
-    L.append("        var %s = ShortVector.broadcast(S256, (short) %s).blend(ShortVector.broadcast(S256, (short) %s), FROM_4)"
+    L.append("        var %s = SHORT256.cast(ShortVector.broadcast(S256, (short) %s)).blend(ShortVector.broadcast(S256, (short) %s), FROM_4)"
              % (name, args[0], args[1]))
     L.append("                .blend(ShortVector.broadcast(S256, (short) %s), FROM_8).blend(ShortVector.broadcast(S256, (short) %s), FROM_12);"
              % (args[2], args[3]))

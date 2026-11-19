@@ -11,21 +11,28 @@ import java.util.OptionalDouble;
  * immutable and thread-safe; create them with {@link #builder()} or a preset such as
  * {@link #defaults()}.
  *
+ * <p>The normalization can also run in a single pass, without measuring first, through a
+ * {@link LoudnessNormalizer}.
+ *
  * @apiNote The ceiling applies to the true peak of the samples the gain is applied to; a lossy
  * encoder that follows can add a fraction of a decibel of overshoot, so leave a margin (the
  * presets use -1 dBTP or lower) when the output is encoded.
  */
 public final class LoudnessNormalization {
-    private static final LoudnessNormalization EBU_R128 = new LoudnessNormalization(-23, -1, Double.POSITIVE_INFINITY);
+    private static final LoudnessNormalization EBU_R128 =
+            new LoudnessNormalization(-23, -1, Double.POSITIVE_INFINITY, false);
 
     private final double targetLufs;
     private final double truePeakCeilingDb;
     private final double maxGainDb;
+    private final boolean peakLimiting;
 
-    private LoudnessNormalization(double targetLufs, double truePeakCeilingDb, double maxGainDb) {
+    private LoudnessNormalization(double targetLufs, double truePeakCeilingDb, double maxGainDb,
+                                  boolean peakLimiting) {
         this.targetLufs = targetLufs;
         this.truePeakCeilingDb = truePeakCeilingDb;
         this.maxGainDb = maxGainDb;
+        this.peakLimiting = peakLimiting;
     }
 
     /**
@@ -130,15 +137,28 @@ public final class LoudnessNormalization {
     }
 
     /**
+     * {@return whether the true-peak ceiling is kept by a {@link TruePeakLimiter} after the gain instead
+     * of by lowering the gain; {@code false} by default}
+     *
+     * <p>With peak limiting, {@link #gainDb(LoudnessStats)} ignores the peaks, so a quiet program with loud
+     * peaks reaches the target, and whoever applies the gain runs the samples through a limiter with
+     * {@link #truePeakCeilingDb()}, clamped to the limiter's range of -60 to 0 dBTP (the transcode
+     * package and {@link LoudnessNormalizer} do). Without a ceiling the setting has no effect.
+     */
+    public boolean peakLimiting() {
+        return peakLimiting;
+    }
+
+    /**
      * Returns the gain that normalizes a measured program.
      *
      * <p>The normalization is linear: one gain for the whole program. The gain is the target
-     * minus the integrated loudness; when the true peak (the sample peak if the true peak was not
-     * measured) raised by that gain exceeds the ceiling, the gain is lowered to put the peak on the
-     * ceiling; the result is then capped by {@link #maxGainDb()}. A program quieter than the target
-     * and with loud peaks therefore ends below the target rather than being compressed. A program
-     * whose integrated loudness is not finite (silence, with no block above the absolute gate) gets
-     * 0.
+     * minus the integrated loudness; unless {@link #peakLimiting()} is set, when the true peak (the
+     * sample peak if the true peak was not measured) raised by that gain exceeds the ceiling, the gain
+     * is lowered to put the peak on the ceiling; the result is then capped by {@link #maxGainDb()}.
+     * Without peak limiting, a program quieter than the target and with loud peaks therefore ends below
+     * the target rather than being compressed. A program whose integrated loudness is not finite
+     * (silence, with no block above the absolute gate) gets 0.
      *
      * @param stats the measurements of the program
      * @return the gain in decibels, negative to attenuate
@@ -150,8 +170,8 @@ public final class LoudnessNormalization {
         }
         var gain = targetLufs - stats.integrated();
         var peak = Double.isNaN(stats.truePeak()) ? stats.samplePeak() : stats.truePeak();
-        if (Double.isFinite(truePeakCeilingDb) && peak > 0) {
-            var peakDb = 20 * Math.log10(peak);
+        if (!peakLimiting && Double.isFinite(truePeakCeilingDb) && peak > 0) {
+            var peakDb = 20 * StrictMath.log10(peak);
             if (peakDb + gain > truePeakCeilingDb) {
                 gain = truePeakCeilingDb - peakDb;
             }
@@ -163,18 +183,19 @@ public final class LoudnessNormalization {
     public boolean equals(Object other) {
         return other instanceof LoudnessNormalization that && Double.compare(targetLufs, that.targetLufs) == 0
                 && Double.compare(truePeakCeilingDb, that.truePeakCeilingDb) == 0
-                && Double.compare(maxGainDb, that.maxGainDb) == 0;
+                && Double.compare(maxGainDb, that.maxGainDb) == 0
+                && peakLimiting == that.peakLimiting;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(targetLufs, truePeakCeilingDb, maxGainDb);
+        return Objects.hash(targetLufs, truePeakCeilingDb, maxGainDb, peakLimiting);
     }
 
     @Override
     public String toString() {
         return "LoudnessNormalization[targetLufs=" + targetLufs + ", truePeakCeilingDb=" + truePeakCeilingDb()
-                + ", maxGainDb=" + maxGainDb() + "]";
+                + ", maxGainDb=" + maxGainDb() + ", peakLimiting=" + peakLimiting + "]";
     }
 
     /**
@@ -187,11 +208,24 @@ public final class LoudnessNormalization {
         private double targetLufs;
         private OptionalDouble truePeakCeilingDb;
         private OptionalDouble maxGainDb;
+        private boolean peakLimiting;
 
         private Builder(LoudnessNormalization normalization) {
             this.targetLufs = normalization.targetLufs;
             this.truePeakCeilingDb = normalization.truePeakCeilingDb();
             this.maxGainDb = normalization.maxGainDb();
+            this.peakLimiting = normalization.peakLimiting;
+        }
+
+        /**
+         * Sets whether the ceiling is kept by a limiter; see {@link LoudnessNormalization#peakLimiting()}.
+         *
+         * @param limiting the value
+         * @return this builder
+         */
+        public Builder peakLimiting(boolean limiting) {
+            this.peakLimiting = limiting;
+            return this;
         }
 
         /**
@@ -261,7 +295,7 @@ public final class LoudnessNormalization {
             var limit = maxGainDb.isPresent()
                     ? finite("gain limit", Checks.nonNegative("gain limit", maxGainDb.getAsDouble()))
                     : Double.POSITIVE_INFINITY;
-            return new LoudnessNormalization(targetLufs, ceiling, limit);
+            return new LoudnessNormalization(targetLufs, ceiling, limit, peakLimiting);
         }
 
         /**

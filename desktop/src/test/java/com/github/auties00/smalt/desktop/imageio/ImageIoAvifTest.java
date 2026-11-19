@@ -60,7 +60,7 @@ class ImageIoAvifTest {
     }
 
     @Test
-    @DisplayName("describes a 10-bit monochrome AVIF as gray in its metadata, as its image type does")
+    @DisplayName("describes a 10-bit monochrome AVIF as gray in its metadata, as its 16-bit image type does")
     void monochromeMetadata() throws IOException {
         var luma = new short[64 * 32];
         for (var i = 0; i < luma.length; i++) {
@@ -79,7 +79,13 @@ class ImageIoAvifTest {
                     .getAsTree(IIOMetadataFormatImpl.standardMetadataFormatName);
             var space = (IIOMetadataNode) tree.getElementsByTagName("ColorSpaceType").item(0);
             assertEquals("GRAY", space.getAttribute("name"));
-            assertEquals(BufferedImage.TYPE_BYTE_GRAY, reader.read(0).getType());
+            // a 10-bit picture reads as 16-bit gray by default, and as 8-bit gray on request
+            var deep = reader.read(0);
+            assertEquals(BufferedImage.TYPE_USHORT_GRAY, deep.getType());
+            var param = reader.getDefaultReadParam();
+            param.setDestinationType(javax.imageio.ImageTypeSpecifier.createFromBufferedImageType(
+                    BufferedImage.TYPE_BYTE_GRAY));
+            assertEquals(BufferedImage.TYPE_BYTE_GRAY, reader.read(0, param).getType());
             reader.dispose();
         }
     }

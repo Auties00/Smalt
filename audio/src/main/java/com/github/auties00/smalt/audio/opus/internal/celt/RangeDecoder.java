@@ -208,6 +208,29 @@ public final class RangeDecoder extends EntropyCoder {
     }
 
     /**
+     * Decodes a symbol described by a 16-bit inverse cumulative distribution ({@code ec_dec_icdf16}).
+     *
+     * @param icdf the inverse CDF: {@code 2^ftb} minus the cumulative frequency of each symbol, ending with zero
+     * @param ftb  the base-2 logarithm of the total frequency, at most 15
+     * @return the decoded symbol index
+     */
+    public int decIcdf16(int[] icdf, int ftb) {
+        var s = rng;
+        var d = val;
+        var r = s >>> ftb;
+        var ret = -1;
+        int t;
+        do {
+            t = s;
+            s = r * icdf[++ret];
+        } while (d < s);
+        val = d - s;
+        rng = t - s;
+        normalize();
+        return ret;
+    }
+
+    /**
      * Decodes a uniformly distributed integer in {@code [0, ft)} ({@code ec_dec_uint}).
      *
      * <p>A decoded value out of range sets {@link #error} and returns {@code ft - 1}.

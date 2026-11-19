@@ -12,8 +12,9 @@
  * path of production only because the class path of production must start with the class path of
  * training.
  *
- * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}) and the threading
- * model are those of the core module ({@code com.github.auties00.smalt}).
+ * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}, with
+ * {@code -Dsmalt.simd=true} on Windows) and the threading model are those of the core module
+ * ({@code com.github.auties00.smalt}).
  */
 module com.github.auties00.smalt.aot {
     // Smalt core: TrainingMedia returns its picture type

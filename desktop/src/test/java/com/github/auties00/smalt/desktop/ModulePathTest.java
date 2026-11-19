@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.desktop;
 
 import com.github.auties00.smalt.desktop.probe.DesktopProbe;
+import com.github.auties00.smalt.testkit.ChildJvm;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -51,6 +52,7 @@ class ModulePathTest {
         assertTrue(entries.size() >= 5, "Smalt modules on the test class path: " + entries);
         var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "-Xmx256m", "-Djava.awt.headless=true"));
+        command.addAll(ChildJvm.cpuArgs());
         if (mode.equals("module path")) {
             command.addAll(List.of("--module-path", String.join(File.pathSeparator, entries),
                     "--add-modules", "ALL-MODULE-PATH", "-cp", probeClasses()));

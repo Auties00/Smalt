@@ -1,0 +1,16 @@
+# video decode dump of elementary/h263/annex/smalt-rps.263.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 200000
+seekable true
+track 1 H263 176x144 timebase=1/30
+0 pts=0 dur=1 key=true 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2df85464 u=e446b67f v=e5effc06
+1 pts=1 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=5fd3651d u=6b696839 v=86947ad8
+2 pts=2 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=1326e054 u=d7a2a9ab v=90512bce
+3 pts=3 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=9dbf68c6 u=d0cebae5 v=b32206a9
+4 pts=4 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=3c11674e u=5b613d80 v=b185952e
+5 pts=5 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=cb8a7a76 u=43eea039 v=1b04fcf3
+seek 0: @0
+seek 66666: @1
+seek 133333: @3
+seek 200000: end
+seek -1000000: @0

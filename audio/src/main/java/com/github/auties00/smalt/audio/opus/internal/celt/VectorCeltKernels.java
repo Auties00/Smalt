@@ -60,8 +60,11 @@ final class VectorCeltKernels implements CeltKernels {
 
     /**
      * The scalar kernels that finish the lags left over by the vector loops.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarCeltKernels scalar = new ScalarCeltKernels();
+    private static final ScalarCeltKernels SCALAR = new ScalarCeltKernels();
 
     /**
      * Creates the vector kernels.
@@ -149,7 +152,7 @@ final class VectorCeltKernels implements CeltKernels {
             }
         }
         if (i < maxPitch) {
-            scalar.pitchXcorr(x, xOff, y, yOff + i, xcorr, xcorrOff + i, len, maxPitch - i);
+            SCALAR.pitchXcorr(x, xOff, y, yOff + i, xcorr, xcorrOff + i, len, maxPitch - i);
         }
     }
 
@@ -157,7 +160,7 @@ final class VectorCeltKernels implements CeltKernels {
     public void combFilterConst(float[] y, int yOff, float[] x, int xOff, int T, int N, float g10, float g11, float g12) {
         // In place, a block of LANES outputs may only read samples at least one block back.
         if (y == x && (yOff != xOff || LANES > T - 2)) {
-            scalar.combFilterConst(y, yOff, x, xOff, T, N, g10, g11, g12);
+            SCALAR.combFilterConst(y, yOff, x, xOff, T, N, g10, g11, g12);
             return;
         }
         var gain0 = FloatVector.broadcast(SPECIES, g10);
@@ -178,7 +181,7 @@ final class VectorCeltKernels implements CeltKernels {
             v.intoArray(y, yOff + i);
         }
         if (i < N) {
-            scalar.combFilterConst(y, yOff + i, x, xOff + i, T, N - i, g10, g11, g12);
+            SCALAR.combFilterConst(y, yOff + i, x, xOff + i, T, N - i, g10, g11, g12);
         }
     }
 
@@ -496,7 +499,7 @@ final class VectorCeltKernels implements CeltKernels {
     @Override
     public int pvqSearchBest(float[] X, int xOff, float[] y, int N, float xy, float yy) {
         if (N < 2 * LANES) {
-            return scalar.pvqSearchBest(X, xOff, y, N, xy, yy);
+            return SCALAR.pvqSearchBest(X, xOff, y, N, xy, yy);
         }
         var nVec = N - N % LANES;
         var xyV = FLOAT_VECTOR.cast(FloatVector.broadcast(SPECIES, xy));
@@ -539,7 +542,7 @@ final class VectorCeltKernels implements CeltKernels {
             }
         }
         if (m < 0) {
-            return scalar.pvqSearchBest(X, xOff, y, N, xy, yy);
+            return SCALAR.pvqSearchBest(X, xOff, y, N, xy, yy);
         }
         // Exact check with the reference comparison: m must beat every earlier candidate and no
         // later candidate may beat m; then a sequential scan ends at m as well.
@@ -561,7 +564,7 @@ final class VectorCeltKernels implements CeltKernels {
             var fail = INT_MASK.cast(a.compare(VectorOperators.LE, b).cast(INT_SPECIES)).and(earlier)
                     .or(INT_MASK.cast(a.compare(VectorOperators.LT, b).cast(INT_SPECIES)).and(later));
             if (fail.anyTrue()) {
-                return scalar.pvqSearchBest(X, xOff, y, N, xy, yy);
+                return SCALAR.pvqSearchBest(X, xOff, y, N, xy, yy);
             }
         }
         for (var j = nVec; j < N; j++) {
@@ -574,7 +577,7 @@ final class VectorCeltKernels implements CeltKernels {
             var a = den * numM;
             var b = denM * num;
             if (j < m ? !(a > b) : b > a) {
-                return scalar.pvqSearchBest(X, xOff, y, N, xy, yy);
+                return SCALAR.pvqSearchBest(X, xOff, y, N, xy, yy);
             }
         }
         return m;
@@ -599,7 +602,7 @@ final class VectorCeltKernels implements CeltKernels {
         // The reference's ternaries let a NaN reset the running extremes: only a sequential scan
         // reproduces that.
         if (hasNan) {
-            return scalar.maxabs(x, off, len);
+            return SCALAR.maxabs(x, off, len);
         }
         var maxval = FLOAT_VECTOR.cast(vmax).reduceLanes(VectorOperators.MAX);
         var minval = FLOAT_VECTOR.cast(vmin).reduceLanes(VectorOperators.MIN);
@@ -614,7 +617,7 @@ final class VectorCeltKernels implements CeltKernels {
     public void expRotation1(float[] X, int xOff, int len, int stride, float c, float s) {
         // A block of LANES rotations only depends on rotations at least stride away.
         if (stride < LANES) {
-            scalar.expRotation1(X, xOff, len, stride, c, s);
+            SCALAR.expRotation1(X, xOff, len, stride, c, s);
             return;
         }
         var ms = -s;
@@ -659,7 +662,7 @@ final class VectorCeltKernels implements CeltKernels {
     public void haar1(float[] X, int xOff, int N0, int stride) {
         // The blocks of one pair are contiguous across i, so a vector covers LANES blocks.
         if (stride < LANES) {
-            scalar.haar1(X, xOff, N0, stride);
+            SCALAR.haar1(X, xOff, N0, stride);
             return;
         }
         N0 >>= 1;

@@ -60,11 +60,8 @@ class BmpDecoderTest {
         if (bits == 0) {
             return 0;
         }
-        if (bits > 8) {
-            return value >>> (bits - 8);
-        }
-        var maximum = (1 << bits) - 1;
-        return (int) Math.round(value * 255.0 / maximum);
+        var maximum = (1L << bits) - 1;
+        return (int) Math.round((value & 0xFFFFFFFFL) * 255.0 / maximum);
     }
 
     static byte[] expectPalette(int[] indices, int[] colors, int size) {
@@ -318,9 +315,8 @@ class BmpDecoderTest {
     @DisplayName("rejection")
     class Rejection {
         @ParameterizedTest(name = "compression {0} header {1} depth {2} -> {3}")
-        @CsvSource({"4, 40, 0, bmp embedded jpeg", "5, 124, 0, bmp embedded png", "11, 40, 32, bmp cmyk",
-                "3, 64, 1, bmp os/2 huffman", "4, 64, 24, bmp rle24", "0, 40, 64, bmp 64-bit", "99, 40, 24, bmp compression 99"})
-        @DisplayName("reports unsupported features by name")
+        @CsvSource({"99, 40, 24, bmp compression 99", "7, 40, 24, bmp compression 7", "14, 124, 32, bmp compression 14"})
+        @DisplayName("reports unknown compressions by name")
         void unsupported(int compression, int header, int depth, String format) {
             var data = BmpFiles.of(2, 2, depth).header(header).compression(compression).pixels(new byte[64]).bytes();
             var exception = assertThrows(MediaException.Unsupported.class, () -> decode(data));
@@ -420,5 +416,26 @@ class BmpDecoderTest {
         }));
         assertEquals(seeds.size() * RasterTesting.mutationsPerSeed(150), stats.variants());
         System.out.println("BMP mutations: " + stats);
+    }
+
+    @Test
+    @DisplayName("Images.openAnimation presents a BMP as one seekable frame shown for zero microseconds")
+    void stillAnimationSeeks() {
+        var data = Fixtures.read(Fixtures.testImage("bmp", 16, 8, List.of("-pix_fmt", "bgr24")));
+        try (var reader = com.github.auties00.smalt.image.Images.openAnimation(MediaSource.of(data))) {
+            assertTrue(reader.isSeekable());
+            var first = assertInstanceOf(RgbaPicture.class, reader.read().picture());
+            assertNull(reader.read());
+            reader.seek(0);
+            assertNull(reader.read());
+            reader.seek(-1);
+            var again = reader.read();
+            assertNotNull(again);
+            assertEquals(0, again.timestampMicros());
+            assertSame(first, again.picture());
+            assertNull(reader.read());
+            reader.seek(Long.MIN_VALUE);
+            assertNotNull(reader.read());
+        }
     }
 }

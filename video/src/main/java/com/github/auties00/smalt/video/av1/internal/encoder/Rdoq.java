@@ -91,7 +91,24 @@ final class Rdoq {
     }
 
     /**
-     * Fills the cost tables from a frame's initial CDFs.
+     * The bit depth above 8 of the coefficients, by which the distortion is scaled down to the
+     * 8-bit scale of the Lagrangian multiplier.
+     */
+    private int depthShift;
+
+    /**
+     * Fills the cost tables from a frame's initial CDFs, for coefficients of a bit depth.
+     *
+     * @param cdf the CDFs
+     * @param bitDepth the bit depth of the samples, 8, 10 or 12
+     */
+    void setup(char[] cdf, int bitDepth) {
+        depthShift = bitDepth - 8;
+        setup(cdf);
+    }
+
+    /**
+     * Fills the cost tables from a frame's initial CDFs, keeping the bit depth.
      *
      * @param cdf the CDFs
      */
@@ -193,7 +210,7 @@ final class Rdoq {
         var mask = (4 << slh) - 1;
         var lv = map;
         Arrays.fill(lv, 0, stride * ((4 << slw) + 2), (byte) 0);
-        var distShift = 14 + 2 * logScale;
+        var distShift = 14 + 2 * logScale - 2 * depthShift;
         var dcSignCtx = dcCtx;
         var brGroup = (Math.min(tctx, 3) * 2 + chroma) * 21;
         for (var i = last; i >= 0; i--) {

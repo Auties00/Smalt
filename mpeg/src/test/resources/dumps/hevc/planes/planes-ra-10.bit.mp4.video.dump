@@ -1,0 +1,20 @@
+# video decode dump of hevc/planes/planes-ra-10.bit.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 520000
+seekable true
+track 1 HEVC 128x96 timebase=1/90000
+0 pts=10800 dur=3600 key=true 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=43b0d9c9 u=4eaeb086 v=339937e3
+1 pts=14400 dur=3600 key=false 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=ee03953f u=c600d181 v=494eb1ac
+2 pts=18000 dur=3600 key=false 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=066a18e5 u=d74d6aec v=85e2f6fb
+3 pts=21600 dur=3600 key=false 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=3cbbd145 u=b0294598 v=c469a5d6
+4 pts=25200 dur=3600 key=false 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=21f276d1 u=22d8e935 v=6728bb35
+5 pts=28800 dur=3600 key=false 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=796e2248 u=c56dbf6e v=676b7488
+6 pts=32400 dur=3600 key=false 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=42f32765 u=0cf386a6 v=c33b5f76
+7 pts=36000 dur=3600 key=false 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=e225028b u=f55550d6 v=e4e3559c
+8 pts=39600 dur=3600 key=true 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=44e6afbe u=062d78c2 v=287eeb86
+9 pts=43200 dur=3600 key=false 128x96 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=096d0b6f u=7a968b6d v=bbbac8cd
+seek 0: @0
+seek 173333: @1
+seek 346666: @5
+seek 520000: end
+seek -1000000: @0

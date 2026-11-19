@@ -403,6 +403,9 @@ final class BasicOps {
     /**
      * Returns the number of left shifts that normalize a 16-bit value ({@code norm_s}).
      *
+     * <p>A negative value is normalized through its one's complement, as in TS 26.073, so that a
+     * negative power of two normalizes to {@link #MIN_16}.
+     *
      * @param var1 the value
      * @return the shift count, 0 for 0
      */
@@ -410,12 +413,15 @@ final class BasicOps {
         if (var1 == 0) {
             return 0;
         }
-        int y = (short) (var1 - (var1 < 0 ? 1 : 0));
-        return (short) (Integer.numberOfLeadingZeros(y ^ (y >> 15)) - 17);
+        int y = var1 ^ (var1 >> 15);
+        return (short) (Integer.numberOfLeadingZeros(y) - 17);
     }
 
     /**
      * Returns the number of left shifts that normalize a 32-bit value ({@code norm_l}).
+     *
+     * <p>A negative value is normalized through its one's complement, as in TS 26.073, so that a
+     * negative power of two normalizes to {@code MIN_32}.
      *
      * @param var1 the value
      * @return the shift count, 0 for 0
@@ -424,8 +430,8 @@ final class BasicOps {
         if (var1 == 0) {
             return 0;
         }
-        var y = var1 - (var1 < 0 ? 1 : 0);
-        return (short) (Integer.numberOfLeadingZeros(y ^ (y >> 31)) - 1);
+        var y = var1 ^ (var1 >> 31);
+        return (short) (Integer.numberOfLeadingZeros(y) - 1);
     }
 
     /**

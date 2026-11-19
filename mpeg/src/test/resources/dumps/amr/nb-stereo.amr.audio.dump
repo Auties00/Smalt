@@ -1,0 +1,19 @@
+# audio decode dump of amr/nb-stereo.amr; regenerate with -Dsmalt.test.updateDumps=true
+format AMR
+duration 2020000
+seekable true
+track 0 AMR_NB rate=8000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=4b6f5494
+1 frames=4096 crc16=e0f14e91
+2 frames=4096 crc16=ad6162f5
+3 frames=3872 crc16=ed69376d
+seek 0: @sample 0
+seek 673333: @sample 5387
+seek 1346666: @sample 10773
+seek 2020000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AMR
+  duration -1
+  seekable false
+  track 0 AMR_NB rate=8000 layout=[FRONT_LEFT, FRONT_RIGHT]

@@ -268,7 +268,7 @@ final class RateController {
     /**
      * The model offsets {@code a} by frame type (0 intra, 1 inter), natural logarithm.
      */
-    private final double[] offset = {Math.log(2.0), Math.log(1.0)};
+    private final double[] offset = {StrictMath.log(2.0), StrictMath.log(1.0)};
 
     /**
      * Whether each model offset learned from a coded frame.
@@ -425,6 +425,18 @@ final class RateController {
     private double frameBudget;
 
     /**
+     * The plan of the second pass of a two-pass encode, or {@code null} for a single pass. The frames the
+     * first pass measured get their quantizers from it, the later ones from the single-pass model, which
+     * learns from every frame.
+     */
+    private final TwoPassPlan plan;
+
+    /**
+     * Whether the quantizer of the frame being coded came from {@link #plan}.
+     */
+    private boolean planned;
+
+    /**
      * Constructs a rate controller.
      *
      * @param config the encoder configuration
@@ -445,6 +457,8 @@ final class RateController {
         if (realtime) {
             offset[0] = REALTIME_INTRA_OFFSET;
         }
+        this.plan = config.passRecords() == null || mode != H264RateControl.AVERAGE_BITRATE ? null
+                : new TwoPassPlan(config.passRecords(), bitrate, idrOffset);
     }
 
     /**
@@ -497,11 +511,14 @@ final class RateController {
         var relative = bufferSize > 0 ? fill / bufferSize : 1;
         var ratio = newBitrate / bitrate;
         bitrate = newBitrate;
+        if (plan != null) {
+            plan.retarget(newBitrate);
+        }
         maxBitrate *= ratio;
         bufferSize *= ratio;
         fill = relative * bufferSize;
         wanted = spent;
-        var shift = -6 * Math.log(ratio) / Math.log(2) / GAMMA;
+        var shift = -6 * StrictMath.log(ratio) / StrictMath.log(2) / GAMMA;
         if (lastPQp >= 0) {
             lastPQp = Math.clamp(lastPQp + shift, minQp, maxQp);
         }
@@ -530,7 +547,7 @@ final class RateController {
      * @return the step
      */
     static double qscale(double qp) {
-        return 0.85 * Math.pow(2, (qp - 12) / 6.0);
+        return 0.85 * StrictMath.pow(2, (qp - 12) / 6.0);
     }
 
     /**
@@ -540,7 +557,7 @@ final class RateController {
      * @return the quantizer, unclamped
      */
     static double qp(double qscale) {
-        return 12 + 6 * Math.log(qscale / 0.85) / Math.log(2);
+        return 12 + 6 * StrictMath.log(qscale / 0.85) / StrictMath.log(2);
     }
 
     /**
@@ -561,7 +578,7 @@ final class RateController {
      * @return the predicted size in bits
      */
     double predict(boolean intra, double complexity, double qp) {
-        return Math.exp(offset[intra ? 0 : 1] + Math.log(Math.max(1, complexity)) - gamma(intra) * Math.log(qscale(qp))
+        return StrictMath.exp(offset[intra ? 0 : 1] + StrictMath.log(Math.max(1, complexity)) - gamma(intra) * StrictMath.log(qscale(qp))
                 + (intra ? 0 : referenceTerm(qp))) + 64;
     }
 
@@ -600,14 +617,14 @@ final class RateController {
      */
     private double solve(boolean intra, double complexity, double target) {
         var bits = Math.max(target - 64, 16);
-        var logQscale = (offset[intra ? 0 : 1] + Math.log(Math.max(1, complexity)) - Math.log(bits)) / gamma(intra);
-        var qp = qp(Math.exp(logQscale));
+        var logQscale = (offset[intra ? 0 : 1] + StrictMath.log(Math.max(1, complexity)) - StrictMath.log(bits)) / gamma(intra);
+        var qp = qp(StrictMath.exp(logQscale));
         if (intra || !realtime || referenceQp < 0 || !referenceInter || (referenceUp == 0 && referenceDown == 0)) {
             return qp;
         }
         // log(bits) falls by GAMMA * ln(2) / 6 per quantizer step, plus the reference slope on the
         // side of the reference quantizer the solution lies on
-        var slope = gamma(false) * Math.log(2) / 6;
+        var slope = gamma(false) * StrictMath.log(2) / 6;
         var finerEdge = referenceQp - REFERENCE_DEAD_ZONE;
         if (qp < finerEdge) {
             return qp + referenceUp * (finerEdge - qp) / (slope + referenceUp);
@@ -622,16 +639,37 @@ final class RateController {
     /**
      * Chooses the quantizer of the next frame.
      *
+     * <p>In the second pass of a two-pass encode, a frame the first pass measured gets the quantizer of the
+     * plan, raised while both the plan and the single-pass model predict a size above 90% of the buffer's
+     * fullness.
+     *
      * @param intra whether the frame is an IDR frame
      * @param complexity the frame's complexity estimate
      * @param duration the frame's duration in seconds
+     * @param frame the frame's display index
      * @return the quantizer
      */
-    int frameQp(boolean intra, long complexity, double duration) {
+    int frameQp(boolean intra, long complexity, double duration, long frame) {
+        planned = false;
         if (mode == H264RateControl.CONSTANT_QUALITY) {
             return Math.clamp(intra ? quality - idrOffset : quality, minQp, maxQp);
         }
         var budget = bitrate * duration;
+        if (plan != null && plan.covers(frame)) {
+            planned = true;
+            var qp = Math.clamp(plan.quantizer(frame, intra), floorQp(), maxQp);
+            if (hasBuffer()) {
+                var limit = 0.9 * fill;
+                while (qp < maxQp && Math.min(plan.predict(frame, qp), predict(intra, complexity, qp)) > limit) {
+                    qp += 1;
+                }
+            }
+            var chosen = (int) Math.round(Math.clamp(qp, floorQp(), maxQp));
+            plannedBits = plan.predict(frame, chosen);
+            frameBudget = budget;
+            firstTarget = -1;
+            return chosen;
+        }
         double qp;
         if (mode == H264RateControl.CONSTANT_BITRATE) {
             var target = Math.max(budget + 0.25 * (fill - 0.8 * bufferSize), budget * 0.25);
@@ -679,7 +717,7 @@ final class RateController {
             } else {
                 var unlearned = !realtime && averageComplexity[1] == 0;
                 var relative = unlearned ? 1 : complexity / Math.max(1, averageComplexity[1]);
-                qp = qp(qscale(baseQp) * Math.pow(Math.clamp(relative, 0.1, 10), COMPLEXITY_EXPONENT));
+                qp = qp(qscale(baseQp) * StrictMath.pow(Math.clamp(relative, 0.1, 10), COMPLEXITY_EXPONENT));
                 var base = lastPQp >= 0 ? lastPQp : lastIQp >= 0 ? lastIQp + idrOffset : qp;
                 var step = unlearned ? MAX_STEP : maxStep(relative);
                 qp = Math.clamp(qp, base - step, base + step);
@@ -756,15 +794,15 @@ final class RateController {
         var available = Math.max(budget - 64 * frames, 1);
         var overflow = Math.clamp(1 + (spent - wanted) / (bitrate * DRIFT_SECONDS), 0.5, 2);
         if (realtime) {
-            var interWeight = interFrames * Math.exp(offset[1]) * interComplexity;
-            var intraWeight = intraFrames * Math.exp(offset[0]) * intraComplexity;
+            var interWeight = interFrames * StrictMath.exp(offset[1]) * interComplexity;
+            var intraWeight = intraFrames * StrictMath.exp(offset[0]) * intraComplexity;
             return qp(realtimeBaseQscale(interWeight, intraWeight, available) * overflow);
         }
-        var interOffset = learned[1] ? offset[1] : offset[0] - Math.log(1.5);
-        var intraOffset = learned[0] ? offset[0] : offset[1] + Math.log(1.5);
-        var weight = interFrames * Math.exp(interOffset) * interComplexity
-                + intraFrames * Math.exp(intraOffset) * intraComplexity * Math.pow(qscale(12 + idrOffset) / 0.85, GAMMA);
-        return qp(Math.pow(weight / available, 1 / GAMMA) * overflow);
+        var interOffset = learned[1] ? offset[1] : offset[0] - StrictMath.log(1.5);
+        var intraOffset = learned[0] ? offset[0] : offset[1] + StrictMath.log(1.5);
+        var weight = interFrames * StrictMath.exp(interOffset) * interComplexity
+                + intraFrames * StrictMath.exp(intraOffset) * intraComplexity * StrictMath.pow(qscale(12 + idrOffset) / 0.85, GAMMA);
+        return qp(StrictMath.pow(weight / available, 1 / GAMMA) * overflow);
     }
 
     /**
@@ -781,21 +819,21 @@ final class RateController {
      * @return the base quantizer step
      */
     private static double realtimeBaseQscale(double interWeight, double intraWeight, double available) {
-        var intraScale = Math.pow(2, -IDR_OFFSET / 6.0);
-        var low = Math.log(qscale(0));
-        var high = Math.log(qscale(QP_MAX));
+        var intraScale = StrictMath.pow(2, -IDR_OFFSET / 6.0);
+        var low = StrictMath.log(qscale(0));
+        var high = StrictMath.log(qscale(QP_MAX));
         for (var iteration = 0; iteration < 40; iteration++) {
             var middle = 0.5 * (low + high);
-            var step = Math.exp(middle);
-            var bits = interWeight * Math.pow(step, -GAMMA)
-                    + intraWeight * Math.pow(step * intraScale, -REALTIME_INTRA_GAMMA);
+            var step = StrictMath.exp(middle);
+            var bits = interWeight * StrictMath.pow(step, -GAMMA)
+                    + intraWeight * StrictMath.pow(step * intraScale, -REALTIME_INTRA_GAMMA);
             if (bits > available) {
                 low = middle;
             } else {
                 high = middle;
             }
         }
-        return Math.exp(0.5 * (low + high));
+        return StrictMath.exp(0.5 * (low + high));
     }
 
     /**
@@ -811,7 +849,7 @@ final class RateController {
      * when it exceeds both its predicted size and the frame budget by {@link #OVERSHOOT_FACTOR};
      * it is then aimed at its predicted size, or three frame budgets when that is larger. Later P
      * frames are left to the buffer verifier, and constant
-     * quality and real-time mode never correct.
+     * quality, real-time mode and frames planned by a two-pass encode never correct.
      *
      * @param intra whether the frame is an IDR picture
      * @param qp the quantizer the frame was coded with
@@ -820,7 +858,7 @@ final class RateController {
      * @return the quantizer to code the frame with
      */
     int correctSize(boolean intra, int qp, long bits, long complexity) {
-        if (mode == H264RateControl.CONSTANT_QUALITY) {
+        if (mode == H264RateControl.CONSTANT_QUALITY || planned) {
             return qp;
         }
         if (realtime) {
@@ -832,7 +870,7 @@ final class RateController {
             if (bits <= INTRA_OVERSHOOT * target || qp >= maxQp) {
                 return qp;
             }
-            var step = (int) Math.ceil(6 * Math.log(bits / target) / Math.log(2) / GAMMA);
+            var step = (int) Math.ceil(6 * StrictMath.log(bits / target) / StrictMath.log(2) / GAMMA);
             return Math.min(maxQp, qp + Math.max(1, step));
         }
         if (!intra && (learned[0] || learned[1])) {
@@ -841,7 +879,7 @@ final class RateController {
                 return qp;
             }
             var target = Math.max(plannedBits, P_RECODE_TARGET * frameBudget);
-            var step = (int) Math.ceil(6 * Math.log(bits / target) / Math.log(2) / GAMMA);
+            var step = (int) Math.ceil(6 * StrictMath.log(bits / target) / StrictMath.log(2) / GAMMA);
             return Math.min(maxQp, qp + Math.max(1, step));
         }
         if (firstTarget < 0 || learned[0] || learned[1]) {
@@ -849,8 +887,8 @@ final class RateController {
             if (!intra || bits <= limit || qp >= maxQp) {
                 return qp;
             }
-            var observed = Math.log(Math.max(16, bits - 64)) - Math.log(Math.max(1, complexity))
-                    + gamma(intra) * Math.log(qscale(qp));
+            var observed = StrictMath.log(Math.max(16, bits - 64)) - StrictMath.log(Math.max(1, complexity))
+                    + gamma(intra) * StrictMath.log(qscale(qp));
             var target = Math.max(plannedBits, OVERSHOOT_FACTOR * frameBudget);
             var type = intra ? 0 : 1;
             var saved = offset[type];
@@ -866,10 +904,20 @@ final class RateController {
             return qp;
         }
         var type = intra ? 0 : 1;
-        offset[type] = Math.log(Math.max(16, bits - 64)) - Math.log(Math.max(1, complexity))
-                + gamma(intra) * Math.log(qscale(qp));
+        offset[type] = StrictMath.log(Math.max(16, bits - 64)) - StrictMath.log(Math.max(1, complexity))
+                + gamma(intra) * StrictMath.log(qscale(qp));
         var corrected = Math.max(solve(intra, complexity, target), qp - FIRST_FRAME_MAX_DECREASE);
         return (int) Math.round(Math.clamp(corrected, floorQp(), maxQp));
+    }
+
+    /**
+     * Sets the bits the buffer holds for the next frame, those of the hypothetical reference decoder the
+     * stream signals, which supersede the leaky bucket's estimate.
+     *
+     * @param bits the most bits the next frame may take
+     */
+    void setFill(double bits) {
+        fill = bits;
     }
 
     /**
@@ -891,7 +939,7 @@ final class RateController {
      */
     int retryQp(int qp, long bits) {
         var ratio = bits / Math.max(1, 0.8 * fill);
-        var step = (int) Math.ceil(6 * Math.log(ratio) / Math.log(2) / 1.2);
+        var step = (int) Math.ceil(6 * StrictMath.log(ratio) / StrictMath.log(2) / 1.2);
         return Math.min(maxQp, qp + Math.max(2, step));
     }
 
@@ -906,8 +954,8 @@ final class RateController {
      */
     void update(boolean intra, int qp, long bits, long complexity, double duration) {
         var type = intra ? 0 : 1;
-        var observed = Math.log(Math.max(16, bits - 64)) - Math.log(Math.max(1, complexity))
-                + gamma(intra) * Math.log(qscale(qp));
+        var observed = StrictMath.log(Math.max(16, bits - 64)) - StrictMath.log(Math.max(1, complexity))
+                + gamma(intra) * StrictMath.log(qscale(qp));
         if (!intra && realtime && referenceInter && learned[1]) {
             var difference = excess(referenceQp - qp);
             var residual = observed - offset[1];
@@ -928,7 +976,7 @@ final class RateController {
             offset[type] = observed;
             learned[type] = true;
         } else {
-            var memory = intra ? INTRA_MODEL_MEMORY : Math.pow(INTER_MODEL_MEMORY, anchorSpacing);
+            var memory = intra ? INTRA_MODEL_MEMORY : StrictMath.pow(INTER_MODEL_MEMORY, anchorSpacing);
             var keep = Math.min(memory, updates[type] / (updates[type] + 1.0));
             offset[type] = keep * offset[type] + (1 - keep) * observed;
         }
@@ -946,6 +994,36 @@ final class RateController {
         if (hasBuffer()) {
             fill = Math.max(0, fill - bits);
             fill = Math.min(bufferSize, fill + maxBitrate * duration);
+        }
+    }
+
+    /**
+     * Returns the quantizer of a B picture, which the encoder derives from its anchor's: in the second pass of
+     * a two-pass encode the plan's quantizer for a frame the first pass measured, inside the quantizer window,
+     * and the derived quantizer otherwise.
+     *
+     * @param frame the frame's display index
+     * @param derived the quantizer derived from the anchor's
+     * @return the quantizer
+     */
+    int bQp(long frame, int derived) {
+        if (plan == null || !plan.covers(frame)) {
+            return derived;
+        }
+        return (int) Math.round(Math.clamp(plan.quantizer(frame, false), floorQp(), maxQp));
+    }
+
+    /**
+     * Records the final size of a coded frame for the plan of a two-pass encode; without a plan the call does
+     * nothing.
+     *
+     * @param frame the frame's display index
+     * @param qp the frame's quantizer, without the offset of its temporal layer
+     * @param bits the frame size in bits
+     */
+    void coded(long frame, int qp, long bits) {
+        if (plan != null) {
+            plan.coded(frame, qp, bits);
         }
     }
 

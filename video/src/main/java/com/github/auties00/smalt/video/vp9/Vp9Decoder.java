@@ -40,9 +40,8 @@ import java.util.function.Consumer;
  * <p>All four profiles are decoded: profile 0 (8-bit 4:2:0), profile 1 (8-bit 4:2:2, 4:4:4 and
  * 4:4:0), profile 2 (10 and 12-bit 4:2:0) and profile 3 (10 and 12-bit 4:2:2, 4:4:4 and 4:4:0).
  * Pictures are 8-bit {@link YuvPicture}s of the coded frame size in {@link ChromaFormat#YUV420},
- * {@link ChromaFormat#YUV422} or {@link ChromaFormat#YUV444}; 4:4:0 frames, which no chroma
- * format represents, raise {@link MediaException.Unsupported} {@code "vp9 4:4:0"} when they are
- * shown. 10 and 12-bit frames are decoded at full precision and rounded to 8 bits on output:
+ * {@link ChromaFormat#YUV422}, {@link ChromaFormat#YUV444} or {@link ChromaFormat#YUV440}, the
+ * stream's own subsampling. 10 and 12-bit frames are decoded at full precision and rounded to 8 bits on output:
  * sample {@code v} of bit depth {@code d} becomes {@code min(255, (v + 2^(d - 9)) >> (d - 8))}. A
  * decoder created with {@link VideoDecoderOptions#highBitDepth()} set hands them out as
  * {@link Yuv16Picture}s of the stream's bit depth instead, holding the full-precision samples;
@@ -187,7 +186,6 @@ public final class Vp9Decoder implements VideoDecoder {
      * @param output receives the frame when the packet shows one
      * @throws MediaException.Malformed if a frame is corrupt, or is an inter frame without valid
      * references
-     * @throws MediaException.Unsupported if a shown frame is 4:4:0
      * @throws MediaException.LimitExceeded if a frame exceeds the decoder's limits
      */
     @Override
@@ -213,7 +211,6 @@ public final class Vp9Decoder implements VideoDecoder {
      *
      * @param frame the decoded frame, with its header
      * @return the picture
-     * @throws MediaException.Unsupported if the frame is 4:4:0
      */
     private Picture picture(Vp9Frame frame) {
         ChromaFormat format;
@@ -224,7 +221,7 @@ public final class Vp9Decoder implements VideoDecoder {
         } else if (frame.ssY == 0) {
             format = ChromaFormat.YUV444;
         } else {
-            throw new MediaException.Unsupported("vp9 4:4:0", "vp9 4:4:0 chroma subsampling has no picture format");
+            format = ChromaFormat.YUV440;
         }
         var color = track.color().orElseGet(() -> colorInfo(frame));
         var width = frame.width;

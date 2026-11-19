@@ -236,7 +236,7 @@ class FrameConverterTest {
             assertNotNull(picture);
             assertEquals(ChromaFormat.YUV420, picture.chromaFormat());
             assertEquals(ColorInfo.JPEG, picture.color());
-            var decoded = new MjpegDecoder().decodeFrame(jpeg, 0, jpeg.length);
+            var decoded = (YuvPicture) new MjpegDecoder().decodeFrame(jpeg, 0, jpeg.length);
             var actual = planes(picture);
             for (var row = 0; row < 24; row++) {
                 for (var k = 0; k < 32; k++) {

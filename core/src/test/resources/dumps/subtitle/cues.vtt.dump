@@ -1,0 +1,14 @@
+# demux dump of subtitle/cues.vtt; regenerate with -Dsmalt.test.updateDumps=true
+format WEBVTT
+duration 2000000
+seekable true
+track 1 DATA WEBVTT timebase=1/1000 duration=2000 config=28:8ed07f8f
+packets 3
+0 t1 pts=0 dts=0 dur=400 flags=KEY size=5 crc=f7d18982 side=[webvtt:settings=11:3cdb3356]
+1 t1 pts=500 dts=500 dur=400 flags=KEY size=12 crc=7cb933d4 side=[webvtt:identifier=6:b61f1169]
+2 t1 pts=1250 dts=1250 dur=750 flags=KEY size=9 crc=3a64f8bc
+seek 0: t1@0
+seek 666666: t1@1
+seek 1333333: t1@2
+seek 2000000: end
+seek -1000000: t1@0

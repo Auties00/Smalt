@@ -1,0 +1,13 @@
+# audio decode dump of matroska/g722.mka; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 600000
+seekable true
+track 1 ADPCM_G722 rate=16000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=04f0671e
+1 frames=4096 crc16=ed638eca
+2 frames=1386 crc16=80cf4cf5
+seek 0: @sample 0
+seek 200000: @sample 3200
+seek 400000: @sample 6400
+seek 600000: end
+seek -1000000: @sample 0

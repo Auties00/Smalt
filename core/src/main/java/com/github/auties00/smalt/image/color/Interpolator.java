@@ -111,8 +111,39 @@ final class Interpolator {
                     tetrahedral(input, output);
                 }
             }
-            default -> evalN(input, 0, 0, output, domain.length);
+            default -> evalN(input, 0, 0, output, domain.length, null);
         }
+    }
+
+    /**
+     * Evaluates the table without allocating, for tables of four or more inputs, with scratch space from
+     * {@link #scratch()}.
+     *
+     * @param input the coordinates, {@code 0..65535}, one per input
+     * @param output receives the samples, one per output
+     * @param scratch the scratch space of this interpolator, or {@code null} to allocate it
+     */
+    void evaluate(int[] input, int[] output, int[][] scratch) {
+        if (domain.length < 4) {
+            evaluate(input, output);
+        } else {
+            evalN(input, 0, 0, output, domain.length, scratch);
+        }
+    }
+
+    /**
+     * {@return scratch space for {@link #evaluate(int[], int[], int[][])}, two arrays of {@link #outputs()} samples
+     * per interpolation level, or {@code null} for fewer than four inputs}
+     */
+    int[][] scratch() {
+        if (domain.length < 4) {
+            return null;
+        }
+        var levels = new int[2 * (domain.length - 3)][];
+        for (var i = 0; i < levels.length; i++) {
+            levels[i] = new int[outputs];
+        }
+        return levels;
     }
 
     /**
@@ -347,24 +378,26 @@ final class Interpolator {
      * @param tableBase  the table offset of this level
      * @param output     receives the samples
      * @param dimensions the number of inputs of this level, at least four
+     * @param scratch the scratch space of {@link #scratch()}, or {@code null} to allocate per level
      */
-    private void evalN(int[] input, int first, int tableBase, int[] output, int dimensions) {
+    private void evalN(int[] input, int first, int tableBase, int[] output, int dimensions, int[][] scratch) {
         var value = input[first];
         var fk = ToneCurve.toFixedDomain(value * domain[first]);
         var k0 = fk >> 16;
         var rk = fk & 0xFFFF;
         var stride = opta[dimensions - 1];
         var base0 = tableBase + stride * k0;
-        var low = new int[outputs];
-        var high = new int[outputs];
+        var level = domain.length - dimensions;
+        var low = scratch == null ? new int[outputs] : scratch[2 * level];
+        var high = scratch == null ? new int[outputs] : scratch[2 * level + 1];
         if (dimensions == 4) {
             var base1 = base0 + (value == 0xFFFF ? 0 : stride);
             tetrahedralExact(input, first + 1, base0, low);
             tetrahedralExact(input, first + 1, base1, high);
         } else {
             var base1 = tableBase + stride * (k0 + (value != 0xFFFF ? 1 : 0));
-            evalN(input, first + 1, base0, low, dimensions - 1);
-            evalN(input, first + 1, base1, high, dimensions - 1);
+            evalN(input, first + 1, base0, low, dimensions - 1, scratch);
+            evalN(input, first + 1, base1, high, dimensions - 1, scratch);
         }
         for (var o = 0; o < outputs; o++) {
             output[o] = ToneCurve.linear(rk, low[o], high[o]);

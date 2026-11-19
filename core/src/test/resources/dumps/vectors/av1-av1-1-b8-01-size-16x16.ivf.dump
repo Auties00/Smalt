@@ -1,0 +1,14 @@
+# demux dump of vectors/av1-av1-1-b8-01-size-16x16.ivf; regenerate with -Dsmalt.test.updateDumps=true
+format IVF
+duration 66667
+seekable true
+track 0 VIDEO AV1 timebase=1/30 duration=? config=none
+  video 16x16 orientation=NORMAL rate=30/1
+packets 2
+0 t0 pts=0 dts=0 dur=? flags=KEY size=183 crc=8f38cd06
+1 t0 pts=1 dts=1 dur=? flags=- size=79 crc=37e243cc
+seek 0: t0@0
+seek 22222: t0@0
+seek 44444: t0@0
+seek 66667: end
+seek -1000000: t0@0

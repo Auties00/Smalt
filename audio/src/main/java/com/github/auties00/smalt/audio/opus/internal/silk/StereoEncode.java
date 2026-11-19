@@ -38,6 +38,16 @@ final class StereoEncode {
     private final short[] hpSide = new short[MAX_FRAME_LENGTH];
 
     /**
+     * The low-band and high-band predictors of the frame, in Q13.
+     */
+    private final int[] predictors = new int[2];
+
+    /**
+     * The residual-to-mid energy ratio a predictor search returns, in Q14.
+     */
+    private final int[] residualRatio = new int[1];
+
+    /**
      * Creates the converter scratch.
      */
     StereoEncode() {
@@ -69,9 +79,9 @@ final class StereoEncode {
                       int prev_speech_act_Q8, int toMono, int fs_kHz, int frame_length) {
         int n, is10msFrame, denom_Q16, delta0_Q13, delta1_Q13;
         int sum, diff, smooth_coef_Q16, pred0_Q13, pred1_Q13;
-        var pred_Q13 = new int[2];
+        var pred_Q13 = predictors;
         int LP_ratio_Q14, HP_ratio_Q14, frac_Q16, frac_3_Q16, min_mid_rate_bps, width_Q14, w_Q24, deltaw_Q24;
-        var ratio = new int[1];
+        var ratio = residualRatio;
         var mid = x1;
         var midOff = x1Off - 2;
 

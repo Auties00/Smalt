@@ -67,8 +67,9 @@ import java.util.Set;
  * ExifTool documentation; the stream structure, the predictor, the Huffman tables, the low-bit
  * layout, the black and white levels and the meaning of the shot settings' fields were derived
  * clean-room from CC0 sample files against the values Adobe DNG Converter, run as a black box,
- * stores for them. Table sets beyond the three the samples use, files without a decoder table
- * and Huffman codes no sample has shown raise {@link MediaException.Unsupported}. The black level
+ * stores for them, and the codes no sample uses from the values it stores for copies of the
+ * samples that use them. Table sets beyond the three of the samples (which the converter refuses
+ * too) and files without a decoder table raise {@link MediaException.Unsupported}. The black level
  * is measured on the masked rectangle when the sensor data is read.
  */
 final class CrwParser {
@@ -454,13 +455,13 @@ final class CrwParser {
         var shot = words(reader, records.get(SHOT_INFO));
         if (shot.length > 5) {
             if (shot[2] > 0) {
-                file.iso = Math.round(100 * Math.pow(2, (shot[2] - 160 + shot[1]) / 32.0));
+                file.iso = Math.round(100 * StrictMath.pow(2, (shot[2] - 160 + shot[1]) / 32.0));
             }
             if (shot[4] != Short.MIN_VALUE && shot[4] != 0) {
-                file.fNumber = Math.pow(2, shot[4] / 64.0);
+                file.fNumber = StrictMath.pow(2, shot[4] / 64.0);
             }
             if (shot[5] != Short.MIN_VALUE && shot[5] != 0) {
-                file.exposureTime = Math.pow(2, -shot[5] / 32.0);
+                file.exposureTime = StrictMath.pow(2, -shot[5] / 32.0);
             }
         }
         var camera = words(reader, records.get(CAMERA_SETTINGS));
@@ -564,15 +565,18 @@ final class CrwParser {
         if (right > left && bottom > top && right < sensor.width && bottom < sensor.height) {
             sensor.activeArea = new int[]{top, left, bottom + 1, right + 1};
         }
-        if (FOUR_COLOR.contains(file.model)) {
+        // a file without a model name is read as the common RGGB sensor
+        var model = file.model == null ? "" : file.model;
+        if (FOUR_COLOR.contains(model)) {
             sensor.cfa = CfaPattern.of(2, 2, List.of(CfaColor.GREEN, CfaColor.MAGENTA, CfaColor.YELLOW, CfaColor.CYAN));
             sensor.planeOfColor = new int[]{-1, 0, -1, 2, 1, 3, -1};
             file.color.asShotNeutral = null;
+            sensor.estimateBalance = true;
         } else {
             sensor.cfa = CfaPattern.bayer("RGGB");
             sensor.estimateBalance = file.color.asShotNeutral == null;
         }
-        sensor.white = new double[]{WHITE_4000.contains(file.model) ? 4000 : (1 << sensor.bitsPerSample) - 1};
+        sensor.white = new double[]{WHITE_4000.contains(model) ? 4000 : (1 << sensor.bitsPerSample) - 1};
         var mask = info.length > 12
                 ? new int[]{info[9] & 0xFFFF, info[10] & 0xFFFF, info[11] & 0xFFFF, info[12] & 0xFFFF} : null;
         var source = reader.source();
@@ -594,7 +598,6 @@ final class CrwParser {
      * @param layout where the sensor data lies
      * @param plane the plane to fill, of the stored size
      * @param limits the resource bounds
-     * @throws MediaException.Unsupported if the stream uses a Huffman code no sample file has shown
      */
     static void decompress(MediaSource source, Layout layout, SensorPlane plane, MediaLimits limits) {
         LimitChecks.checkAllocation(limits, layout.streamLength());
@@ -615,9 +618,6 @@ final class CrwParser {
         var column = 0;
         for (var start = 0; start < total; start += 64) {
             var category = bits.decode(dc);
-            if (category < 0) {
-                throw underived();
-            }
             first += extend(bits.read(category), category);
             coefficients[0] = first;
             for (var index = 1; index < 64; index++) {
@@ -632,10 +632,10 @@ final class CrwParser {
                     difference = (entry & 0xFFF) - FAST_BIAS;
                 } else {
                     var code = bits.decode(ac);
+                    if (code == CrwTables.ZERO) {
+                        continue;
+                    }
                     if (code <= 0) {
-                        if (code < 0) {
-                            throw underived();
-                        }
                         break;
                     }
                     index += code >>> 4;
@@ -663,13 +663,6 @@ final class CrwParser {
     }
 
     /**
-     * {@return the exception for a Huffman code whose value no sample file has shown}
-     */
-    private static MediaException.Unsupported underived() {
-        return new MediaException.Unsupported("crw", "the CRW stream uses a Huffman code no sample file has shown");
-    }
-
-    /**
      * Builds the fused AC lookup of an AC table.
      *
      * @param spec the table, as code counts followed by values
@@ -682,7 +675,7 @@ final class CrwParser {
         for (var length = 1; length <= 16; length++) {
             for (var count = 0; count < spec[length - 1]; count++, code++) {
                 var value = spec[index++];
-                if (value == CrwTables.UNDERIVED || length > FAST_BITS) {
+                if (value == CrwTables.ZERO || length > FAST_BITS) {
                     continue;
                 }
                 var size = value & 15;

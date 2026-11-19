@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.loudness;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -9,7 +10,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks that the vector true-peak kernel returns bit-identical results to its scalar twin, for
@@ -21,7 +21,7 @@ class TruePeakKernelTest {
     @ValueSource(ints = {44_100, 48_000, 96_000, 176_400})
     @DisplayName("vector and scalar kernels agree bit for bit")
     void equivalence(int rate) {
-        assumeTrue(Simd.ENABLED, "the Vector API is not available");
+        Skip.unlessVector(Simd.ENABLED);
         var filter = TruePeakMeter.filter(rate);
         var vector = VectorLoudnessKernels.truePeak();
         var scalar = new ScalarTruePeakKernel();

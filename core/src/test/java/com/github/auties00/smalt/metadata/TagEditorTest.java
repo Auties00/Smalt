@@ -29,6 +29,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TagEditorTest {
     /** A container under test and what ffmpeg can read back from it. */
     record Case(String name, Path file, boolean ffprobeChapters, boolean ffprobePictures, boolean joinsValues, boolean inPlace) {
+        /** {@return whether the container stores pictures; the WebM specification allows no attachments} */
+        boolean storesPictures() {
+            return !name.equals("webm");
+        }
+
         @Override
         public String toString() {
             return name;
@@ -55,7 +60,7 @@ class TagEditorTest {
                 new Case("mkv", TagFixtures.video("mkv", List.of("-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac")),
                         true, true, false, true),
                 new Case("webm", TagFixtures.video("webm", List.of("-c:v", "libvpx-vp9", "-deadline", "realtime", "-c:a",
-                        "libopus")), true, true, false, true),
+                        "libopus")), true, false, false, true),
                 new Case("fragmented mp4 absolute offsets", TagFixtures.video("mp4", List.of("-c:v", "libx264", "-preset",
                         "ultrafast", "-c:a", "aac", "-movflags", "+frag_keyframe+empty_moov")), false, false, false, true),
                 new Case("adts", TagFixtures.audio("aac", List.of("-c:a", "aac", "-f", "adts", "-write_id3v2", "1")), false,
@@ -111,8 +116,10 @@ class TagEditorTest {
         assertEquals(sample.get(StandardTag.COMPOSER), read.get(StandardTag.COMPOSER));
         assertEquals(sample.get(StandardTag.LYRICS), read.get(StandardTag.LYRICS));
         assertEquals(sample.get("REPLAYGAIN_TRACK_GAIN"), read.get("REPLAYGAIN_TRACK_GAIN"));
-        assertEquals(1, read.pictures().size());
-        assertArrayEquals(sample.pictures().getFirst().data(), read.pictures().getFirst().data());
+        assertEquals(container.storesPictures() ? 1 : 0, read.pictures().size());
+        if (container.storesPictures()) {
+            assertArrayEquals(sample.pictures().getFirst().data(), read.pictures().getFirst().data());
+        }
         assertChapters(sample.chapters(), read.chapters());
         var probe = TagFixtures.ffprobeTags(file);
         assertEquals(sample.get(StandardTag.TITLE).orElseThrow(), probe.get("title"));
@@ -204,6 +211,10 @@ class TagEditorTest {
                 .build();
         TagEditor.write(file, tags);
         var read = TagEditor.read(file);
+        if (!container.storesPictures()) {
+            assertTrue(read.pictures().isEmpty(), read.pictures().toString());
+            return;
+        }
         assertEquals(2, read.pictures().size());
         assertEquals(AttachedPicture.Type.FRONT_COVER, read.pictures().getFirst().type());
     }

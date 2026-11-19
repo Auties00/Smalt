@@ -66,6 +66,30 @@ class Vp8KeyFrameEncoderParallelTest {
         return cases.stream();
     }
 
+    static Stream<Arguments> modes() {
+        var cases = new ArrayList<Arguments>();
+        for (var method : new int[]{1, 3, 4, 6}) {
+            cases.add(Arguments.of(method, new Vp8KeyFrameSettings(75, method, 4, 60, 0, 1, 50, false, true, 1, 0)));
+            cases.add(Arguments.of(method, new Vp8KeyFrameSettings(40, method, 3, 0, 3, 2, 80, true, true, 1, 0)));
+            cases.add(Arguments.of(method, new Vp8KeyFrameSettings(75, method, 4, 60, 0, 1, 50, false, false, 3, 0)));
+            cases.add(Arguments.of(method, new Vp8KeyFrameSettings(75, method, 4, 60, 0, 4, 50, false, true, 6, 38)));
+        }
+        return cases.stream();
+    }
+
+    @ParameterizedTest(name = "m{0} {1}")
+    @MethodSource("modes")
+    @DisplayName("automatic filtering, passes and PSNR targets do not depend on the thread count")
+    void sameOutputModes(int method, Vp8KeyFrameSettings settings) {
+        try (var _ = ParallelBands.operation()) {
+            var picture = picture(1001, 777, method * 17L);
+            var single = new Vp8KeyFrameEncoder(picture, settings);
+            single.limitThreads(1);
+            var parallel = new Vp8KeyFrameEncoder(picture, settings);
+            assertArrayEquals(single.encode(), parallel.encode());
+        }
+    }
+
     @ParameterizedTest(name = "{0}x{1} q{2} m{3} segments {4} partitions {5} filter {6}")
     @MethodSource("cases")
     @DisplayName("the bytes and the reconstruction do not depend on the thread count")

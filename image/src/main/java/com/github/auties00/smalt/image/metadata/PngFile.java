@@ -2,9 +2,12 @@ package com.github.auties00.smalt.image.metadata;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Chromaticity;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.internal.zlib.Zlib;
 import com.github.auties00.smalt.internal.edit.EditPlan;
+import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.XmpPacket;
@@ -271,6 +274,11 @@ final class PngFile implements ImageFile {
     @Override
     public EditPlan plan(Resolved target) {
         var iccChunk = target.icc() instanceof ImageMetadataEdit.Change.Replace ? iccChunk(target.iccProfile()) : null;
+        var hdrChunks = iccChunk != null && target.hdrColor() != null ? hdrChunks(target.hdrColor()) : List.<byte[]>of();
+        if (!hdrChunks.isEmpty() && grayscale()) {
+            // the RGB ICC form of a high-dynamic-range profile cannot describe a grayscale image; cICP alone does
+            iccChunk = null;
+        }
         var early = new ArrayList<byte[]>();
         if (target.exif() instanceof ImageMetadataEdit.Change.Replace) {
             early.add(chunk("eXIf", target.exifBytes()));
@@ -306,8 +314,13 @@ final class PngFile implements ImageFile {
                 continue;
             }
             plan.copy(chunk.offset(), 12 + chunk.length());
-            if (type.equals("IHDR") && iccChunk != null) {
-                plan.bytes(iccChunk);
+            if (type.equals("IHDR")) {
+                for (var bytes : hdrChunks) {
+                    plan.bytes(bytes);
+                }
+                if (iccChunk != null) {
+                    plan.bytes(iccChunk);
+                }
             }
         }
         if (!earlyDone) {
@@ -330,7 +343,7 @@ final class PngFile implements ImageFile {
         return switch (chunk.type()) {
             case "eXIf" -> !(target.exif() instanceof ImageMetadataEdit.Change.Keep);
             case "iCCP" -> !(target.icc() instanceof ImageMetadataEdit.Change.Keep);
-            case "sRGB" -> target.icc() instanceof ImageMetadataEdit.Change.Replace;
+            case "sRGB", "cICP", "mDCV", "mDCv", "cLLI", "cLLi" -> target.icc() instanceof ImageMetadataEdit.Change.Replace;
             case "tIME" -> target.removeOther();
             case "tEXt", "zTXt", "iTXt" -> {
                 var keywordEnd = terminator(chunk.data(), 0);
@@ -345,6 +358,63 @@ final class PngFile implements ImageFile {
             }
             default -> false;
         };
+    }
+
+    /**
+     * Returns whether the image is stored in a grayscale color type.
+     *
+     * @return {@code true} when the {@code IHDR} color type is 0 or 4
+     */
+    private boolean grayscale() {
+        for (var chunk : chunks) {
+            if (chunk.type().equals("IHDR") && chunk.data().length >= 10) {
+                var type = chunk.data()[9];
+                return type == 0 || type == 4;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Builds the {@code cICP} chunk of a high-dynamic-range profile, followed by an {@code mDCV} chunk when it
+     * describes a mastering display and a {@code cLLI} chunk when it describes a content light level.
+     *
+     * @param color the color description of the profile
+     * @return the chunks
+     */
+    private static List<byte[]> hdrChunks(ColorInfo color) {
+        var chunks = new ArrayList<byte[]>();
+        chunks.add(chunk("cICP", new byte[]{(byte) color.primaries().code(), (byte) color.transfer().code(), 0, 1}));
+        color.masteringDisplay().ifPresent(display -> {
+            var mdcv = new byte[24];
+            var points = new Chromaticity[]{display.red(), display.green(), display.blue(), display.whitePoint()};
+            for (var i = 0; i < points.length; i++) {
+                ByteArrays.put16be(mdcv, i * 4, fixed(points[i].x(), 50000, 0xFFFF));
+                ByteArrays.put16be(mdcv, i * 4 + 2, fixed(points[i].y(), 50000, 0xFFFF));
+            }
+            ByteArrays.put32be(mdcv, 16, fixed(display.maxLuminance(), 10000, Integer.MAX_VALUE));
+            ByteArrays.put32be(mdcv, 20, fixed(display.minLuminance(), 10000, Integer.MAX_VALUE));
+            chunks.add(chunk("mDCV", mdcv));
+        });
+        color.contentLightLevel().ifPresent(level -> {
+            var clli = new byte[8];
+            ByteArrays.put32be(clli, 0, level.maxContentLightLevel() * 10000);
+            ByteArrays.put32be(clli, 4, level.maxFrameAverageLightLevel() * 10000);
+            chunks.add(chunk("cLLI", clli));
+        });
+        return chunks;
+    }
+
+    /**
+     * Rounds a real value to a fixed-point field, saturating at its largest value.
+     *
+     * @param value the value, not negative
+     * @param scale the units per 1.0
+     * @param max the largest field value
+     * @return the field value
+     */
+    private static int fixed(double value, double scale, int max) {
+        return (int) Math.min(max, Math.round(value * scale));
     }
 
     /**

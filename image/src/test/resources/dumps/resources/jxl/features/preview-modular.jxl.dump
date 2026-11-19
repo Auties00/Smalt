@@ -1,0 +1,22 @@
+# image dump of resources/jxl/features/preview-modular.jxl; regenerate with -Dsmalt.test.updateDumps=true
+format JXL
+info ImageInfo[format=JXL, width=120, height=90, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 120x90 rgba8 alpha=false crc=d2e79cc4
+  format=JXL orientation=NORMAL source=120x90
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+scaled 30x22
+picture 30x23 rgba8 alpha=false crc=47534ae4
+  format=JXL orientation=NORMAL source=120x90
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+decoder preview
+picture 30x23 rgba8 alpha=false crc=47534ae4
+  format=JXL orientation=NORMAL source=120x90
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+decoder gain map
+null
+decoder boxes
+[]

@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.metadata;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.internal.xml.XmlReader;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -180,12 +181,15 @@ public final class XmpPacket {
      *
      * <p>The bytes are UTF-8, or UTF-16 or UTF-32 when they start with the matching byte order
      * mark. The {@code xpacket} processing instructions and the {@code x:xmpmeta} wrapper are
-     * optional; trailing padding is ignored.
+     * optional; trailing padding is ignored. Control characters XML 1.0 cannot hold (C0 controls
+     * other than tab, line feed and carriage return) are dropped from text and attribute values,
+     * as {@link #toXml()} drops them, so a parsed packet is the one its serialization parses to.
      *
      * @param xml the serialized packet
      * @return the packet
      * @throws NullPointerException     if {@code xml} is {@code null}
-     * @throws MediaException.Malformed if the bytes are not well-formed XML or hold no
+     * @throws MediaException.Malformed if the bytes are not well-formed XML, hold a character
+     *                                  reference to a character XML cannot hold, or hold no
      *                                  {@code rdf:RDF} element
      */
     public static XmpPacket parse(byte[] xml) {
@@ -196,10 +200,13 @@ public final class XmpPacket {
     /**
      * Parses a serialized packet.
      *
+     * <p>The text is read as {@link #parse(byte[])} reads decoded bytes.
+     *
      * @param xml the serialized packet
      * @return the packet
      * @throws NullPointerException     if {@code xml} is {@code null}
-     * @throws MediaException.Malformed if the text is not well-formed XML or holds no
+     * @throws MediaException.Malformed if the text is not well-formed XML, holds a character
+     *                                  reference to a character XML cannot hold, or holds no
      *                                  {@code rdf:RDF} element
      */
     public static XmpPacket parse(String xml) {

@@ -21,9 +21,9 @@ import java.util.Arrays;
  * <p>Generated from {@code tools/codegen/vp9}; edit the template.
  *
  * @implNote This implementation follows the kernel rules of
- * {@link com.github.auties00.smalt.internal.simd.Simd} and needs 256-bit vectors: on narrower
- * hardware {@link #create()} returns the scalar kernels. The note at the top of the class body
- * describes the lane layouts.
+ * {@link com.github.auties00.smalt.internal.simd.Simd} and needs 256-bit vectors, so it is
+ * selected only when {@link com.github.auties00.smalt.internal.simd.Simd#WIDE} is {@code true}.
+ * The note at the top of the class body describes the lane layouts.
  */
 final class VectorVp9Dsp extends Vp9Dsp {
     /*
@@ -564,8 +564,11 @@ final class VectorVp9Dsp extends Vp9Dsp {
 
     /**
      * The scalar kernels used where vectors do not pay off.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarVp9Dsp scalar = new ScalarVp9Dsp();
+    private static final ScalarVp9Dsp SCALAR = new ScalarVp9Dsp();
 
     /**
      * Creates the vector implementation.
@@ -574,13 +577,13 @@ final class VectorVp9Dsp extends Vp9Dsp {
     }
 
     /**
-     * Creates the vector implementation when the hardware has 256-bit vectors, otherwise the
-     * scalar one; called only when the Vector API is available.
+     * Creates the vector implementation; called only when
+     * {@link com.github.auties00.smalt.internal.simd.Simd#WIDE} is {@code true}.
      *
      * @return the implementation
      */
     static Vp9Dsp create() {
-        return ShortVector.SPECIES_PREFERRED.vectorBitSize() >= 256 ? new VectorVp9Dsp() : new ScalarVp9Dsp();
+        return new VectorVp9Dsp();
     }
 
     /**
@@ -2961,7 +2964,7 @@ final class VectorVp9Dsp extends Vp9Dsp {
 
     @Override
     public void inverseWhtAdd(int eob, int[] coef, int coefOff, byte[] dst, int dstOff, int stride, int[] scratch) {
-        scalar.inverseWhtAdd(eob, coef, coefOff, dst, dstOff, stride, scratch);
+        SCALAR.inverseWhtAdd(eob, coef, coefOff, dst, dstOff, stride, scratch);
     }
 
     @Override
@@ -2969,7 +2972,7 @@ final class VectorVp9Dsp extends Vp9Dsp {
                          short[] kernels, int kernelBase, int subX, int xStep, int subY, int yStep,
                          int w, int h, boolean average, byte[] scratch) {
         if (xStep != 16 || yStep != 16) {
-            scalar.convolve(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, kernelBase, subX, xStep, subY,
+            SCALAR.convolve(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, kernelBase, subX, xStep, subY,
                     yStep, w, h, average, scratch);
         } else if (subX == 0 && subY == 0) {
             copyOrAverage(src, srcOff, srcStride, dst, dstOff, dstStride, w, h, average);
@@ -5370,7 +5373,7 @@ final class VectorVp9Dsp extends Vp9Dsp {
         if (mode == Vp9Constants.TM_PRED) {
             trueMotion(4 << txSize, dst, dstOff, stride, above, aboveOff, left, leftOff);
         } else {
-            scalar.intraPredict(mode, txSize, dcEdges, dst, dstOff, stride, above, aboveOff, left, leftOff);
+            SCALAR.intraPredict(mode, txSize, dcEdges, dst, dstOff, stride, above, aboveOff, left, leftOff);
         }
     }
 

@@ -6,11 +6,13 @@ import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.header.VorbisChannelOrder;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -170,6 +172,23 @@ public final class VorbisDecoder implements AudioDecoder {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>The coded order is the Vorbis I channel order for three to eight channels (5.1 is coded as front left,
+     * center, front right, back left, back right, LFE) and the WAVE order for any other count.
+     */
+    @Override
+    public int[] codedChannelOrder() {
+        var channels = layout.channels();
+        var order = VorbisChannelOrder.toWave(channels);
+        var coded = new int[channels];
+        for (var channel = 0; channel < channels; channel++) {
+            coded[order != null ? order[channel] : channel] = channel;
+        }
+        return coded;
+    }
+
+    /**
      * Decodes one audio packet and hands the samples it completes to {@code output}.
      *
      * <p>The first packet after construction or {@link #flush(Consumer)} yields nothing; every
@@ -195,6 +214,48 @@ public final class VorbisDecoder implements AudioDecoder {
             buffer.setFrames(samples);
             output.accept(buffer);
         }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The concealment unit is half the block size of the last decoded packet, the samples one more packet of
+     * that size returns, or half the short block size before the first packet. Each unit is a block of that size
+     * whose spectrum repeats the last decoded one with random signs, at full amplitude for the first block lost in
+     * a row, halved for each further one, and silent from the fifth on; its overlap with the blocks around it
+     * smooths the joins. Before the first packet the span is silence and the next packet still only primes the
+     * decoder.
+     *
+     * @throws IllegalArgumentException if {@code samples} is not positive
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        var unit = decoder.concealmentUnit();
+        var units = Math.min(Math.max(1, (samples + unit / 2) / unit), Integer.MAX_VALUE / unit);
+        for (var i = 0; i < units; i++) {
+            var produced = decoder.conceal(streamPlanes);
+            if (produced == PacketDecoder.IGNORED) {
+                for (var plane : buffer.planes()) {
+                    Arrays.fill(plane, 0, unit, 0);
+                }
+                produced = unit;
+            }
+            buffer.setFrames(produced);
+            output.accept(buffer);
+        }
+        return units * unit;
     }
 
     /**

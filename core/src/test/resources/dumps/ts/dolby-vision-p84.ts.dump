@@ -1,0 +1,30 @@
+# demux dump of ts/dolby-vision-p84.ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration 250000
+seekable true
+track 256 VIDEO HEVC timebase=1/90000 duration=? config=111:5a75b605
+  video 160x96 orientation=NORMAL rate=24/1 sar=1/1
+  color ColorInfo[matrix=BT2020_NCL, range=LIMITED, primaries=BT2020, transfer=HLG, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+  dolbyVision DolbyVision[versionMajor=1, versionMinor=0, profile=8, level=1, rpuPresent=true, enhancementLayerPresent=false, baseLayerPresent=true, baseLayerCompatibility=4, metadataCompression=0]
+packets 6
+0 t256 pts=0 dts=0 dur=3750 flags=KEY size=3847 crc=dc656bd2
+1 t256 pts=3750 dts=3750 dur=3750 flags=- size=457 crc=59f56c38
+2 t256 pts=7500 dts=7500 dur=3750 flags=- size=293 crc=0c1c09cd
+3 t256 pts=11250 dts=11250 dur=3750 flags=KEY size=4000 crc=07392514
+4 t256 pts=15000 dts=15000 dur=3750 flags=- size=372 crc=c8c692fc
+5 t256 pts=18750 dts=18750 dur=3750 flags=- size=331 crc=be98f1a0
+seek 0: t256@0
+seek 83333: t256@0
+seek 166666: t256@3
+seek 250000: end
+seek -1000000: t256@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 256 VIDEO HEVC timebase=1/90000 duration=? config=111:5a75b605
+    video 160x96 orientation=NORMAL rate=24/1 sar=1/1
+    color ColorInfo[matrix=BT2020_NCL, range=LIMITED, primaries=BT2020, transfer=HLG, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+    dolbyVision DolbyVision[versionMajor=1, versionMinor=0, profile=8, level=1, rpuPresent=true, enhancementLayerPresent=false, baseLayerPresent=true, baseLayerCompatibility=4, metadataCompression=0]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

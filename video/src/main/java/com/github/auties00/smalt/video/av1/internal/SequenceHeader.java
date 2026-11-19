@@ -376,8 +376,10 @@ public final class SequenceHeader {
     /**
      * Returns the pixel layout of a chroma format.
      *
-     * @param format the chroma format
+     * @param format the chroma format, which AV1 can code
      * @return the layout, one of the {@code LAYOUT_} constants
+     * @throws IllegalArgumentException if the format is {@link ChromaFormat#YUV440}, which AV1 cannot
+     * code
      */
     public static int layoutOf(ChromaFormat format) {
         return switch (format) {
@@ -385,6 +387,7 @@ public final class SequenceHeader {
             case YUV420 -> LAYOUT_I420;
             case YUV422 -> LAYOUT_I422;
             case YUV444 -> LAYOUT_I444;
+            case YUV440 -> throw new IllegalArgumentException("AV1 cannot code 4:4:0 chroma");
         };
     }
 

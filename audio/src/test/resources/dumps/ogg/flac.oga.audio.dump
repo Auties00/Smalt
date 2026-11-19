@@ -1,0 +1,19 @@
+# audio decode dump of ogg/flac.oga; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 600000
+seekable true
+track 0 FLAC rate=22050 layout=[FRONT_CENTER]
+0 frames=4096 crc16=49a44509
+1 frames=4096 crc16=05531763
+2 frames=4096 crc16=b711d676
+3 frames=942 crc16=bdcf3b7c
+seek 0: @sample 0
+seek 200000: @sample 4410
+seek 400000: @sample 8820
+seek 600000: end
+seek -1000000: @sample 0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  track 0 FLAC rate=22050 layout=[FRONT_CENTER]

@@ -1,0 +1,15 @@
+# video decode dump of hevc/scc/scc-ld-444-8.hevc.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 200000
+seekable true
+track 1 HEVC 192x128 timebase=1/90000
+0 pts=0 dur=3600 key=true 192x128 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=6867ede7 u=6b6da034 v=d76806ad
+1 pts=3600 dur=3600 key=false 192x128 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=858b4f01 u=8b7255f3 v=6ce3dc53
+2 pts=7200 dur=3600 key=false 192x128 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=ac7c6a50 u=32ab93cc v=390e46fb
+3 pts=10800 dur=3600 key=false 192x128 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=5dd0cbac u=bc5e0de2 v=71ca4203
+4 pts=14400 dur=3600 key=false 192x128 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=de2e071b u=1de992cb v=f54008c4
+seek 0: @0
+seek 66666: @1
+seek 133333: @3
+seek 200000: end
+seek -1000000: @0

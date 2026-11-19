@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-kodak-p880-nan.kdc; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=3264, height=2448, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 3264x2448 rgba8 alpha=false crc=17f4424e
+  format=RAW orientation=NORMAL source=3264x2448
+  icc=520:86132914 exif=738:9a4e8e94 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 3264x2448 channels=1 cfa=GRBG neutral=[0.6384039900249376, 1.0, 0.7071823204419889] crc=d9d2620a
