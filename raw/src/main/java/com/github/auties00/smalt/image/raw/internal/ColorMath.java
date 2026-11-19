@@ -401,7 +401,7 @@ final class ColorMath {
      */
     private static double lobe(double lambda, double center, double below, double above) {
         var t = (lambda - center) / (lambda < center ? below : above);
-        return Math.exp(-0.5 * t * t);
+        return StrictMath.exp(-0.5 * t * t);
     }
 
     /**
@@ -452,6 +452,80 @@ final class ColorMath {
                     : -0.9549476 * x * x * x - 1.37418593 * x * x + 2.09137015 * x - 0.16748867;
         }
         return new double[]{x, y};
+    }
+
+    /**
+     * Returns the chromaticity of a correlated color temperature moved off the locus by a tint: the point of
+     * {@link #chromaticity(double)}, moved in the CIE 1960 UCS diagram by {@code tint / 3000} along the unit
+     * normal to the Planckian locus at the temperature that points toward larger {@code v}.
+     *
+     * @param kelvin the temperature
+     * @param tint the offset from the locus, in units of 1/3000 of the CIE 1960 UCS distance
+     * @return the chromaticity
+     */
+    static double[] chromaticity(double kelvin, double tint) {
+        var xy = chromaticity(kelvin);
+        if (tint == 0) {
+            return xy;
+        }
+        var uv = xyToUv(xy);
+        var normal = planckianNormal(kelvin);
+        return uvToXy(uv[0] + tint / 3000 * normal[0], uv[1] + tint / 3000 * normal[1]);
+    }
+
+    /**
+     * Returns the unit normal to the Planckian locus in the CIE 1960 UCS diagram, pointing toward larger
+     * {@code v}, from the derivative of Krystek's rational approximation of the locus.
+     *
+     * @param kelvin the temperature, clamped to the approximation's range of 1000 to 15000 K
+     * @return the normal's {@code u} and {@code v} components
+     */
+    static double[] planckianNormal(double kelvin) {
+        var t = Math.clamp(kelvin, 1000, 15000);
+        var step = 1e-3 * t;
+        var low = planckianUv(t - step);
+        var high = planckianUv(t + step);
+        var du = high[0] - low[0];
+        var dv = high[1] - low[1];
+        var length = StrictMath.hypot(du, dv);
+        var nu = -dv / length;
+        var nv = du / length;
+        return nv >= 0 ? new double[]{nu, nv} : new double[]{-nu, -nv};
+    }
+
+    /**
+     * Returns the CIE 1960 UCS chromaticity of a Planckian radiator by Krystek's rational approximation (1985),
+     * accurate to {@code 1e-4} from 1000 to 15000 K.
+     *
+     * @param kelvin the temperature
+     * @return the {@code u} and {@code v} coordinates
+     */
+    static double[] planckianUv(double kelvin) {
+        var t = kelvin;
+        var u = (0.860117757 + 1.54118254e-4 * t + 1.28641212e-7 * t * t) / (1 + 8.42420235e-4 * t + 7.08145163e-7 * t * t);
+        var v = (0.317398726 + 4.22806245e-5 * t + 4.20481691e-8 * t * t) / (1 - 2.89741816e-5 * t + 1.61456053e-7 * t * t);
+        return new double[]{u, v};
+    }
+
+    /**
+     * {@return the CIE 1960 UCS coordinates of a CIE 1931 chromaticity}
+     *
+     * @param xy the chromaticity
+     */
+    static double[] xyToUv(double[] xy) {
+        var denominator = -2 * xy[0] + 12 * xy[1] + 3;
+        return new double[]{4 * xy[0] / denominator, 6 * xy[1] / denominator};
+    }
+
+    /**
+     * {@return the CIE 1931 chromaticity of CIE 1960 UCS coordinates}
+     *
+     * @param u the {@code u} coordinate
+     * @param v the {@code v} coordinate
+     */
+    static double[] uvToXy(double u, double v) {
+        var denominator = 2 * u - 8 * v + 4;
+        return new double[]{3 * u / denominator, 2 * v / denominator};
     }
 
     /**

@@ -1,0 +1,52 @@
+# demux dump of loas/celp.loas; regenerate with -Dsmalt.test.updateDumps=true
+format LOAS
+duration 1280000
+seekable true
+track 0 AUDIO CELP timebase=1/8000 duration=10240 config=4:65a195f7
+  audio rate=8000 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 32
+0 t0 pts=0 dts=0 dur=320 flags=KEY size=20 crc=adb6da9a
+1 t0 pts=320 dts=320 dur=320 flags=KEY size=20 crc=9b4540ac
+2 t0 pts=640 dts=640 dur=320 flags=KEY size=20 crc=080999b6
+3 t0 pts=960 dts=960 dur=320 flags=KEY size=20 crc=b2c7251d
+4 t0 pts=1280 dts=1280 dur=320 flags=KEY size=20 crc=a77506d0
+5 t0 pts=1600 dts=1600 dur=320 flags=KEY size=20 crc=1728a55e
+6 t0 pts=1920 dts=1920 dur=320 flags=KEY size=20 crc=44308d6e
+7 t0 pts=2240 dts=2240 dur=320 flags=KEY size=20 crc=9bc8d163
+8 t0 pts=2560 dts=2560 dur=320 flags=KEY size=20 crc=dba69365
+9 t0 pts=2880 dts=2880 dur=320 flags=KEY size=20 crc=699e5d61
+10 t0 pts=3200 dts=3200 dur=320 flags=KEY size=20 crc=12f691ee
+11 t0 pts=3520 dts=3520 dur=320 flags=KEY size=20 crc=f224180e
+12 t0 pts=3840 dts=3840 dur=320 flags=KEY size=20 crc=68770828
+13 t0 pts=4160 dts=4160 dur=320 flags=KEY size=20 crc=587d93eb
+14 t0 pts=4480 dts=4480 dur=320 flags=KEY size=20 crc=ac6a0398
+15 t0 pts=4800 dts=4800 dur=320 flags=KEY size=20 crc=b9896f20
+16 t0 pts=5120 dts=5120 dur=320 flags=KEY size=20 crc=c24fece0
+17 t0 pts=5440 dts=5440 dur=320 flags=KEY size=20 crc=082c4b71
+18 t0 pts=5760 dts=5760 dur=320 flags=KEY size=20 crc=77eb8bf5
+19 t0 pts=6080 dts=6080 dur=320 flags=KEY size=20 crc=d5008047
+20 t0 pts=6400 dts=6400 dur=320 flags=KEY size=20 crc=034125bd
+21 t0 pts=6720 dts=6720 dur=320 flags=KEY size=20 crc=b1e805d9
+22 t0 pts=7040 dts=7040 dur=320 flags=KEY size=20 crc=f5f08d86
+23 t0 pts=7360 dts=7360 dur=320 flags=KEY size=20 crc=2e9a135f
+24 t0 pts=7680 dts=7680 dur=320 flags=KEY size=20 crc=d212bcf3
+25 t0 pts=8000 dts=8000 dur=320 flags=KEY size=20 crc=8a61e1ad
+26 t0 pts=8320 dts=8320 dur=320 flags=KEY size=20 crc=d359cdbf
+27 t0 pts=8640 dts=8640 dur=320 flags=KEY size=20 crc=58cc8ed9
+28 t0 pts=8960 dts=8960 dur=320 flags=KEY size=20 crc=a1159645
+29 t0 pts=9280 dts=9280 dur=320 flags=KEY size=20 crc=3a41c152
+30 t0 pts=9600 dts=9600 dur=320 flags=KEY size=20 crc=9b25137b
+31 t0 pts=9920 dts=9920 dur=320 flags=KEY size=20 crc=a90c5db5
+seek 0: t0@0
+seek 426666: t0@10
+seek 853333: t0@21
+seek 1280000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format LOAS
+  duration -1
+  seekable false
+  track 0 AUDIO CELP timebase=1/8000 duration=? config=4:65a195f7
+    audio rate=8000 bits=0 skip=0 layout=[FRONT_CENTER]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

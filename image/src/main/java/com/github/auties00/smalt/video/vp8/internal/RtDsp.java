@@ -64,9 +64,10 @@ public abstract sealed class RtDsp permits ScalarRtDsp, VectorRtDsp {
     public static final RtDsp SCALAR = new ScalarRtDsp();
 
     /**
-     * The implementation selected by {@link Simd#ENABLED}.
+     * The implementation selected by {@link Simd#WIDE}: the Vector API kernels, written for 256-bit
+     * vectors, or {@link #SCALAR}.
      */
-    public static final RtDsp INSTANCE = Simd.ENABLED ? VectorRtDsp.create() : SCALAR;
+    public static final RtDsp INSTANCE = Simd.WIDE ? VectorRtDsp.create() : SCALAR;
 
     /**
      * Holds the two taps of each bilinear sub-pixel filter, indexed by the offset in 1/8 pixel,

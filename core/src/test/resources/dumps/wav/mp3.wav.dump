@@ -1,0 +1,53 @@
+# demux dump of wav/mp3.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 1044898
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 0 AUDIO MP3 timebase=1/44100 duration=46080 config=none
+  audio rate=44100 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 40
+0 t0 pts=0 dts=0 dur=1152 flags=KEY size=208 crc=b0a8febb
+1 t0 pts=1152 dts=1152 dur=1152 flags=KEY size=209 crc=1bc876e0
+2 t0 pts=2304 dts=2304 dur=1152 flags=KEY size=209 crc=9a3ca6e2
+3 t0 pts=3456 dts=3456 dur=1152 flags=KEY size=209 crc=95d98147
+4 t0 pts=4608 dts=4608 dur=1152 flags=KEY size=209 crc=a8ec594e
+5 t0 pts=5760 dts=5760 dur=1152 flags=KEY size=209 crc=35f7abb2
+6 t0 pts=6912 dts=6912 dur=1152 flags=KEY size=209 crc=f11610c5
+7 t0 pts=8064 dts=8064 dur=1152 flags=KEY size=209 crc=d6e2ec3e
+8 t0 pts=9216 dts=9216 dur=1152 flags=KEY size=209 crc=5bc7a641
+9 t0 pts=10368 dts=10368 dur=1152 flags=KEY size=209 crc=4783ec2c
+10 t0 pts=11520 dts=11520 dur=1152 flags=KEY size=209 crc=23753d57
+11 t0 pts=12672 dts=12672 dur=1152 flags=KEY size=209 crc=ed54bac1
+12 t0 pts=13824 dts=13824 dur=1152 flags=KEY size=209 crc=b52c55f8
+13 t0 pts=14976 dts=14976 dur=1152 flags=KEY size=209 crc=c122923a
+14 t0 pts=16128 dts=16128 dur=1152 flags=KEY size=209 crc=bda3e7c1
+15 t0 pts=17280 dts=17280 dur=1152 flags=KEY size=209 crc=4267fae7
+16 t0 pts=18432 dts=18432 dur=1152 flags=KEY size=209 crc=b3f0d4fe
+17 t0 pts=19584 dts=19584 dur=1152 flags=KEY size=209 crc=33a48fb2
+18 t0 pts=20736 dts=20736 dur=1152 flags=KEY size=209 crc=7e469808
+19 t0 pts=21888 dts=21888 dur=1152 flags=KEY size=209 crc=b28f0a98
+20 t0 pts=23040 dts=23040 dur=1152 flags=KEY size=209 crc=7eb6baa7
+21 t0 pts=24192 dts=24192 dur=1152 flags=KEY size=209 crc=2b264445
+22 t0 pts=25344 dts=25344 dur=1152 flags=KEY size=209 crc=bff7cbfb
+23 t0 pts=26496 dts=26496 dur=1152 flags=KEY size=209 crc=e225b791
+24 t0 pts=27648 dts=27648 dur=1152 flags=KEY size=209 crc=0f1cdf38
+25 t0 pts=28800 dts=28800 dur=1152 flags=KEY size=209 crc=505403d8
+26 t0 pts=29952 dts=29952 dur=1152 flags=KEY size=209 crc=71f2b284
+27 t0 pts=31104 dts=31104 dur=1152 flags=KEY size=209 crc=79f8416e
+28 t0 pts=32256 dts=32256 dur=1152 flags=KEY size=209 crc=8b7b1245
+29 t0 pts=33408 dts=33408 dur=1152 flags=KEY size=209 crc=2a4bf978
+30 t0 pts=34560 dts=34560 dur=1152 flags=KEY size=209 crc=4ac66a47
+31 t0 pts=35712 dts=35712 dur=1152 flags=KEY size=209 crc=1de31fe7
+32 t0 pts=36864 dts=36864 dur=1152 flags=KEY size=209 crc=36488e59
+33 t0 pts=38016 dts=38016 dur=1152 flags=KEY size=209 crc=d7606f2d
+34 t0 pts=39168 dts=39168 dur=1152 flags=KEY size=209 crc=181108e4
+35 t0 pts=40320 dts=40320 dur=1152 flags=KEY size=209 crc=23f5b368
+36 t0 pts=41472 dts=41472 dur=1152 flags=KEY size=209 crc=c1b6918a
+37 t0 pts=42624 dts=42624 dur=1152 flags=KEY size=209 crc=8ea67bcd
+38 t0 pts=43776 dts=43776 dur=1152 flags=KEY size=209 crc=20beaa07
+39 t0 pts=44928 dts=44928 dur=1152 flags=KEY size=209 crc=09d508cf
+seek 0: t0@0
+seek 348299: t0@13
+seek 696598: t0@26
+seek 1044898: end
+seek -1000000: t0@0

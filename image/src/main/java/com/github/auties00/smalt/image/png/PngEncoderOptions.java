@@ -1,11 +1,18 @@
 package com.github.auties00.smalt.image.png;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.color.ColorProfile;
+import com.github.auties00.smalt.image.color.ProfileColorSpace;
+import com.github.auties00.smalt.image.color.RenderingIntent;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.tiff.TiffExif;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
 
 /**
  * Holds the settings of a {@link PngEncoder}. Instances are immutable and thread-safe; create them
@@ -23,15 +30,39 @@ public final class PngEncoderOptions {
 
     private final ColorProfile colorProfile;
 
+    private final boolean interlaced;
+
+    private final Integer significantBits;
+
+    private final RenderingIntent srgbIntent;
+
+    private final Double gamma;
+
+    private final PngChromaticities chromaticities;
+
+    private final PixelDensity density;
+
+    private final byte[] exif;
+
+    private final byte[] xmp;
+
     private PngEncoderOptions(Builder builder) {
         this.compressionLevel = builder.compressionLevel;
         this.filter = builder.filter;
         this.colorProfile = builder.colorProfile;
+        this.interlaced = builder.interlaced;
+        this.significantBits = builder.significantBits;
+        this.srgbIntent = builder.srgbIntent;
+        this.gamma = builder.gamma;
+        this.chromaticities = builder.chromaticities;
+        this.density = builder.density;
+        this.exif = builder.exif;
+        this.xmp = builder.xmp;
     }
 
     /**
-     * Returns compression level 6 with {@link Filter#ADAPTIVE} filtering and no embedded color
-     * profile.
+     * Returns compression level 6 with {@link Filter#ADAPTIVE} filtering, non-interlaced, and no
+     * ancillary chunks beyond those the pixels need.
      *
      * @return the default options
      */
@@ -75,15 +106,110 @@ public final class PngEncoderOptions {
     }
 
     /**
-     * {@return the ICC profile embedded in the output, or empty when none is embedded; empty by
+     * {@return the color profile declared in the output, or empty when none is declared; empty by
      * default}
      *
      * <p>The profile tells readers which color space the pixels are in; it does not convert them.
-     * Without one, readers take the pixels as sRGB. It is written as a compressed {@code iCCP}
-     * chunk after {@code IHDR}. A high-dynamic-range profile, which has no ICC form, is rejected.
+     * Without one, readers take the pixels as sRGB. An ICC profile, which must be an RGB or a gray
+     * profile, is written as a compressed {@code iCCP} chunk; an RGB profile keeps the image in a
+     * color type with color samples and a gray profile in a grayscale color type, as PNG 3rd
+     * edition 11.3.2.3 requires. A high-dynamic-range profile ({@link ColorProfile#isHighDynamicRange()})
+     * is first written as a {@code cICP} chunk with its primaries, its transfer characteristics, the
+     * identity matrix and full range, followed by an {@code mDCV} chunk when its
+     * {@link ColorProfile#colorInfo()} has a mastering display and a {@code cLLI} chunk when it has
+     * a content light level, which readers that know them prefer to {@code iCCP}; for the others
+     * its RGB ICC form, with a {@code cicp} tag of the same code points, follows in an {@code iCCP}
+     * chunk unless the image is stored in a grayscale color type, which a high-dynamic-range profile
+     * does not prevent and which an RGB ICC profile cannot describe.
      */
     public Optional<ColorProfile> colorProfile() {
         return Optional.ofNullable(colorProfile);
+    }
+
+    /**
+     * {@return whether the image is stored in the seven-pass Adam7 interlaced order (PNG 3rd edition
+     * 8.2), which lets a reader show a coarse image early at the cost of a slightly larger file;
+     * {@code false} by default}
+     */
+    public boolean isInterlaced() {
+        return interlaced;
+    }
+
+    /**
+     * {@return the number of significant bits of every channel of the original samples, from 1 to
+     * 16, written as an {@code sBIT} chunk; empty by default, meaning every bit is significant}
+     *
+     * <p>The chunk only records the precision; the samples are written as given, so a caller must
+     * already have scaled them to the full sample depth (for example 10-bit values to 16 bits).
+     * Each channel's value is capped at its sample depth in the output (8 for indexed color), and
+     * no value is written for alpha that a {@code tRNS} chunk supplies.
+     */
+    public OptionalInt significantBits() {
+        return significantBits == null ? OptionalInt.empty() : OptionalInt.of(significantBits);
+    }
+
+    /**
+     * {@return the rendering intent of an {@code sRGB} chunk declaring the pixels sRGB, or empty
+     * when none is written; empty by default}
+     *
+     * <p>The chunk is accompanied by the {@code gAMA} value 45455 and the {@code cHRM} values of
+     * {@link PngChromaticities#ofSrgb()}, as PNG 3rd edition 11.3.2.5 recommends.
+     */
+    public Optional<RenderingIntent> srgbIntent() {
+        return Optional.ofNullable(srgbIntent);
+    }
+
+    /**
+     * {@return the image gamma written as a {@code gAMA} chunk, or empty when none is written;
+     * empty by default}
+     *
+     * <p>The image gamma is the exponent that encoded linear light into the samples, for example
+     * {@code 1 / 2.2}; the chunk stores it times 100000, rounded to the nearest integer.
+     */
+    public OptionalDouble gamma() {
+        return gamma == null ? OptionalDouble.empty() : OptionalDouble.of(gamma);
+    }
+
+    /**
+     * {@return the chromaticities written as a {@code cHRM} chunk, or empty when none is written;
+     * empty by default}
+     */
+    public Optional<PngChromaticities> chromaticities() {
+        return Optional.ofNullable(chromaticities);
+    }
+
+    /**
+     * {@return the pixel density or aspect ratio written as a {@code pHYs} chunk, or empty when none
+     * is written; empty by default}
+     *
+     * <p>The chunk stores whole values from 1 to {@code 2^31 - 1}, in pixels per meter (unit 1) or as an
+     * aspect ratio (unit 0). A physical density is converted to pixels per meter and rounded, so that 72 dots
+     * per inch is written as 2835 and 300 as 11811; an aspect ratio keeps whole values up to {@code 2^31 - 1}
+     * and otherwise takes the closest ratio of such values that a continued fraction gives.
+     */
+    public Optional<PixelDensity> density() {
+        return Optional.ofNullable(density);
+    }
+
+    /**
+     * {@return a copy of the EXIF block written as an {@code eXIf} chunk, a TIFF structure starting with its
+     * byte-order mark, or empty for none; empty by default}
+     *
+     * <p>The chunk holds the block byte for byte and precedes the image data.
+     */
+    public Optional<byte[]> exif() {
+        return Optional.ofNullable(exif).map(byte[]::clone);
+    }
+
+    /**
+     * {@return a copy of the XMP packet written as an {@code iTXt} chunk with the keyword
+     * {@code XML:com.adobe.xmp}, in UTF-8, or empty for none; empty by default}
+     *
+     * <p>The chunk holds the packet uncompressed, with empty language and translated keyword fields, as XMP
+     * specification part 3 asks, and precedes the image data.
+     */
+    public Optional<byte[]> xmp() {
+        return Optional.ofNullable(xmp).map(byte[]::clone);
     }
 
     @Override
@@ -91,26 +217,58 @@ public final class PngEncoderOptions {
         return other instanceof PngEncoderOptions that
                 && compressionLevel == that.compressionLevel
                 && filter == that.filter
-                && Objects.equals(colorProfile, that.colorProfile);
+                && Objects.equals(colorProfile, that.colorProfile)
+                && interlaced == that.interlaced
+                && Objects.equals(significantBits, that.significantBits)
+                && srgbIntent == that.srgbIntent
+                && Objects.equals(gamma, that.gamma)
+                && Objects.equals(chromaticities, that.chromaticities)
+                && Objects.equals(density, that.density)
+                && Arrays.equals(exif, that.exif)
+                && Arrays.equals(xmp, that.xmp);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(compressionLevel, filter, colorProfile);
+        return Objects.hash(compressionLevel, filter, colorProfile, interlaced, significantBits, srgbIntent, gamma,
+                chromaticities, density, Arrays.hashCode(exif), Arrays.hashCode(xmp));
     }
 
     @Override
     public String toString() {
         return "PngEncoderOptions[compressionLevel=" + compressionLevel + ", filter=" + filter
                 + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed"))
+                + (interlaced ? ", interlaced" : "")
+                + (significantBits == null ? "" : ", significantBits=" + significantBits)
+                + (srgbIntent == null ? "" : ", srgbIntent=" + srgbIntent)
+                + (gamma == null ? "" : ", gamma=" + gamma)
+                + (chromaticities == null ? "" : ", chromaticities=" + chromaticities)
+                + (density == null ? "" : ", density=" + density)
+                + (exif == null ? "" : ", exif=" + exif.length + " bytes")
+                + (xmp == null ? "" : ", xmp=" + xmp.length + " bytes")
                 + "]";
+    }
+
+    /**
+     * Checks that a color profile can be written to a PNG datastream.
+     *
+     * @param colorProfile the profile, or {@code null}
+     * @throws MediaException.Unsupported if it is an ICC profile of a color space other than RGB
+     * and gray
+     */
+    static void checkProfile(ColorProfile colorProfile) {
+        if (colorProfile != null && colorProfile.colorSpace() != ProfileColorSpace.RGB
+                && colorProfile.colorSpace() != ProfileColorSpace.GRAY) {
+            throw new MediaException.Unsupported("png " + colorProfile.colorSpace(),
+                    "PNG holds only RGB and gray ICC profiles, not " + colorProfile.colorSpace());
+        }
     }
 
     /**
      * A builder of {@link PngEncoderOptions}.
      *
-     * <p>Setters reject only {@code null}; {@link #build()} checks the ranges and the color
-     * profile. Instances are not thread-safe.
+     * <p>Setters reject only {@code null}; {@link #build()} checks the ranges, the color profile
+     * and the combination of color chunks. Instances are not thread-safe.
      */
     public static final class Builder {
         private int compressionLevel = 6;
@@ -119,6 +277,22 @@ public final class PngEncoderOptions {
 
         private ColorProfile colorProfile;
 
+        private boolean interlaced;
+
+        private Integer significantBits;
+
+        private RenderingIntent srgbIntent;
+
+        private Double gamma;
+
+        private PngChromaticities chromaticities;
+
+        private PixelDensity density;
+
+        private byte[] exif;
+
+        private byte[] xmp;
+
         private Builder() {
         }
 
@@ -126,6 +300,14 @@ public final class PngEncoderOptions {
             this.compressionLevel = options.compressionLevel;
             this.filter = options.filter;
             this.colorProfile = options.colorProfile;
+            this.interlaced = options.interlaced;
+            this.significantBits = options.significantBits;
+            this.srgbIntent = options.srgbIntent;
+            this.gamma = options.gamma;
+            this.chromaticities = options.chromaticities;
+            this.density = options.density;
+            this.exif = options.exif;
+            this.xmp = options.xmp;
         }
 
         /**
@@ -151,7 +333,7 @@ public final class PngEncoderOptions {
         }
 
         /**
-         * Sets the ICC profile embedded in the output; see {@link PngEncoderOptions#colorProfile()}.
+         * Sets the color profile declared in the output; see {@link PngEncoderOptions#colorProfile()}.
          *
          * @param colorProfile the value, or {@code null} for none
          * @return this builder
@@ -162,17 +344,205 @@ public final class PngEncoderOptions {
         }
 
         /**
+         * Removes the color profile; see {@link PngEncoderOptions#colorProfile()}.
+         *
+         * @return this builder
+         */
+        public Builder noColorProfile() {
+            this.colorProfile = null;
+            return this;
+        }
+
+        /**
+         * Sets whether the image is interlaced; see {@link PngEncoderOptions#isInterlaced()}.
+         *
+         * @param interlaced the value
+         * @return this builder
+         */
+        public Builder interlaced(boolean interlaced) {
+            this.interlaced = interlaced;
+            return this;
+        }
+
+        /**
+         * Sets the number of significant bits; see {@link PngEncoderOptions#significantBits()}.
+         *
+         * @param significantBits the value
+         * @return this builder
+         */
+        public Builder significantBits(int significantBits) {
+            this.significantBits = significantBits;
+            return this;
+        }
+
+        /**
+         * Removes the {@code sBIT} chunk; see {@link PngEncoderOptions#significantBits()}.
+         *
+         * @return this builder
+         */
+        public Builder noSignificantBits() {
+            this.significantBits = null;
+            return this;
+        }
+
+        /**
+         * Sets the rendering intent of the {@code sRGB} chunk; see
+         * {@link PngEncoderOptions#srgbIntent()}.
+         *
+         * @param srgbIntent the value
+         * @return this builder
+         */
+        public Builder srgbIntent(RenderingIntent srgbIntent) {
+            this.srgbIntent = Objects.requireNonNull(srgbIntent, "srgbIntent");
+            return this;
+        }
+
+        /**
+         * Removes the {@code sRGB} chunk; see {@link PngEncoderOptions#srgbIntent()}.
+         *
+         * @return this builder
+         */
+        public Builder noSrgbIntent() {
+            this.srgbIntent = null;
+            return this;
+        }
+
+        /**
+         * Sets the image gamma; see {@link PngEncoderOptions#gamma()}.
+         *
+         * @param gamma the value
+         * @return this builder
+         */
+        public Builder gamma(double gamma) {
+            this.gamma = gamma;
+            return this;
+        }
+
+        /**
+         * Removes the {@code gAMA} chunk; see {@link PngEncoderOptions#gamma()}.
+         *
+         * @return this builder
+         */
+        public Builder noGamma() {
+            this.gamma = null;
+            return this;
+        }
+
+        /**
+         * Sets the chromaticities; see {@link PngEncoderOptions#chromaticities()}.
+         *
+         * @param chromaticities the value
+         * @return this builder
+         */
+        public Builder chromaticities(PngChromaticities chromaticities) {
+            this.chromaticities = Objects.requireNonNull(chromaticities, "chromaticities");
+            return this;
+        }
+
+        /**
+         * Removes the {@code cHRM} chunk; see {@link PngEncoderOptions#chromaticities()}.
+         *
+         * @return this builder
+         */
+        public Builder noChromaticities() {
+            this.chromaticities = null;
+            return this;
+        }
+
+        /**
+         * Sets the pixel density or aspect ratio; see {@link PngEncoderOptions#density()}.
+         *
+         * @param density the value
+         * @return this builder
+         */
+        public Builder density(PixelDensity density) {
+            this.density = Objects.requireNonNull(density, "density");
+            return this;
+        }
+
+        /**
+         * Removes the {@code pHYs} chunk; see {@link PngEncoderOptions#density()}.
+         *
+         * @return this builder
+         */
+        public Builder noDensity() {
+            this.density = null;
+            return this;
+        }
+
+        /**
+         * Sets the EXIF block; see {@link PngEncoderOptions#exif()}.
+         *
+         * @param exif the value, with or without the {@code "Exif\0\0"} identifier JPEG puts in front of it,
+         * which is removed; copied
+         * @return this builder
+         */
+        public Builder exif(byte[] exif) {
+            this.exif = TiffExif.stripExifPrefix(Objects.requireNonNull(exif, "exif")).clone();
+            return this;
+        }
+
+        /**
+         * Writes no {@code eXIf} chunk; see {@link PngEncoderOptions#exif()}.
+         *
+         * @return this builder
+         */
+        public Builder noExif() {
+            this.exif = null;
+            return this;
+        }
+
+        /**
+         * Sets the XMP packet; see {@link PngEncoderOptions#xmp()}.
+         *
+         * @param xmp the value; copied
+         * @return this builder
+         */
+        public Builder xmp(byte[] xmp) {
+            this.xmp = Objects.requireNonNull(xmp, "xmp").clone();
+            return this;
+        }
+
+        /**
+         * Writes no XMP {@code iTXt} chunk; see {@link PngEncoderOptions#xmp()}.
+         *
+         * @return this builder
+         */
+        public Builder noXmp() {
+            this.xmp = null;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
-         * @throws IllegalArgumentException if the compression level is not in [0, 9]
-         * @throws MediaException.Unsupported if the color profile has no ICC form (a
-         * high-dynamic-range profile)
+         * @throws IllegalArgumentException if the compression level is not in [0, 9], the
+         * significant bits are not in [1, 16], the gamma is
+         * not positive or rounds outside {@code [1, 2^31 - 1]} hundred-thousandths, or an
+         * {@code sRGB} intent is combined with a color profile, a gamma or chromaticities, or the density
+         * is not representable as {@link PngEncoderOptions#density()} describes (a physical density that
+         * rounds to 0 or above {@code 2^31 - 1} pixels per meter, or an aspect ratio beyond that range)
+         * @throws MediaException.Unsupported if the color profile is an ICC profile of a color space
+         * other than RGB and gray
          */
         public PngEncoderOptions build() {
             Checks.inRange("compression level", compressionLevel, 0, 9);
-            if (colorProfile != null && colorProfile.isHighDynamicRange()) {
-                throw new MediaException.Unsupported("icc", "a high-dynamic-range profile has no ICC form");
+            if (significantBits != null) {
+                Checks.inRange("significant bits", significantBits, 1, 16);
+            }
+            if (gamma != null) {
+                var stored = Math.round(gamma * 100000);
+                if (!(gamma > 0) || stored < 1 || stored > Integer.MAX_VALUE) {
+                    throw new IllegalArgumentException("invalid gamma " + gamma);
+                }
+            }
+            if (srgbIntent != null && (colorProfile != null || gamma != null || chromaticities != null)) {
+                throw new IllegalArgumentException("an sRGB intent writes its own gAMA and cHRM and excludes a color profile");
+            }
+            checkProfile(colorProfile);
+            if (density != null) {
+                PngChunkWriter.physicalTerms(density);
             }
             return new PngEncoderOptions(this);
         }
@@ -211,8 +581,8 @@ public final class PngEncoderOptions {
         /**
          * Each scanline uses the filter type whose output has the smallest sum of absolute values
          * of its bytes read as signed numbers, libpng's heuristic (PNG 3rd edition 12.7); ties go
-         * to the lower filter type. Indexed-color images are stored unfiltered, as that section
-         * recommends.
+         * to the lower filter type. Indexed-color images and images of fewer than 8 bits per
+         * sample are stored unfiltered, as that section recommends.
          */
         ADAPTIVE
     }

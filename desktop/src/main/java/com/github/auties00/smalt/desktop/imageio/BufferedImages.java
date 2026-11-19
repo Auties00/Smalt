@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.desktop.imageio;
 
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -13,6 +15,7 @@ import java.awt.image.BufferedImage;
 import java.awt.image.ColorModel;
 import java.awt.image.ComponentColorModel;
 import java.awt.image.DataBuffer;
+import java.awt.image.Raster;
 import java.awt.image.RenderedImage;
 import java.awt.image.WritableRaster;
 import java.util.Objects;
@@ -178,7 +181,7 @@ public final class BufferedImages {
      * @param image the image to inspect
      * @return {@code true} when {@link #toRgba16Picture(BufferedImage)} can copy its samples
      */
-    private static boolean isSixteenBitComponent(BufferedImage image) {
+    static boolean isSixteenBitComponent(BufferedImage image) {
         var model = image.getColorModel();
         if (!(model instanceof ComponentColorModel) || model.isAlphaPremultiplied()
                 || model.getTransferType() != DataBuffer.TYPE_USHORT) {
@@ -318,7 +321,21 @@ public final class BufferedImages {
      */
     static void copy(Picture picture, int fullWidth, int fullHeight, Rectangle region, int xStep, int yStep,
                      BufferedImage destination, int destX, int destY, RowListener progress) {
-        var rgba = picture instanceof RgbaPicture packed ? packed : ImageOps.toRgba(picture);
+        if (isSixteenBitComponent(destination)) {
+            var model = destination.getColorModel();
+            var grayDestination = model.getNumColorComponents() == 1;
+            if (!grayDestination || isGray(picture)) {
+                var channels = channelsOf(grayDestination, model.hasAlpha());
+                var bands = new int[channels.length];
+                for (var band = 0; band < bands.length; band++) {
+                    bands[band] = band;
+                }
+                copyBands(picture, fullWidth, fullHeight, region, xStep, yStep, channels, 16, bands,
+                        destination.getRaster(), destX, destY, progress);
+                return;
+            }
+        }
+        var rgba = toEightBitRgba(picture);
         var pixels = rgba.pixels();
         var stride = rgba.stride();
         var pictureWidth = rgba.width();
@@ -335,7 +352,7 @@ public final class BufferedImages {
         }
         var raster = destination.getRaster();
         var type = destination.getType();
-        var monochrome = isMonochrome(picture);
+        var monochrome = isMonochrome(picture) || picture instanceof Rgba16Picture && isGray(picture);
         int[] ints = null;
         byte[] bytes = null;
         for (var y = 0; y < height; y++) {
@@ -388,6 +405,247 @@ public final class BufferedImages {
                 return;
             }
         }
+    }
+
+    /**
+     * Samples selected channels of a region of a picture into bands of a raster.
+     *
+     * <p>The positions are those of {@link #copy(Picture, int, int, Rectangle, int, int, BufferedImage, int, int,
+     * RowListener)}. Source band {@code b} of the image is the RGBA channel {@code channels[b]} of the
+     * picture at {@code depth} bits (gray is the red channel of a gray picture); target band {@code k}
+     * receives source band {@code sourceBands[k]}, rescaled as {@code round(v * (2^t - 1) / (2^depth - 1))}
+     * when the target band holds {@code t} bits. Target positions outside the raster are skipped.
+     *
+     * @param picture the decoded picture
+     * @param fullWidth the width the region coordinates refer to
+     * @param fullHeight the height the region coordinates refer to
+     * @param region the region to read, in full-size coordinates
+     * @param xStep the horizontal sampling step; positive
+     * @param yStep the vertical sampling step; positive
+     * @param channels the RGBA channel of each source band
+     * @param depth the source sample depth, 8 or 16
+     * @param sourceBands the source band of each target band
+     * @param target the raster to write, with one band per entry of {@code sourceBands}
+     * @param destX the target column of the first sample
+     * @param destY the target row of the first sample
+     * @param progress receives each completed row index, or {@code null}; returns {@code false} to stop
+     */
+    static void copyBands(Picture picture, int fullWidth, int fullHeight, Rectangle region, int xStep, int yStep,
+                          int[] channels, int depth, int[] sourceBands, WritableRaster target, int destX, int destY,
+                          RowListener progress) {
+        short[] deep = null;
+        byte[] narrow = null;
+        int stride;
+        int pictureWidth;
+        int pictureHeight;
+        if (depth == 16) {
+            var wide = ImageOps.toRgba16(picture);
+            deep = wide.pixels();
+            stride = wide.stride();
+            pictureWidth = wide.width();
+            pictureHeight = wide.height();
+        } else {
+            var rgba = toEightBitRgba(picture);
+            narrow = rgba.pixels();
+            stride = rgba.stride();
+            pictureWidth = rgba.width();
+            pictureHeight = rgba.height();
+        }
+        var width = Math.min((region.width + xStep - 1) / xStep, target.getMinX() + target.getWidth() - destX);
+        var height = Math.min((region.height + yStep - 1) / yStep, target.getMinY() + target.getHeight() - destY);
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        var bands = sourceBands.length;
+        var offsets = new int[bands];
+        var sizes = new int[bands];
+        var sampleModel = target.getSampleModel();
+        for (var k = 0; k < bands; k++) {
+            offsets[k] = channels[sourceBands[k]];
+            sizes[k] = sampleModel.getSampleSize(k);
+        }
+        var columns = new int[width];
+        for (var x = 0; x < width; x++) {
+            var full = (long) region.x + (long) x * xStep;
+            columns[x] = (int) Math.min(pictureWidth - 1, full * pictureWidth / fullWidth) * 4;
+        }
+        var maximum = (1L << depth) - 1;
+        var samples = new int[width * bands];
+        for (var y = 0; y < height; y++) {
+            var full = (long) region.y + (long) y * yStep;
+            var row = (int) Math.min(pictureHeight - 1, full * pictureHeight / fullHeight) * stride;
+            for (var x = 0; x < width; x++) {
+                var from = row + columns[x];
+                for (var k = 0; k < bands; k++) {
+                    var value = deep != null ? deep[from + offsets[k]] & 0xFFFF : narrow[from + offsets[k]] & 0xFF;
+                    var size = sizes[k];
+                    if (size != depth) {
+                        var top = size >= 32 ? 0xFFFFFFFFL : (1L << size) - 1;
+                        value = (int) ((value * top + maximum / 2) / maximum);
+                    }
+                    samples[x * bands + k] = value;
+                }
+            }
+            target.setPixels(destX, destY + y, width, 1, samples);
+            if (progress != null && !progress.rowDone(y, height)) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * Returns the RGBA channel of each band of an image of a color type, as
+     * {@link #copyBands(Picture, int, int, Rectangle, int, int, int[], int, int[], WritableRaster, int, int,
+     * RowListener)} takes them.
+     *
+     * @param gray whether the image has one color band
+     * @param alpha whether it has an alpha band after its color bands
+     * @return the channel of each band: {@code 0} for gray or red, {@code 1} green, {@code 2} blue,
+     * {@code 3} alpha
+     */
+    static int[] channelsOf(boolean gray, boolean alpha) {
+        if (gray) {
+            return alpha ? new int[]{0, 3} : new int[]{0};
+        }
+        return alpha ? new int[]{0, 1, 2, 3} : new int[]{0, 1, 2};
+    }
+
+    /**
+     * Returns whether a picture holds more than 8 bits per sample.
+     *
+     * @param picture the picture to inspect
+     * @return {@code true} for an {@link Rgba16Picture}, a {@link Yuv16Picture} deeper than 8 bits, and a
+     * 16-bit or floating-point channel picture
+     */
+    static boolean isDeep(Picture picture) {
+        return switch (picture) {
+            case Rgba16Picture _ -> true;
+            case Yuv16Picture yuv -> yuv.bitDepth() > 8;
+            case Channel16Picture _, ChannelFloatPicture _ -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * Returns whether a picture is gray: a picture without chroma planes, or a deep picture whose three
+     * color samples are equal in every pixel.
+     *
+     * @param picture the picture to inspect
+     * @return {@code true} when the picture is gray
+     */
+    static boolean isGray(Picture picture) {
+        if (isMonochrome(picture)) {
+            return true;
+        }
+        if (!isDeep(picture)) {
+            return false;
+        }
+        var wide = ImageOps.toRgba16(picture);
+        var pixels = wide.pixels();
+        var stride = wide.stride();
+        for (var y = 0; y < wide.height(); y++) {
+            var end = y * stride + wide.width() * 4;
+            for (var at = y * stride; at < end; at += 4) {
+                if (pixels[at] != pixels[at + 1] || pixels[at] != pixels[at + 2]) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Returns the 8-bit RGBA form of a picture, reduced to 8 bits per sample before any color conversion so
+     * that it equals the decoders' default 8-bit output.
+     *
+     * @param picture the picture to convert
+     * @return {@code picture} itself when it is an {@link RgbaPicture}, otherwise a new picture
+     */
+    static RgbaPicture toEightBitRgba(Picture picture) {
+        return picture instanceof RgbaPicture packed ? packed : ImageOps.toRgba(ImageOps.toEightBit(picture));
+    }
+
+    /**
+     * Converts the samples of a raster of one to four bands (gray, gray and alpha, RGB, RGBA) to a new
+     * picture, sampling a region.
+     *
+     * <p>Integer samples of {@code s} bits are rescaled to the picture's depth as
+     * {@code round(v * (2^d - 1) / (2^s - 1))}; float and double samples are read as the range 0 to 1. The
+     * picture is an {@link RgbaPicture} when every band holds at most 8 bits, and an {@link Rgba16Picture}
+     * otherwise.
+     *
+     * @param raster the samples
+     * @param region the region to read, in the raster's coordinates
+     * @param xStep the horizontal sampling step; positive
+     * @param yStep the vertical sampling step; positive
+     * @return a new picture
+     * @throws IllegalArgumentException if the raster has no band or more than four, or holds signed 16-bit
+     * samples
+     */
+    static Picture toPicture(Raster raster, Rectangle region, int xStep, int yStep) {
+        var bands = raster.getNumBands();
+        if (bands < 1 || bands > 4) {
+            throw new IllegalArgumentException("a raster of " + bands + " bands is not gray, gray and alpha, RGB or RGBA");
+        }
+        var dataType = raster.getTransferType();
+        if (dataType == DataBuffer.TYPE_SHORT) {
+            throw new IllegalArgumentException("signed 16-bit samples are not supported");
+        }
+        var floating = dataType == DataBuffer.TYPE_FLOAT || dataType == DataBuffer.TYPE_DOUBLE;
+        var sizes = raster.getSampleModel().getSampleSize();
+        var deep = floating;
+        for (var size : sizes) {
+            deep |= size > 8;
+        }
+        var depth = deep ? 16 : 8;
+        var target = (1L << depth) - 1;
+        var width = (region.width + xStep - 1) / xStep;
+        var height = (region.height + yStep - 1) / yStep;
+        var alpha = bands == 2 || bands == 4;
+        var gray = bands <= 2;
+        Rgba16Picture wide = deep ? Rgba16Picture.allocate(width, height, alpha) : null;
+        RgbaPicture narrow = deep ? null : RgbaPicture.allocate(width, height, alpha);
+        var stride = deep ? wide.stride() : narrow.stride();
+        var rowWidth = region.width;
+        var ints = floating ? null : new int[rowWidth * bands];
+        var doubles = floating ? new double[rowWidth * bands] : null;
+        var scale = new long[bands];
+        for (var b = 0; b < bands; b++) {
+            scale[b] = (1L << Math.min(sizes[b], 32)) - 1;
+        }
+        for (var y = 0; y < height; y++) {
+            var sourceY = region.y + y * yStep;
+            if (floating) {
+                raster.getPixels(region.x, sourceY, rowWidth, 1, doubles);
+            } else {
+                raster.getPixels(region.x, sourceY, rowWidth, 1, ints);
+            }
+            var row = y * stride;
+            for (var x = 0; x < width; x++) {
+                var from = x * xStep * bands;
+                var at = row + x * 4;
+                for (var channel = 0; channel < 4; channel++) {
+                    var band = gray ? (channel < 3 ? 0 : 1) : channel;
+                    long value;
+                    if (channel == 3 && !alpha) {
+                        value = target;
+                    } else if (floating) {
+                        var sample = doubles[from + band];
+                        value = Math.round(Math.clamp(Double.isNaN(sample) ? 0 : sample, 0.0, 1.0) * target);
+                    } else {
+                        var sample = ints[from + band] & 0xFFFFFFFFL;
+                        var top = scale[band];
+                        value = top == target ? sample : (Math.min(sample, top) * target + top / 2) / top;
+                    }
+                    if (deep) {
+                        wide.pixels()[at + channel] = (short) value;
+                    } else {
+                        narrow.pixels()[at + channel] = (byte) value;
+                    }
+                }
+            }
+        }
+        return deep ? wide : narrow;
     }
 
     /**

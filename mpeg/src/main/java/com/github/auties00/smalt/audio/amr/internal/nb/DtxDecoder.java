@@ -45,7 +45,9 @@ import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.MP1;
  *
  * @implNote This implementation keeps the partially updated work array of the reflection coefficient conversion across
  * calls where the reference reads uninitialized stack memory after an unstable filter; the case arises only for comfort
- * noise parameters an encoder never produces.
+ * noise parameters an encoder never produces. It mutes the comfort noise as the TS 26.073 reference does: each muted
+ * frame subtracts 256 from the log energy with saturation and without opencore's clamp at zero, so a stream left
+ * without SID updates keeps fading like the reference decoder's output.
  */
 final class DtxDecoder {
     /**
@@ -511,7 +513,7 @@ final class DtxDecoder {
             for (var j = L_SUBFR - 1; j >= 0; j--) {
                 ex[j] = mult(level, ex[j], overflow);
             }
-            Filters.synFilt(acoeffVariab, 0, ex, 0, synth, i * L_SUBFR, L_SUBFR, memSyn, 0, true);
+            Filters.synFilt(acoeffVariab, 0, ex, 0, synth, i * L_SUBFR, L_SUBFR, memSyn, 0, true, overflow);
         }
         averState.hangVar = 20;
         averState.hangCount = 0;
@@ -527,10 +529,7 @@ final class DtxDecoder {
             sinceLastSid = 0;
             System.arraycopy(lsp, 0, lspOld, 0, M);
             oldLogEn = logEn;
-            logEn = (short) (logEn - 256);
-            if (logEn < 0) {
-                logEn = 0;
-            }
+            logEn = sub(logEn, (short) 256, overflow);
         }
         if (sidFrame != 0 && (validData != 0 || dtxHangoverAdded != 0)) {
             sinceLastSid = 0;

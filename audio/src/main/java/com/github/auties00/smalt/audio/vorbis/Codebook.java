@@ -529,7 +529,7 @@ final class Codebook {
         if (entries <= 1) {
             return entries;
         }
-        var guess = (long) Math.floor(Math.exp(Math.log(entries) / dimensions));
+        var guess = (long) Math.floor(StrictMath.exp(StrictMath.log(entries) / dimensions));
         while (guess > 0 && power(guess, dimensions) > entries) {
             guess--;
         }

@@ -1,3 +1,5 @@
+/* Ports webrtc-audio-processing 2.1 (modules/audio_processing/aec3/filter_analyzer.cc). Copyright (c) 2011, The
+   WebRTC project authors; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.audio.voice.internal.aec3;
 
 import java.util.Arrays;
@@ -6,15 +8,15 @@ import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.BLOCK_SIZ
 import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.BLOCK_SIZE_LOG2;
 
 /**
- * Analyzes the time-domain response of the refined filter one block per call: the delay of its
- * main peak, the echo path gain, and whether the peak is consistent enough to trust.
+ * Analyzes the time-domain response of every capture channel's refined filter one block per call:
+ * the delay of its main peak, the echo path gain, and whether the peak is consistent enough to
+ * trust.
  *
- * <p>The response is first high-pass filtered, region by region, into the adjusted filter that
+ * <p>Each response is first high-pass filtered, region by region, into the adjusted filter that
  * the reverberation model also uses.
  *
  * @implNote This implementation ports {@code FilterAnalyzer} of WebRTC's
- * {@code modules/audio_processing/aec3/filter_analyzer.cc} for one capture channel and an
- * unbounded ERL.
+ * {@code modules/audio_processing/aec3/filter_analyzer.cc} with an unbounded ERL.
  */
 final class FilterAnalyzer {
     /**
@@ -29,14 +31,19 @@ final class FilterAnalyzer {
     private static final float ACTIVE_RENDER_THRESHOLD = Aec3.ACTIVE_RENDER_LIMIT * Aec3.ACTIVE_RENDER_LIMIT * Aec3.FFT_LENGTH_BY_2;
 
     /**
-     * The high-pass filtered response.
+     * The number of capture channels.
      */
-    final float[] hHighpass = new float[Aec3.REFINED_LENGTH_BLOCKS * BLOCK_SIZE];
+    private final int numChannels;
 
     /**
-     * The length of {@link #hHighpass}.
+     * The high-pass filtered responses.
      */
-    int hHighpassLength = Aec3.REFINED_LENGTH_BLOCKS * BLOCK_SIZE;
+    private final float[][] hHighpass;
+
+    /**
+     * The number of taps of each high-pass filtered response.
+     */
+    private final int[] hHighpassLength;
 
     /**
      * The number of updates since the last reset.
@@ -44,197 +51,212 @@ final class FilterAnalyzer {
     private int blocksSinceReset;
 
     /**
-     * The first sample of the region analyzed by the last update.
+     * The first sample of the region analyzed by the current update.
      */
     private int regionStart;
 
     /**
-     * The last sample of the region analyzed by the last update.
+     * The last sample of the region analyzed by the current update.
      */
     private int regionEnd;
 
     /**
-     * The echo path gain estimate.
+     * The echo path gain estimate of every channel.
      */
-    private float gain;
+    private final float[] gain;
 
     /**
-     * The index of the peak of the response.
+     * The index of the main peak of every channel's response.
      */
-    private int peakIndex;
+    private final int[] peakIndex;
 
     /**
-     * The length of the analyzed response in blocks.
+     * The length of every channel's filter in blocks.
      */
-    private int filterLengthBlocks = Aec3.REFINED_INITIAL_LENGTH_BLOCKS;
+    private final int[] filterLengthBlocks;
 
     /**
-     * Whether the peak has stayed at a consistent delay long enough.
+     * Whether every channel's peak has been at a consistent delay for long enough.
      */
-    private boolean consistentEstimate;
+    private final boolean[] consistentEstimate;
 
     /**
-     * The delay of the peak in blocks.
+     * The delay of every channel's main peak in blocks.
      */
-    private int filterDelayBlocks;
+    private final int[] filterDelayBlocks;
 
     /**
-     * Whether the peak stands out from the rest of the response.
+     * Whether every channel's peak stands out of the filter floor.
      */
-    private boolean significantPeak;
+    private final boolean[] significantPeak;
 
     /**
-     * The accumulated magnitude of the response away from the peak.
+     * The accumulated magnitude of every channel's filter floor.
      */
-    private float filterFloorAccum;
+    private final float[] filterFloorAccum;
 
     /**
-     * The largest magnitude of the response away from the peak.
+     * The largest magnitude of every channel's filter floor.
      */
-    private float filterSecondaryPeak;
+    private final float[] filterSecondaryPeak;
 
     /**
-     * The end of the floor region before the peak.
+     * The end of every channel's lower filter floor region.
      */
-    private int filterFloorLowLimit;
+    private final int[] filterFloorLowLimit;
 
     /**
-     * The start of the floor region after the peak.
+     * The start of every channel's upper filter floor region.
      */
-    private int filterFloorHighLimit;
+    private final int[] filterFloorHighLimit;
 
     /**
-     * The number of active render blocks with the peak at the same delay.
+     * The number of active render blocks every channel's peak delay has been unchanged.
      */
-    private int consistentEstimateCounter;
+    private final int[] consistentEstimateCounter;
 
     /**
-     * The delay the consistency counter refers to.
+     * The delay every channel's consistency is counted for.
      */
-    private int consistentDelayReference = -10;
+    private final int[] consistentDelayReference;
+
+    /**
+     * Whether some channel's estimate is consistent, after the last update.
+     */
+    private boolean anyFilterConsistent;
+
+    /**
+     * The largest echo path gain estimate, after the last update.
+     */
+    private float maxEchoPathGain;
 
     /**
      * Creates an analyzer.
+     *
+     * @param numChannels the number of capture channels
      */
-    FilterAnalyzer() {
+    FilterAnalyzer(int numChannels) {
+        this.numChannels = numChannels;
+        this.hHighpass = new float[numChannels][Aec3.REFINED_LENGTH_BLOCKS * BLOCK_SIZE];
+        this.hHighpassLength = new int[numChannels];
+        Arrays.fill(hHighpassLength, Aec3.REFINED_LENGTH_BLOCKS * BLOCK_SIZE);
+        this.gain = new float[numChannels];
+        this.peakIndex = new int[numChannels];
+        this.filterLengthBlocks = new int[numChannels];
+        Arrays.fill(filterLengthBlocks, Aec3.REFINED_INITIAL_LENGTH_BLOCKS);
+        this.consistentEstimate = new boolean[numChannels];
+        this.filterDelayBlocks = new int[numChannels];
+        this.significantPeak = new boolean[numChannels];
+        this.filterFloorAccum = new float[numChannels];
+        this.filterSecondaryPeak = new float[numChannels];
+        this.filterFloorLowLimit = new int[numChannels];
+        this.filterFloorHighLimit = new int[numChannels];
+        this.consistentEstimateCounter = new int[numChannels];
+        this.consistentDelayReference = new int[numChannels];
         reset();
     }
 
     /**
-     * Resets the analysis.
+     * Forgets the analysis.
      */
     void reset() {
         blocksSinceReset = 0;
         regionStart = 0;
         regionEnd = 0;
-        peakIndex = 0;
-        gain = Aec3.EP_DEFAULT_GAIN;
-        significantPeak = false;
-        filterFloorAccum = 0.f;
-        filterSecondaryPeak = 0.f;
-        filterFloorLowLimit = 0;
-        filterFloorHighLimit = 0;
-        consistentEstimateCounter = 0;
-        consistentDelayReference = -10;
-        filterDelayBlocks = 0;
+        for (var ch = 0; ch < numChannels; ch++) {
+            peakIndex[ch] = 0;
+            gain[ch] = Aec3.EP_DEFAULT_GAIN;
+            significantPeak[ch] = false;
+            filterFloorAccum[ch] = 0.f;
+            filterSecondaryPeak[ch] = 0.f;
+            filterFloorLowLimit[ch] = 0;
+            filterFloorHighLimit[ch] = 0;
+            consistentEstimateCounter[ch] = 0;
+            consistentDelayReference[ch] = -10;
+            filterDelayBlocks[ch] = 0;
+        }
     }
 
     /**
-     * Analyzes the next region of the refined filter response.
+     * Analyzes the next region of every channel's filter.
      *
-     * @param filter       the time-domain response of the refined filter
-     * @param renderBuffer the render rings
+     * @param filters the time-domain responses of every channel's refined filter
+     * @param renderBuffer the render buffer
      */
-    void update(AdaptiveFirFilter.ImpulseResponse filter, RenderBuffer renderBuffer) {
+    void update(AdaptiveFirFilter.ImpulseResponse[] filters, RenderBuffer renderBuffer) {
         ++blocksSinceReset;
-        setRegionToAnalyze(filter.length);
-        preProcessFilter(filter);
-        peakIndex = Math.min(peakIndex, hHighpassLength - 1);
-        peakIndex = findPeakIndex(hHighpass, peakIndex, regionStart, regionEnd);
-        filterDelayBlocks = peakIndex >> BLOCK_SIZE_LOG2;
-        updateFilterGain();
-        filterLengthBlocks = (int) (filter.length * (1.f / BLOCK_SIZE));
-        consistentEstimate = detectConsistent(renderBuffer);
+        setRegionToAnalyze(filters[0].length);
+        for (var ch = 0; ch < numChannels; ch++) {
+            preProcessFilter(ch, filters[ch]);
+        }
+        for (var ch = 0; ch < numChannels; ch++) {
+            var filter = filters[ch];
+            peakIndex[ch] = Math.min(peakIndex[ch], hHighpassLength[ch] - 1);
+            peakIndex[ch] = findPeakIndex(hHighpass[ch], peakIndex[ch], regionStart, regionEnd);
+            filterDelayBlocks[ch] = peakIndex[ch] >> BLOCK_SIZE_LOG2;
+            updateFilterGain(ch);
+            filterLengthBlocks[ch] = (int) (filter.length * (1.f / BLOCK_SIZE));
+            consistentEstimate[ch] = detectConsistent(ch, renderBuffer);
+        }
+        anyFilterConsistent = consistentEstimate[0];
+        maxEchoPathGain = gain[0];
+        for (var ch = 1; ch < numChannels; ch++) {
+            anyFilterConsistent = anyFilterConsistent || consistentEstimate[ch];
+            maxEchoPathGain = maxEchoPathGain < gain[ch] ? gain[ch] : maxEchoPathGain;
+        }
     }
 
     /**
-     * Returns whether the peak is consistent.
-     *
-     * @return whether the filter estimate is consistent
+     * {@return whether some channel's estimate is consistent}
      */
-    boolean consistentEstimate() {
-        return consistentEstimate;
+    boolean anyFilterConsistent() {
+        return anyFilterConsistent;
     }
 
     /**
-     * Returns the echo path gain estimate.
-     *
-     * @return the gain
+     * {@return the largest echo path gain estimate over the channels}
      */
-    float gain() {
-        return gain;
+    float maxEchoPathGain() {
+        return maxEchoPathGain;
     }
 
     /**
-     * Returns the delay of the response peak.
-     *
-     * @return the delay in blocks
+     * {@return the delay of every channel's main peak in blocks}
      */
-    int filterDelayBlocks() {
+    int[] filterDelaysBlocks() {
         return filterDelayBlocks;
     }
 
     /**
-     * Returns the length of the analyzed response.
-     *
-     * @return the length in blocks
+     * {@return the length of the first channel's filter in blocks}
      */
     int filterLengthBlocks() {
-        return filterLengthBlocks;
+        return filterLengthBlocks[0];
     }
 
-    /**
-     * Moves the analyzed region to the next block of the response, wrapping at its end.
-     *
-     * @param filterSize the length of the response
-     */
     private void setRegionToAnalyze(int filterSize) {
         regionStart = regionEnd >= filterSize - 1 ? 0 : regionEnd + 1;
         regionEnd = Math.min(regionStart + BLOCK_SIZE - 1, filterSize - 1);
     }
 
-    /**
-     * Recomputes the high-pass filtered response over the analyzed region.
-     *
-     * @param filter the response
-     */
-    private void preProcessFilter(AdaptiveFirFilter.ImpulseResponse filter) {
+    private void preProcessFilter(int ch, AdaptiveFirFilter.ImpulseResponse filter) {
         var newLength = filter.length;
-        if (newLength > hHighpassLength) {
-            Arrays.fill(hHighpass, hHighpassLength, newLength, 0.f);
+        var h = hHighpass[ch];
+        if (newLength > hHighpassLength[ch]) {
+            Arrays.fill(h, hHighpassLength[ch], newLength, 0.f);
         }
-        hHighpassLength = newLength;
-        Arrays.fill(hHighpass, regionStart, regionEnd + 1, 0.f);
+        hHighpassLength[ch] = newLength;
+        Arrays.fill(h, regionStart, regionEnd + 1, 0.f);
         var values = filter.values;
         for (var k = Math.max(HIGH_PASS.length - 1, regionStart); k <= regionEnd; ++k) {
-            var tmp = hHighpass[k];
+            var tmp = h[k];
             for (var j = 0; j < HIGH_PASS.length; ++j) {
                 tmp += values[k - j] * HIGH_PASS[j];
             }
-            hHighpass[k] = tmp;
+            h[k] = tmp;
         }
     }
 
-    /**
-     * Returns the index of the largest squared value, starting from a previous peak and searching
-     * a region.
-     *
-     * @param h           the response
-     * @param peakIndexIn the previous peak
-     * @param start       the first index of the region
-     * @param end         the last index of the region
-     * @return the new peak
-     */
     private static int findPeakIndex(float[] h, int peakIndexIn, int start, int end) {
         var peakIndexOut = peakIndexIn;
         var maxH2 = h[peakIndexOut] * h[peakIndexOut];
@@ -248,70 +270,68 @@ final class FilterAnalyzer {
         return peakIndexOut;
     }
 
-    /**
-     * Updates the echo path gain estimate from the peak.
-     */
-    private void updateFilterGain() {
+    private void updateFilterGain(int ch) {
         var sufficientTimeToConverge = blocksSinceReset > 5 * Aec3.NUM_BLOCKS_PER_SECOND;
-        var peak = Math.abs(hHighpass[peakIndex]);
-        if (sufficientTimeToConverge && consistentEstimate) {
-            gain = peak;
-        } else if (gain != 0) {
-            gain = gain < peak ? peak : gain;
+        var peak = Math.abs(hHighpass[ch][peakIndex[ch]]);
+        if (sufficientTimeToConverge && consistentEstimate[ch]) {
+            gain[ch] = peak;
+        } else if (gain[ch] != 0) {
+            gain[ch] = gain[ch] < peak ? peak : gain[ch];
         }
     }
 
-    /**
-     * Updates the significance of the peak and the consistency of its delay.
-     *
-     * @param renderBuffer the render rings
-     * @return whether the estimate is consistent
-     */
-    private boolean detectConsistent(RenderBuffer renderBuffer) {
-        var filterToAnalyze = hHighpass;
-        var size = hHighpassLength;
+    private boolean detectConsistent(int ch, RenderBuffer renderBuffer) {
+        var filterToAnalyze = hHighpass[ch];
+        var size = hHighpassLength[ch];
+        var peak = peakIndex[ch];
         if (regionStart == 0) {
-            filterFloorAccum = 0.f;
-            filterSecondaryPeak = 0.f;
-            filterFloorLowLimit = peakIndex < 64 ? 0 : peakIndex - 64;
-            filterFloorHighLimit = peakIndex > size - 129 ? 0 : peakIndex + 128;
+            filterFloorAccum[ch] = 0.f;
+            filterSecondaryPeak[ch] = 0.f;
+            filterFloorLowLimit[ch] = peak < 64 ? 0 : peak - 64;
+            filterFloorHighLimit[ch] = peak > size - 129 ? 0 : peak + 128;
         }
-        var accum = filterFloorAccum;
-        var secondaryPeak = filterSecondaryPeak;
-        for (var k = regionStart; k < Math.min(regionEnd + 1, filterFloorLowLimit); ++k) {
+        var accum = filterFloorAccum[ch];
+        var secondaryPeak = filterSecondaryPeak[ch];
+        for (var k = regionStart; k < Math.min(regionEnd + 1, filterFloorLowLimit[ch]); ++k) {
             var absH = Math.abs(filterToAnalyze[k]);
             accum += absH;
             secondaryPeak = secondaryPeak < absH ? absH : secondaryPeak;
         }
-        for (var k = Math.max(filterFloorHighLimit, regionStart); k <= regionEnd; ++k) {
+        for (var k = Math.max(filterFloorHighLimit[ch], regionStart); k <= regionEnd; ++k) {
             var absH = Math.abs(filterToAnalyze[k]);
             accum += absH;
             secondaryPeak = secondaryPeak < absH ? absH : secondaryPeak;
         }
-        filterFloorAccum = accum;
-        filterSecondaryPeak = secondaryPeak;
+        filterFloorAccum[ch] = accum;
+        filterSecondaryPeak[ch] = secondaryPeak;
         if (regionEnd == size - 1) {
-            var filterFloor = filterFloorAccum / (filterFloorLowLimit + size - filterFloorHighLimit);
-            var absPeak = Math.abs(filterToAnalyze[peakIndex]);
-            significantPeak = absPeak > 10.f * filterFloor && absPeak > 2.f * filterSecondaryPeak;
+            var filterFloor = filterFloorAccum[ch] / (filterFloorLowLimit[ch] + size - filterFloorHighLimit[ch]);
+            var absPeak = Math.abs(filterToAnalyze[peak]);
+            significantPeak[ch] = absPeak > 10.f * filterFloor && absPeak > 2.f * filterSecondaryPeak[ch];
         }
-        if (significantPeak) {
+        if (significantPeak[ch]) {
             var blocks = renderBuffer.blocks;
-            var b = renderBuffer.blockOffset(-filterDelayBlocks);
-            var xEnergy = 0.f;
-            for (var i = 0; i < BLOCK_SIZE; i++) {
-                xEnergy = xEnergy + blocks[b + i] * blocks[b + i];
+            var activeRenderBlock = false;
+            for (var r = 0; r < renderBuffer.numChannels; r++) {
+                var b = renderBuffer.blockOffset(-filterDelayBlocks[ch], 0, r);
+                var xEnergy = 0.f;
+                for (var i = 0; i < BLOCK_SIZE; i++) {
+                    xEnergy = xEnergy + blocks[b + i] * blocks[b + i];
+                }
+                if (xEnergy > ACTIVE_RENDER_THRESHOLD) {
+                    activeRenderBlock = true;
+                    break;
+                }
             }
-            var activeRenderBlock = xEnergy > ACTIVE_RENDER_THRESHOLD;
-            if (consistentDelayReference == filterDelayBlocks) {
+            if (consistentDelayReference[ch] == filterDelayBlocks[ch]) {
                 if (activeRenderBlock) {
-                    ++consistentEstimateCounter;
+                    ++consistentEstimateCounter[ch];
                 }
             } else {
-                consistentEstimateCounter = 0;
-                consistentDelayReference = filterDelayBlocks;
+                consistentEstimateCounter[ch] = 0;
+                consistentDelayReference[ch] = filterDelayBlocks[ch];
             }
         }
-        return consistentEstimateCounter > 1.5f * Aec3.NUM_BLOCKS_PER_SECOND;
+        return consistentEstimateCounter[ch] > 1.5f * Aec3.NUM_BLOCKS_PER_SECOND;
     }
 }

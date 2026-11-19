@@ -182,12 +182,12 @@ class OggDemuxerTest {
         }
 
         @Test
-        @DisplayName("recognizes Speex as an unsupported audio track")
+        @DisplayName("recognizes Speex as an audio track")
         void speex() {
             var file = Fixtures.tone("spx", 440, 16000, 1, 0.5, List.of("-c:a", "libspeex"));
             try (var demuxer = new OggDemuxer(MediaSource.of(Fixtures.read(file)))) {
                 var track = (AudioTrack) demuxer.tracks().getFirst();
-                assertEquals(Codec.UNKNOWN_AUDIO, track.codec());
+                assertEquals(Codec.SPEEX, track.codec());
                 assertEquals(16000, track.sampleRate());
                 var packets = AudioPipeline.packets(demuxer, track.id());
                 assertFalse(packets.isEmpty());
@@ -202,7 +202,7 @@ class OggDemuxerTest {
             try (var demuxer = new OggDemuxer(MediaSource.of(Fixtures.read(file)))) {
                 assertEquals(2, demuxer.tracks().size());
                 var video = (VideoTrack) demuxer.tracks().get(0);
-                assertEquals(Codec.UNKNOWN_VIDEO, video.codec());
+                assertEquals(Codec.THEORA, video.codec());
                 assertEquals(64, video.width());
                 assertEquals(48, video.height());
                 var audio = (AudioTrack) demuxer.tracks().get(1);

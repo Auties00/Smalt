@@ -1,0 +1,19 @@
+# image dump of gainmap/libavif-paris_exif_xmp_gainmap_littleendian.jpg; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=403, height=302, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 403x302 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=9f7275de u=24eb2452 v=4cb05627
+  format=JPEG orientation=NORMAL source=403x302
+  icc=none exif=830:5b5ff8f0 xmp=3635:3103a176
+  profile=none
+  density=DOTS_PER_INCH 72.0x72.0
+scaled 100x75
+picture 101x76 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=9dc87cf2 u=3e8b2493 v=f96f8787
+  format=JPEG orientation=NORMAL source=403x302
+  icc=none exif=830:5b5ff8f0 xmp=3635:3103a176
+  profile=none
+  density=DOTS_PER_INCH 72.0x72.0
+decoder gain map
+picture 512x384 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=ff0fdddb
+decoder auxiliary images
+[AuxiliaryImage[index=0, type=GAIN_MAP, identifier=mpf:000000/GainMap, width=512, height=384]]

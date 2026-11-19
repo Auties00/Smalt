@@ -1,0 +1,15 @@
+# demux dump of w64/ima.w64; regenerate with -Dsmalt.test.updateDumps=true
+format W64
+duration 600000
+seekable true
+track 0 AUDIO ADPCM_IMA_WAV timebase=1/8000 duration=4800 config=none
+  audio rate=8000 bits=4 skip=0 layout=[FRONT_CENTER]
+packets 3
+0 t0 pts=0 dts=0 dur=2041 flags=KEY size=1024 crc=100cf727
+1 t0 pts=2041 dts=2041 dur=2041 flags=KEY size=1024 crc=d6537287
+2 t0 pts=4082 dts=4082 dur=718 flags=KEY size=1024 crc=9248bf16
+seek 0: t0@0
+seek 200000: t0@0
+seek 400000: t0@1
+seek 600000: end
+seek -1000000: t0@0

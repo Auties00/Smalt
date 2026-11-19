@@ -14,9 +14,10 @@ import java.util.Objects;
  *
  * <p>The encoder comes from the first {@link VideoCodecProvider} that encodes the codec, which
  * maps the codec-independent {@link VideoEncoderOptions} onto the codec's own configuration. The
- * Smalt artifacts encode H.264 ({@code smalt-mpeg}), VP8 ({@code smalt-image}) and VP9
- * ({@code smalt-video}); a codec no provider encodes raises {@link MediaException.Unsupported}
- * naming it and, when a Smalt artifact encodes it, the artifact to add.
+ * Smalt artifacts encode H.264 ({@code smalt-mpeg}), VP8 and Motion-JPEG ({@code smalt-image}),
+ * and VP9, AV1, ProRes and DNxHD ({@code smalt-video}); a codec no provider encodes raises
+ * {@link MediaException.Unsupported} naming it and, when a Smalt artifact encodes it, the artifact
+ * to add.
  *
  * @apiNote The registry suits callers that pick a codec at run time. A caller that needs a codec's own parameters
  * (profile, rate control, quantizer window, temporal layers) constructs that codec's encoder directly.
@@ -40,6 +41,18 @@ public final class VideoEncoders {
     }
 
     /**
+     * Returns whether a codec can be encoded with its alpha planes as a second stream
+     * ({@link VideoEncoderOptions#alpha()}) with the artifacts present at run time.
+     *
+     * @param codec the codec to look up
+     * @return {@code true} when {@link #create(Codec, VideoEncoderOptions)} accepts options asking for alpha
+     */
+    public static boolean encodesAlpha(Codec codec) {
+        var provider = provider(Objects.requireNonNull(codec, "codec"));
+        return provider != null && provider.encodesAlpha(codec);
+    }
+
+    /**
      * Creates an encoder for a codec.
      *
      * @param codec the codec to produce
@@ -47,7 +60,8 @@ public final class VideoEncoders {
      * @return the encoder, which the caller closes
      * @throws IllegalArgumentException if {@code codec} is not a video codec, or the codec cannot code the picture size
      * or bitrate
-     * @throws MediaException.Unsupported if the codec is not encodable
+     * @throws MediaException.Unsupported if the codec is not encodable, or the options ask for alpha and the codec
+     * cannot code it ({@link #encodesAlpha(Codec)} is {@code false})
      */
     public static VideoEncoder create(Codec codec, VideoEncoderOptions options) {
         Objects.requireNonNull(codec, "codec");
@@ -58,6 +72,9 @@ public final class VideoEncoders {
         var provider = provider(codec);
         if (provider == null) {
             throw Artifacts.unsupported(codec.displayName(), "encodable", Artifacts.encoderOf(codec));
+        }
+        if (options.alpha() && !provider.encodesAlpha(codec)) {
+            throw new MediaException.Unsupported("alpha", codec.displayName() + " cannot code alpha as a second stream");
         }
         return provider.createEncoder(codec, options);
     }

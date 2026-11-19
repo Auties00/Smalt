@@ -172,7 +172,7 @@ final class WrappersFlp {
         s.periodicityIndex[0] = indices.PERIndex;
         s.sumLogGain[0] = psEnc.sCmn.sum_log_gain_Q7;
         QuantLtpGains.quantLtpGains(B_Q14, indices.LTPIndex, s.periodicityIndex, s.sumLogGain, s.predGainDb, XX_Q17,
-                xX_Q17, subfr_len, nb_subfr);
+                xX_Q17, subfr_len, nb_subfr, s.ltpTempIdx, s.ltpOut);
         indices.PERIndex = s.periodicityIndex[0];
         psEnc.sCmn.sum_log_gain_Q7 = s.sumLogGain[0];
 

@@ -10,7 +10,7 @@ import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.testkit.audio.AudioPipeline;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -37,11 +37,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Differential tests of {@link Mp3Decoder} against ffmpeg's float MPEG audio decoders (the
  * oracle): every fixture must decode to the same number of samples as ffmpeg after the reader
- * trimming rule, with an SNR of at least 90 dB.
+ * trimming rule, with an SNR of at least 90 dB and within the ISO/IEC 11172-4 full accuracy limits
+ * of ffmpeg's decode, as symphonia-check compares MPEG audio decoders.
  */
 class Mp3DecoderTest {
-    static final double MIN_SNR = 90;
-
+    /** Two float decoders of the same normative synthesis differ only by rounding. */
+    static final Tolerance TOLERANCE = Tolerance.snr(90).and(Tolerance.iso11172(Tolerance.Iso11172Accuracy.FULL));
 
     static AudioPipeline.Decoded decode(Path file) {
         try (var demuxer = new MpegAudioDemuxer(MediaSource.of(Fixtures.read(file)))) {
@@ -50,20 +51,16 @@ class Mp3DecoderTest {
     }
 
     static double assertMatchesFfmpeg(Path file) {
-        return assertMatchesFfmpeg(file, MIN_SNR);
-    }
-
-    static double assertMatchesFfmpeg(Path file, double minimum) {
         var ours = decode(file);
         var trimmed = ours.trimmed();
         // ffmpeg's default Layer I/II decoder is fixed point (97.7 dB PSNR against ISO l2-test32, ours
         // 119.7 dB); its float decoders are the like-for-like oracle for every layer
         var reference = floatReference(file, ours.track().codec() == Codec.MP3 ? "mp3float" : "mp2float");
         assertEquals(reference.length, trimmed.length, "sample count differs from ffmpeg");
-        var snr = Quality.snr(reference, trimmed);
-        System.out.printf("SNR vs ffmpeg %s %s: %.2f dB over %d samples%n", ours.track().codec(), file.getFileName(), snr, trimmed.length);
-        assertTrue(snr >= minimum, "SNR " + snr + " dB below " + minimum);
-        return snr;
+        var difference = Tolerance.Difference.ofPcm(reference, trimmed);
+        System.out.printf("vs ffmpeg %s %s: %s%n", ours.track().codec(), file.getFileName(), difference);
+        TOLERANCE.check(file.getFileName().toString(), difference);
+        return difference.snr();
     }
 
     static float[] floatReference(Path file, String decoder) {

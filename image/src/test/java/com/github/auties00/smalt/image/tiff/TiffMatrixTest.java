@@ -173,14 +173,17 @@ class TiffMatrixTest {
                     .data(TiffFiles.packPlanar(values, WIDTH, HEIGHT, 4, bits, true));
             var expected = new long[WIDTH * HEIGHT * 4];
             for (var i = 0; i < WIDTH * HEIGHT; i++) {
+                // R = round((M - C) * (M - K) / M), the naive conversion ImageOps.toRgba also applies
                 if (bits == 8) {
                     var k = 255 - values[i * 4 + 3];
-                    set(expected, i, k * (255 - values[i * 4]) / 255 * 257, k * (255 - values[i * 4 + 1]) / 255 * 257,
-                            k * (255 - values[i * 4 + 2]) / 255 * 257, 65535);
+                    set(expected, i, Math.round(k * (255 - values[i * 4]) / 255.0) * 257,
+                            Math.round(k * (255 - values[i * 4 + 1]) / 255.0) * 257,
+                            Math.round(k * (255 - values[i * 4 + 2]) / 255.0) * 257, 65535);
                 } else {
                     var k = 65535 - values[i * 4 + 3];
-                    set(expected, i, k * (65535 - values[i * 4]) / 65535, k * (65535 - values[i * 4 + 1]) / 65535,
-                            k * (65535 - values[i * 4 + 2]) / 65535, 65535);
+                    set(expected, i, Math.round(k * (65535 - values[i * 4]) / 65535.0),
+                            Math.round(k * (65535 - values[i * 4 + 1]) / 65535.0),
+                            Math.round(k * (65535 - values[i * 4 + 2]) / 65535.0), 65535);
                 }
             }
             cases.add(new Case("cmyk " + bits + "-bit", file.bytes(), expected, bits > 8, BYTE_VARIANTS, planar.bytes()));
@@ -292,8 +295,16 @@ class TiffMatrixTest {
         var picture = (RgbaPicture) TiffDecoder.decode(MediaSource.of(file)).picture();
         var expected = LibTiff.rgba(file);
         assertNotNull(expected, "libtiff decodes " + options);
-        com.github.auties00.smalt.testkit.image.RasterTesting.assertSameRgba(expected,
-                com.github.auties00.smalt.testkit.image.RasterTesting.tight(picture), WIDTH, options);
+        var actual = com.github.auties00.smalt.testkit.image.RasterTesting.tight(picture);
+        if (samples == 4) {
+            // libtiff truncates the naive CMYK conversion, Smalt rounds it
+            for (var i = 0; i < actual.length; i++) {
+                var difference = (actual[i] & 0xFF) - (expected[i] & 0xFF);
+                assertTrue(difference == 0 || difference == 1, options + ": sample " + i + " differs by " + difference);
+            }
+            return;
+        }
+        com.github.auties00.smalt.testkit.image.RasterTesting.assertSameRgba(expected, actual, WIDTH, options);
     }
 
     private static void compare(Case c, String options, Picture picture, boolean sixteen) {

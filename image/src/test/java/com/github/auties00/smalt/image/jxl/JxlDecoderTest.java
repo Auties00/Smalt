@@ -250,8 +250,9 @@ class JxlDecoderTest {
         void reconstructLimits() {
             var tiny = ImageDecoderOptions.builder()
                     .limits(com.github.auties00.smalt.MediaLimits.builder().maxBytes(16).build()).build();
+            var cafe = file("cafe");
             assertThrows(MediaException.LimitExceeded.class,
-                    () -> JxlDecoder.reconstructJpeg(MediaSource.of(file("cafe")), tiny));
+                    () -> JxlDecoder.reconstructJpeg(MediaSource.of(cafe), tiny));
         }
 
         @Test

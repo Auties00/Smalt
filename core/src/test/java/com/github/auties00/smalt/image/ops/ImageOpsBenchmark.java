@@ -38,7 +38,7 @@ public class ImageOpsBenchmark {
     @Setup(Level.Trial)
     public void setup() {
         if (!Simd.ENABLED && !"false".equals(System.getProperty("smalt.simd"))) {
-            throw new IllegalStateException("the Vector API is not enabled in the benchmark JVM");
+            throw new IllegalStateException("the Vector API is not enabled in the benchmark JVM (on Windows pass -Dsmalt.simd=true)");
         }
         var photo = Pictures.patternRgba(4032, 3024, true);
         photoRgbaAlpha = photo;

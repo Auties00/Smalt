@@ -336,7 +336,7 @@ public final class Aht {
         for (var m = 0; m < 6; m++) {
             for (var j = 0; j < 6; j++) {
                 var weight = j == 0 ? Math.sqrt(0.5) : 1.0;
-                matrix[m * 6 + j] = (float) (Math.sqrt(2) * weight * Math.cos(j * (2 * m + 1) * Math.PI / 12));
+                matrix[m * 6 + j] = (float) (Math.sqrt(2) * weight * StrictMath.cos(j * (2 * m + 1) * Math.PI / 12));
             }
         }
         return matrix;

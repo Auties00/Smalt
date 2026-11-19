@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.ops;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
@@ -66,6 +67,7 @@ class RobustnessTest {
         assertNotNull(picture);
         assertTrue(picture.width() > 0 && picture.height() > 0);
         switch (picture) {
+            case ChannelPicture channels -> assertTrue(channels.stride() >= channels.width() * channels.channelCount());
             case RgbaPicture rgba -> assertTrue(rgba.pixels().length >= 4L * rgba.width() * rgba.height());
             case YuvPicture yuv -> {
                 assertTrue(yuv.y().length >= (long) yuv.width() * yuv.height());

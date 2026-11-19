@@ -1,0 +1,13 @@
+# image dump of jpeg-xs/conformance-200.jxc; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG_XS
+info ImageInfo[format=JPEG_XS, width=1520, height=1200, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1520x1200 yuv8 YUV420 color=BT709/LIMITED/BT709/BT709 y=ee35e6d1 u=d1753af7 v=7b63fac9
+  format=JPEG_XS orientation=NORMAL source=1520x1200
+  icc=none exif=none xmp=none
+  profile=none
+scaled 380x300
+picture 1520x1200 yuv8 YUV420 color=BT709/LIMITED/BT709/BT709 y=ee35e6d1 u=d1753af7 v=7b63fac9
+  format=JPEG_XS orientation=NORMAL source=1520x1200
+  icc=none exif=none xmp=none
+  profile=none

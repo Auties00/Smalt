@@ -310,13 +310,15 @@ class HeicStructureTest {
         }
 
         @Test
-        @DisplayName("reject an alpha plane of another size")
+        @DisplayName("resample an alpha plane of another size to the color size")
         void mismatched() {
             var builder = heic();
             var image = still(builder, tile(0, 0, "yuv420p"));
             alphaItem(builder, alphaPlane(32, 32, ""), image);
             builder.primary(image);
-            assertThrows(MediaException.Unsupported.class, () -> HeicDecoder.decode(MediaSource.of(builder.build())));
+            var decoded = (YuvPicture) HeicDecoder.decode(MediaSource.of(builder.build())).picture();
+            assertTrue(decoded.hasAlpha());
+            assertEquals(64, decoded.width());
         }
     }
 
@@ -360,6 +362,132 @@ class HeicStructureTest {
             assertEquals(ColorRange.FULL, color.range());
             assertEquals(1000, color.contentLightLevel().orElseThrow().maxContentLightLevel());
             assertFalse(decoded.colorProfile().orElseThrow().isSrgb());
+        }
+    }
+
+    @Nested
+    @DisplayName("high bit depth")
+    class HighDepth {
+        private static final ImageDecoderOptions WIDE = ImageDecoderOptions.builder().highBitDepth(true).build();
+
+        /** Builds an {@code iovl} payload with 16-bit offsets. */
+        private static byte[] overlayPayload(int[] fill, int width, int height, int[][] offsets) {
+            var out = new ByteArrayOutputStream();
+            out.write(0);
+            out.write(0);
+            for (var value : fill) {
+                out.write(value >> 8);
+                out.write(value);
+            }
+            out.write(width >> 8);
+            out.write(width);
+            out.write(height >> 8);
+            out.write(height);
+            for (var offset : offsets) {
+                for (var value : offset) {
+                    out.write(value >> 8);
+                    out.write(value);
+                }
+            }
+            return out.toByteArray();
+        }
+
+        /** Decodes one coded item on its own, at its depth. */
+        private static com.github.auties00.smalt.image.Picture standalone(Coded coded) {
+            var builder = heic();
+            builder.primary(still(builder, coded));
+            return HeicDecoder.decode(MediaSource.of(builder.build()), WIDE).picture();
+        }
+
+        @Test
+        @DisplayName("compose an overlay of 10-bit inputs at 16 bits, with the exact 16-bit fill")
+        void overlay() {
+            var tiles = List.of(tile(0, 0, "yuv420p10le"), tile(64, 64, "yuv420p10le"));
+            var fill = new int[]{0x1234, 0x5678, 0x9ABC, 0xFFFF};
+            int[][] offsets = {{0, 0}, {50, 30}};
+            var builder = heic();
+            var inputs = new int[tiles.size()];
+            for (var i = 0; i < inputs.length; i++) {
+                inputs[i] = still(builder, tiles.get(i));
+                builder.hidden(inputs[i]);
+            }
+            var overlay = builder.idatItem("iovl", overlayPayload(fill, 100, 80, offsets), plain(HeifBuilder.ispe(100, 80)));
+            builder.reference("dimg", overlay, inputs).primary(overlay);
+            var data = builder.build();
+            var deep = assertInstanceOf(com.github.auties00.smalt.image.Rgba16Picture.class,
+                    HeicDecoder.decode(MediaSource.of(data), WIDE).picture());
+            var expected = new short[4 * 100 * 80];
+            for (var i = 0; i < expected.length; i++) {
+                expected[i] = (short) fill[i & 3];
+            }
+            for (var t = 0; t < tiles.size(); t++) {
+                var input = standalone(tiles.get(t));
+                assertInstanceOf(Yuv16Picture.class, input);
+                var rgba = ImageOps.toRgba16(input);
+                for (var y = 0; y < 64; y++) {
+                    for (var x = 0; x < 64; x++) {
+                        var cx = offsets[t][0] + x;
+                        var cy = offsets[t][1] + y;
+                        if (cx < 100 && cy < 80) {
+                            System.arraycopy(rgba.pixels(), y * rgba.stride() + 4 * x, expected, 4 * (cy * 100 + cx), 4);
+                        }
+                    }
+                }
+            }
+            var actual = new short[expected.length];
+            for (var y = 0; y < 80; y++) {
+                System.arraycopy(deep.pixels(), y * deep.stride(), actual, y * 400, 400);
+            }
+            assertArrayEquals(expected, actual);
+            var narrow = assertInstanceOf(RgbaPicture.class, HeicDecoder.decode(MediaSource.of(data)).picture());
+            assertEquals((0x1234 * 255 + 32767) / 65535, narrow.pixels()[4 * 99] & 0xFF);
+        }
+
+        @Test
+        @DisplayName("compose an overlay of 8-bit inputs at 8 bits even when the depth is kept")
+        void overlayOfEightBitInputs() {
+            var builder = heic();
+            var input = still(builder, tile(0, 0, "yuv420p"));
+            builder.hidden(input);
+            var overlay = builder.idatItem("iovl", overlayPayload(new int[]{0, 0, 0, 0xFFFF}, 64, 64, new int[][]{{0, 0}}),
+                    plain(HeifBuilder.ispe(64, 64)));
+            builder.reference("dimg", overlay, input).primary(overlay);
+            var wide = HeicDecoder.decode(MediaSource.of(builder.build()), WIDE).picture();
+            var narrow = HeicDecoder.decode(MediaSource.of(builder.build())).picture();
+            assertArrayEquals(assertInstanceOf(RgbaPicture.class, narrow).pixels(),
+                    assertInstanceOf(RgbaPicture.class, wide).pixels());
+        }
+
+        @Test
+        @DisplayName("divide premultiplied 10-bit color by its alpha at 16 bits")
+        void premultiplied() {
+            var color = tile(0, 0, "yuv420p10le");
+            var alpha = alphaPlane(64, 64, "");
+            var straight = heic();
+            var plainImage = still(straight, color);
+            alphaItem(straight, alpha, plainImage);
+            straight.primary(plainImage);
+            var source = assertInstanceOf(Yuv16Picture.class, HeicDecoder.decode(MediaSource.of(straight.build()), WIDE)
+                    .picture());
+            var builder = heic();
+            var image = still(builder, color);
+            var aux = alphaItem(builder, alpha, image);
+            builder.reference("prem", image, aux).primary(image);
+            var decoded = assertInstanceOf(com.github.auties00.smalt.image.Rgba16Picture.class,
+                    HeicDecoder.decode(MediaSource.of(builder.build()), WIDE).picture());
+            var premultiplied = ImageOps.toRgba16(source);
+            for (var i = 0; i < 64 * 64; i++) {
+                var p = (i / 64) * premultiplied.stride() + 4 * (i % 64);
+                var q = (i / 64) * decoded.stride() + 4 * (i % 64);
+                long a = premultiplied.pixels()[p + 3] & 0xFFFF;
+                assertEquals(a, decoded.pixels()[q + 3] & 0xFFFF);
+                for (var c = 0; c < 3; c++) {
+                    long value = premultiplied.pixels()[p + c] & 0xFFFF;
+                    var expected = a == 0 ? 0 : Math.min(65535, (value * 131070 + a) / (2 * a));
+                    assertEquals(expected, decoded.pixels()[q + c] & 0xFFFF, "pixel " + i + " channel " + c);
+                }
+            }
+            assertInstanceOf(RgbaPicture.class, HeicDecoder.decode(MediaSource.of(builder.build())).picture());
         }
     }
 

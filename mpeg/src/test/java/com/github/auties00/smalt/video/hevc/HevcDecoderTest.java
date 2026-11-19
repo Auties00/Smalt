@@ -83,7 +83,9 @@ class HevcDecoderTest {
         @DisplayName("is found by the video decoder registry")
         void registry() {
             assertTrue(VideoDecoders.isSupported(Codec.HEVC));
-            try (var decoder = VideoDecoders.create(HevcTestStreams.track())) {
+            // without the option, the registry decodes through the check of a stream's Dolby Vision RPUs
+            var options = VideoDecoderOptions.builder().dolbyVisionBaseLayer(true).build();
+            try (var decoder = VideoDecoders.create(HevcTestStreams.track(), options)) {
                 assertInstanceOf(HevcDecoder.class, decoder);
             }
         }

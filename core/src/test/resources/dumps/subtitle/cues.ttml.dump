@@ -1,0 +1,12 @@
+# demux dump of subtitle/cues.ttml; regenerate with -Dsmalt.test.updateDumps=true
+format TTML
+duration 2000000
+seekable true
+track 1 DATA TTML timebase=1/1000 duration=2000 config=62:9dbf9a0a
+packets 1
+0 t1 pts=0 dts=0 dur=2000 flags=KEY size=556 crc=7719f2f0
+seek 0: t1@0
+seek 666666: t1@0
+seek 1333333: t1@0
+seek 2000000: end
+seek -1000000: t1@0

@@ -87,14 +87,16 @@ final class VectorPixelKernel implements PixelKernel {
 
     /**
      * The scalar kernel handling the row ends.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarPixelKernel scalar;
+    private static final ScalarPixelKernel SCALAR = new ScalarPixelKernel();
 
     /**
      * Constructs the kernel.
      */
     private VectorPixelKernel() {
-        this.scalar = new ScalarPixelKernel();
     }
 
     /**
@@ -131,7 +133,7 @@ final class VectorPixelKernel implements PixelKernel {
         if (INT_VECTOR.cast(all).lanewise(VectorOperators.LSHR, 24).compare(VectorOperators.NE, MAX_SAMPLE).anyTrue()) {
             return false;
         }
-        return scalar.isOpaqueRgbaRange(pixels, offset, x, width);
+        return SCALAR.isOpaqueRgbaRange(pixels, offset, x, width);
     }
 
     @Override
@@ -144,7 +146,7 @@ final class VectorPixelKernel implements PixelKernel {
         if (BYTE_VECTOR.cast(all).compare(VectorOperators.NE, ALL_ONE_BYTES).anyTrue()) {
             return false;
         }
-        return scalar.isOpaquePlaneRange(plane, offset, x, width);
+        return SCALAR.isOpaquePlaneRange(plane, offset, x, width);
     }
 
     /**
@@ -189,7 +191,7 @@ final class VectorPixelKernel implements PixelKernel {
                     .lanewise(VectorOperators.OR, OPAQUE_ALPHA);
             PIXEL_VECTOR.cast(INT_VECTOR.cast(packed).reinterpretShape(BP, 0)).intoArray(dst, dOff + 4 * x);
         }
-        scalar.flattenRgbaRange(src, sOff, dst, dOff, rgb, x, width);
+        SCALAR.flattenRgbaRange(src, sOff, dst, dOff, rgb, x, width);
     }
 
     /**
@@ -217,6 +219,6 @@ final class VectorPixelKernel implements PixelKernel {
             SAMPLE_VECTOR.cast(INT_VECTOR.cast(blended).convertShape(VectorOperators.I2B, B8, 0))
                     .intoArray(dst, dOff + x);
         }
-        scalar.flattenPlaneRange(src, sOff, alpha, aOff, background, dst, dOff, x, width);
+        SCALAR.flattenPlaneRange(src, sOff, alpha, aOff, background, dst, dOff, x, width);
     }
 }

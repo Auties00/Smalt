@@ -1,0 +1,24 @@
+# H.264 4:2:2 streams, self-generated for H264Chroma422Test. Columns:
+# name	sha256	bytes	luma/chroma depth, size, frames	JM lencod parameters
+#
+# Each stream was encoded with the JM reference encoder 19.1 (lencod, jvet/JM master 8b34eee, built from
+# source) from its cfg/encoder.cfg with YUVFormat=2, ProfileIDC=122 (unless given), LevelIDC=30,
+# HierarchicalCoding=0, InputFile holding ffmpeg 7.1's "testsrc2=size=WxH:rate=25,noise=alls=10:allf=t+u"
+# as yuv422p16le with each plane shifted right to its bit depth (written as 8-bit samples when both depths
+# are 8), and SourceBitDepth*/OutputBitDepth* set to the depths below. The streams marked "pcm source" use
+# "testsrc2=size=80x32:rate=50,tinterlace=mode=merge,split[a][b];[b]crop=40:64:40:0,noise=alls=100:allf=t+u[n];[a][n]overlay=40:0"
+# (the progressive one "testsrc2=size=80x64:rate=25,split..." with the same overlay), so the noisy right half
+# codes as I_PCM. The JM decoder (ldecod) reproduces each encoder reconstruction, and the expected frame
+# hashes in frames.tsv are its output, which FFmpeg's output matches for every stream with equal depths.
+# frames.tsv also holds the hashes of the ITU-T conformance streams without a reference YUV, on which FFmpeg
+# and the JM decoder agree.
+c8-cavlc	0d67e889953218a719f498cb2c10eee9d9fc5ef478104ec568afad522d4f3572	5465	8/8, 64x64, 4	SymbolMode=0 NumberBFrames=1 QPISlice=20 QPPSlice=22 QPBSlice=24 ReferenceReorder=0 PocMemoryManagement=0
+c8-cabac-mbaff-pcm	be9971ce22ecd9e16c9dc7a21bbeb3bfccb0e400acd60b3a58daabe514c0f53c	35053	8/8, 80x64, 6 (pcm source)	SymbolMode=1 NumberBFrames=1 MbInterlace=2 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=0 QPPSlice=2 QPBSlice=4 Transform8x8Mode=1
+c8-cavlc-mbaff-cip	21740c405462a15be639da9208710afde573201a3e890b2a98828b3d26a56a94	35358	8/8, 80x64, 6 (pcm source)	SymbolMode=0 NumberBFrames=0 MbInterlace=2 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=6 QPPSlice=8 ConstrainedIntraPred=1 RandomIntraMBRefresh=4
+c8-cavlc-scaling-implicit	ded15c5b6106dfd2e28079e610fe7fb2bd7c9f50c450e2165487d91239fc4a49	16022	8/8, 96x64, 8	SymbolMode=0 NumberBFrames=2 QPISlice=16 QPPSlice=20 QPBSlice=22 WeightedBiprediction=2 DirectModeType=0 ScalingMatrixPresentFlag=3 Transform8x8Mode=1 CbQPOffset=5 CrQPOffset=-6
+c10-paff-wp	c3effc7ddfd90579701e123f0cdb2fb611741374bde6f1edfa56a8447b08c14a	17464	10/10, 96x96, 6	SymbolMode=0 NumberBFrames=1 PicInterlace=2 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=18 QPPSlice=20 QPBSlice=22 WeightedPrediction=1 WeightedBiprediction=1
+c10-fields-temporal	3df257c38032b0da505cfe401ccc3efeab785d3897097d9d10fc545e2fcf75cf	6722	10/10, 64x64, 5	SymbolMode=1 NumberBFrames=1 PicInterlace=1 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=20 QPPSlice=22 QPBSlice=24 DirectModeType=0
+c10-8-cabac	f3fae9663ed72560b09ca88de5370b0d1a94bfd4108a01e1ac460e37e9625db8	20523	10/8, 96x64, 6	SymbolMode=1 NumberBFrames=2 QPISlice=12 QPPSlice=14 QPBSlice=16 Transform8x8Mode=1 CbQPOffset=-4 CrQPOffset=3
+c10-cabac-pcm	031017d35540bae0bf52b59d6eacbe418aaaef8ef73a52609ec009c1be5660dc	34083	10/10, 80x64, 4 (pcm source)	SymbolMode=1 NumberBFrames=1 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=-12 QPPSlice=-10 QPBSlice=-8
+c12-cabac-wp	426b126ef92c11bc7b39945bcb47e7cbf4a0cfae507e24c778db435af5eaae5b	49070	12/12, 96x64, 6	ProfileIDC=244 SymbolMode=1 NumberBFrames=2 QPISlice=-4 QPPSlice=0 QPBSlice=3 WeightedPrediction=1 WeightedBiprediction=1 CbQPOffset=-3 CrQPOffset=4 Transform8x8Mode=1 NumberReferenceFrames=3 DFParametersFlag=1 DFAlphaRefPSlice=2 DFBetaRefPSlice=-1 DFAlphaNRefBSlice=-2 DFBetaNRefBSlice=3
+c14-cavlc-mbaff-slices	e36f509e16e8fe9afd0135ee3c80d13cf6152e88f127e536c4daafaec974c271	46938	14/14, 64x64, 4	ProfileIDC=244 SymbolMode=0 NumberBFrames=1 MbInterlace=2 ReferenceReorder=0 PocMemoryManagement=0 QPISlice=-30 QPPSlice=-20 QPBSlice=-10 SliceMode=1 SliceArgument=6 Transform8x8Mode=1 DFParametersFlag=1 DFAlphaRefISlice=3 DFBetaRefISlice=3 DFAlphaRefPSlice=-3 DFBetaRefPSlice=-3

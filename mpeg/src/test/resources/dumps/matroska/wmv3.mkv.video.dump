@@ -1,0 +1,21 @@
+# video decode dump of matroska/wmv3.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 11000000
+seekable true
+track 1 VC1 128x96 timebase=1/1000
+0 pts=0 dur=1000 key=true 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=835738b3 u=5ec631bd v=1f539024
+1 pts=1000 dur=1000 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=835738b3 u=5ec631bd v=1f539024
+2 pts=2000 dur=1000 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=835738b3 u=5ec631bd v=1f539024
+3 pts=3000 dur=1000 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=835738b3 u=5ec631bd v=1f539024
+4 pts=4000 dur=1000 key=true 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=17137df8 u=81527053 v=6734eb25
+5 pts=5000 dur=1000 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=17137df8 u=81527053 v=6734eb25
+6 pts=6000 dur=1000 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=17137df8 u=81527053 v=6734eb25
+7 pts=7000 dur=1000 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=17137df8 u=81527053 v=6734eb25
+8 pts=8000 dur=1000 key=true 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=22a0b895 u=87f80904 v=ae2e0ddc
+9 pts=9000 dur=1000 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=22a0b895 u=87f80904 v=ae2e0ddc
+10 pts=10000 dur=1000 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/BT709/CENTER y=22a0b895 u=87f80904 v=ae2e0ddc
+seek 0: @0
+seek 3666666: @3
+seek 7333333: @7
+seek 11000000: end
+seek -1000000: @0

@@ -425,9 +425,9 @@ public class ScalarH264Dsp extends H264Dsp {
     }
 
     @Override
-    public void chromaDcAdd(int[] c, byte[] dst, int dstOffset, int dstStride) {
+    public void chromaDcAdd(int[] c, int o, byte[] dst, int dstOffset, int dstStride) {
         for (var blk = 0; blk < 4; blk++) {
-            idct4x4DcAdd(c, blk * 16, dst, dstOffset + (blk >> 1) * 4 * dstStride + (blk & 1) * 4, dstStride);
+            idct4x4DcAdd(c, o + blk * 16, dst, dstOffset + (blk >> 1) * 4 * dstStride + (blk & 1) * 4, dstStride);
         }
     }
 

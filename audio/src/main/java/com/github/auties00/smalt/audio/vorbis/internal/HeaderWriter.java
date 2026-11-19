@@ -31,9 +31,9 @@ public final class HeaderWriter {
         out.write(0, 32);
         out.write(setup.channels, 8);
         out.write(setup.rate, 32);
-        out.write(0, 32);
+        out.write(setup.bitrateUpper, 32);
         out.write(setup.bitrateNominal, 32);
-        out.write(0, 32);
+        out.write(setup.bitrateLower, 32);
         out.write(Ilog.ilog(setup.blockSizes[0] - 1), 4);
         out.write(Ilog.ilog(setup.blockSizes[1] - 1), 4);
         out.write(1, 1);

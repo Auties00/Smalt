@@ -36,6 +36,11 @@ public final class ModularChannel {
     public int[] data;
 
     /**
+     * Whether the channel holds the residuals of a squeeze step, which a progressive decode may leave zero.
+     */
+    public boolean residual;
+
+    /**
      * Creates a channel without samples.
      *
      * @param width the width in samples

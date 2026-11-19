@@ -33,6 +33,11 @@ public final class MediaInfo {
     private final ContainerFormat container;
 
     /**
+     * The short name of the container, or {@code null} for an image.
+     */
+    private final String containerName;
+
+    /**
      * The image format, or {@code null} for a container.
      */
     private final ImageFormat image;
@@ -76,6 +81,7 @@ public final class MediaInfo {
      * Constructs a description.
      *
      * @param container      the container format, or {@code null} for an image
+     * @param containerName  the short name of the container, or {@code null} for an image
      * @param image          the image format, or {@code null} for a container
      * @param size           the file size, or {@code -1}
      * @param durationMicros the duration in microseconds, or {@code -1}
@@ -85,9 +91,10 @@ public final class MediaInfo {
      * @param chapters       the chapters, copied
      * @param pictures       the embedded pictures, copied
      */
-    MediaInfo(ContainerFormat container, ImageFormat image, long size, long durationMicros, long bitRate,
-              List<StreamInfo> streams, Map<String, String> tags, List<Chapter> chapters, List<AttachedPicture> pictures) {
+    MediaInfo(ContainerFormat container, String containerName, ImageFormat image, long size, long durationMicros,
+              long bitRate, List<StreamInfo> streams, Map<String, String> tags, List<Chapter> chapters, List<AttachedPicture> pictures) {
         this.container = container;
+        this.containerName = containerName;
         this.image = image;
         this.size = size;
         this.durationMicros = durationMicros;
@@ -105,6 +112,20 @@ public final class MediaInfo {
      */
     public Optional<ContainerFormat> container() {
         return Optional.ofNullable(container);
+    }
+
+    /**
+     * Returns the short name of the container, which identifies a container that {@link ContainerFormat} does
+     * not name.
+     *
+     * <p>The name is {@link ContainerFormat#shortName()} of {@link #container()}, or, for
+     * {@link ContainerFormat#OTHER}, the name of the {@link com.github.auties00.smalt.spi.ContainerProvider} that
+     * read the file.
+     *
+     * @return the name, for example {@code "mp4"}, or empty for an image file
+     */
+    public Optional<String> containerName() {
+        return Optional.ofNullable(containerName);
     }
 
     /**
@@ -236,7 +257,7 @@ public final class MediaInfo {
 
     @Override
     public String toString() {
-        return "MediaInfo[" + (container != null ? "container=" + container : "image=" + image)
+        return "MediaInfo[" + (container != null ? "container=" + containerName : "image=" + image)
                 + (size >= 0 ? ", size=" + size : "") + (durationMicros >= 0 ? ", durationMicros=" + durationMicros : "")
                 + (bitRate >= 0 ? ", bitRate=" + bitRate : "") + ", streams=" + streams
                 + (tags.isEmpty() ? "" : ", tags=" + tags) + (chapters.isEmpty() ? "" : ", chapters=" + chapters)

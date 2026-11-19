@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.video.prores;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.MatrixCoefficients;
@@ -153,15 +152,15 @@ class ProResEncoderApiTest {
         }
 
         @Test
-        @DisplayName("rejects RGB input for an unsupported matrix and keeps its clock")
-        void unsupportedMatrix() {
+        @DisplayName("codes RGB input in the constant-luminance matrix and keeps its clock")
+        void constantLuminance() {
             var yuv = Vp9TestVideo.synthesize(64, 48, 1).getFirst();
             var options = ProResEncoderOptions.of(ProResProfile.LT).toBuilder().threads(1)
                     .color(ColorInfo.BT709_LIMITED.withMatrix(MatrixCoefficients.BT2020_CL)).build();
             try (var encoder = new ProResEncoder(64, 48, options)) {
                 var rgb = new VideoFrame(ImageOps.toRgba(yuv), Packet.NO_TIMESTAMP, 0, false);
-                assertThrows(MediaException.Unsupported.class, () -> encoder.encodeFrame(rgb));
-                assertEquals(0, encoder.encodeFrame(new VideoFrame(yuv, Packet.NO_TIMESTAMP, 0, false)).pts());
+                assertEquals(0, encoder.encodeFrame(rgb).pts());
+                assertEquals(3000, encoder.encodeFrame(new VideoFrame(yuv, Packet.NO_TIMESTAMP, 0, false)).pts());
             }
         }
     }

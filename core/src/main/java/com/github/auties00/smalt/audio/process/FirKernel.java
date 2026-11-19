@@ -132,4 +132,41 @@ sealed interface FirKernel permits ScalarFirKernel, VectorProcessKernels.VectorF
             }
         }
     }
+
+    /**
+     * Computes {@code count} consecutive outputs from an interpolated phase table at positions
+     * kept in fixed point with 32 fractional bits.
+     *
+     * <p>Output {@code i} is evaluated at signal index {@code base_i} with fractional position
+     * {@code fraction_i}, in units of {@code 2^-32}: it selects row
+     * {@code slot = (fraction * phases) >> 32} and the weight {@code ((fraction * phases) mod 2^32) / 2^32},
+     * combined as in interpolated mode. Each step adds {@code stepFraction} to the fraction, carrying
+     * into the base, and {@code stepWhole} to the base.
+     *
+     * @param x            the signal
+     * @param base         the signal index of the first tap of the first output
+     * @param fraction     the fractional position of the first output, in {@code [0, 2^32)}
+     * @param stepWhole    the whole part of the input advance per output
+     * @param stepFraction the fractional part of the input advance per output, in {@code [0, 2^32)}
+     * @param phases       the number of interpolated phases in the tables, at most 2^20
+     * @param table        the coefficients, {@code taps} per interpolated phase
+     * @param slopes       the difference from each interpolated phase to the next, laid out like
+     *                     {@code table}
+     * @param taps         the number of taps; a positive multiple of {@value #CHAINS}
+     * @param out          receives the outputs
+     * @param offset       the index in {@code out} of the first output
+     * @param count        the number of outputs
+     */
+    default void runVariable(float[] x, int base, long fraction, int stepWhole, long stepFraction, int phases,
+                             float[] table, float[] slopes, int taps, float[] out, int offset, int count) {
+        for (var i = 0; i < count; i++) {
+            var scaled = fraction * phases;
+            var row = (int) (scaled >>> 32) * taps;
+            var weight = (float) ((scaled & 0xFFFF_FFFFL) * 0x1p-32);
+            out[offset + i] = dot(x, base, table, row, taps) + weight * dot(x, base, slopes, row, taps);
+            fraction += stepFraction;
+            base += stepWhole + (int) (fraction >>> 32);
+            fraction &= 0xFFFF_FFFFL;
+        }
+    }
 }

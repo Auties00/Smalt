@@ -80,14 +80,16 @@ public final class VectorIpredDsp extends IpredDsp {
 
     /**
      * The kernels used for the modes this class does not vectorize.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarIpredDsp scalar;
+    private static final ScalarIpredDsp SCALAR = new ScalarIpredDsp();
 
     /**
      * Constructs the kernels.
      */
     public VectorIpredDsp() {
-        this.scalar = new ScalarIpredDsp();
     }
 
     /**
@@ -138,7 +140,7 @@ public final class VectorIpredDsp extends IpredDsp {
             case DC_128_PRED -> splat(dst, dstOff, stride, width, height, (bitdepthMax + 1) >> 1);
             case SMOOTH_PRED, SMOOTH_V_PRED, SMOOTH_H_PRED -> {
                 if (width < 8) {
-                    scalar.intraPred(mode, dst, dstOff, stride, topleft, topleftOff, width, height, angle, maxWidth,
+                    SCALAR.intraPred(mode, dst, dstOff, stride, topleft, topleftOff, width, height, angle, maxWidth,
                             maxHeight, scratch, bitdepthMax);
                 } else if (mode == SMOOTH_PRED) {
                     smooth(dst, dstOff, stride, topleft, topleftOff, width, height);
@@ -149,26 +151,26 @@ public final class VectorIpredDsp extends IpredDsp {
                 }
             }
             case FILTER_PRED -> filter(dst, dstOff, stride, topleft, topleftOff, width, height, angle, bitdepthMax);
-            default -> scalar.intraPred(mode, dst, dstOff, stride, topleft, topleftOff, width, height, angle,
+            default -> SCALAR.intraPred(mode, dst, dstOff, stride, topleft, topleftOff, width, height, angle,
                     maxWidth, maxHeight, scratch, bitdepthMax);
         }
     }
 
     @Override
     public void cflAc(int layout, short[] ac, short[] y, int yOff, int stride, int wPad, int hPad, int cw, int ch) {
-        scalar.cflAc(layout, ac, y, yOff, stride, wPad, hPad, cw, ch);
+        SCALAR.cflAc(layout, ac, y, yOff, stride, wPad, hPad, cw, ch);
     }
 
     @Override
     public void cflPred(int mode, short[] dst, int dstOff, int stride, short[] topleft, int topleftOff, int width,
                         int height, short[] ac, int alpha, int bitdepthMax) {
-        scalar.cflPred(mode, dst, dstOff, stride, topleft, topleftOff, width, height, ac, alpha, bitdepthMax);
+        SCALAR.cflPred(mode, dst, dstOff, stride, topleft, topleftOff, width, height, ac, alpha, bitdepthMax);
     }
 
     @Override
     public void palPred(short[] dst, int dstOff, int stride, short[] pal, int palOff, byte[] idx, int idxOff, int w,
                         int h) {
-        scalar.palPred(dst, dstOff, stride, pal, palOff, idx, idxOff, w, h);
+        SCALAR.palPred(dst, dstOff, stride, pal, palOff, idx, idxOff, w, h);
     }
 
     /**

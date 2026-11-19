@@ -1,0 +1,19 @@
+# image dump of vectors/heic-pillow-tests-images-heif-L_8__29x100.heif; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=29, height=100, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 29x100 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=306d1717
+  format=HEIC orientation=NORMAL source=29x100
+  icc=none exif=none xmp=none
+  profile=none
+scaled 7x25
+picture 29x100 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=306d1717
+  format=HEIC orientation=NORMAL source=29x100
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=HEIC, width=29, height=100, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 29x100 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=306d1717
+  format=HEIC orientation=NORMAL source=29x100
+  icc=none exif=none xmp=none
+  profile=none

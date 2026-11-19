@@ -1,0 +1,14 @@
+# video decode dump of avi/cfhd-bayer.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 160000
+seekable true
+track 1 CFHD 128x64 timebase=1/25
+0 pts=0 dur=1 key=true 128x64 rgba16 depth=16 alpha=false crc=c08cb217
+1 pts=1 dur=1 key=true 128x64 rgba16 depth=16 alpha=false crc=b71f1020
+2 pts=2 dur=1 key=true 128x64 rgba16 depth=16 alpha=false crc=c281e45f
+3 pts=3 dur=1 key=true 128x64 rgba16 depth=16 alpha=false crc=5eba4799
+seek 0: @0
+seek 53333: @1
+seek 106666: @2
+seek 160000: end
+seek -1000000: @0

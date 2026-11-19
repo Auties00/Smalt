@@ -80,6 +80,17 @@ public final class TagIo {
     }
 
     /**
+     * Returns whether a Lyrics3 block is a version 1 block, which ends in {@code "LYRICSEND"} and
+     * is defined only right before an ID3v1 tag.
+     *
+     * @param block the bytes of the block, from {@code "LYRICSBEGIN"} on
+     * @return {@code true} for a Lyrics3v1 block, {@code false} for a Lyrics3v2 block
+     */
+    public static boolean isLyrics3v1(byte[] block) {
+        return matches(block, block.length - 9, "LYRICSEND");
+    }
+
+    /**
      * Describes the geometry of a picture for the FLAC {@code PICTURE} block.
      *
      * <p>The width, height and bits per pixel come from the picture's headers; a picture that

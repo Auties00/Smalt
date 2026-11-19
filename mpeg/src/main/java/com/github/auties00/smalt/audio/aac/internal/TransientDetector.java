@@ -3,9 +3,10 @@
 package com.github.auties00.smalt.audio.aac.internal;
 
 /**
- * Detects attacks that call for short windows, one analysis block of 1024 samples at a time.
+ * Detects attacks that call for short windows, one analysis block of a frame's length at a time.
  *
- * <p>The block analyzed for a window is the stretch whose eight 128-sample segments are the
+ * <p>The block analyzed for a window is the stretch whose eight segments, each a short window's
+ * length (128 or 120 samples), are the
  * centers of that window's eight short windows. Each segment is high-pass filtered and its
  * energy compared with a recursively smoothed energy of the preceding segments: a segment whose
  * energy exceeds the smoothed energy by the attack ratio marks an attack, provided the block's
@@ -24,11 +25,6 @@ public final class TransientDetector {
     public static final int SEGMENTS = 8;
 
     /**
-     * The number of samples per segment.
-     */
-    public static final int SEGMENT_LENGTH = 128;
-
-    /**
      * The smoothing weight of the newest segment energy.
      */
     private static final float SMOOTHING = 0.3f;
@@ -41,7 +37,12 @@ public final class TransientDetector {
     /**
      * The inverse attack ratio.
      */
-    private final float inverseRatio;
+    private float inverseRatio;
+
+    /**
+     * The number of samples per segment.
+     */
+    private final int segmentLength;
 
     /**
      * The previous input sample of the high-pass filter.
@@ -87,8 +88,19 @@ public final class TransientDetector {
      * Creates a detector.
      *
      * @param channelBitrate the bitrate per channel in bits per second
+     * @param frameLength the frame length, 1024 or 960
      */
-    public TransientDetector(int channelBitrate) {
+    public TransientDetector(int channelBitrate, int frameLength) {
+        this.segmentLength = frameLength / SEGMENTS;
+        retune(channelBitrate);
+    }
+
+    /**
+     * Adapts the attack threshold to a new bitrate, keeping the filter and energy history.
+     *
+     * @param channelBitrate the bitrate per channel in bits per second
+     */
+    public void retune(int channelBitrate) {
         this.inverseRatio = channelBitrate > 24000 ? 0.1f : 0.056f;
     }
 
@@ -103,8 +115,8 @@ public final class TransientDetector {
         var y1 = lastOutput;
         for (var segment = 0; segment < SEGMENTS; segment++) {
             var energy = 0.0f;
-            var base = offset + segment * SEGMENT_LENGTH;
-            for (var i = 0; i < SEGMENT_LENGTH; i++) {
+            var base = offset + segment * segmentLength;
+            for (var i = 0; i < segmentLength; i++) {
                 var x = samples[base + i] * 32768f;
                 var y = 0.7548f * (x - x1) + 0.5095f * y1;
                 x1 = x;

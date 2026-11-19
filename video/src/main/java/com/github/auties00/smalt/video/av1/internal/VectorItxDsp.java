@@ -507,14 +507,16 @@ public final class VectorItxDsp extends ItxDsp {
 
     /**
      * The kernels used for the cases this class does not vectorize.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarItxDsp scalar;
+    private static final ScalarItxDsp SCALAR = new ScalarItxDsp();
 
     /**
      * Constructs the kernels.
      */
     private VectorItxDsp() {
-        this.scalar = new ScalarItxDsp();
     }
 
     /**
@@ -543,7 +545,7 @@ public final class VectorItxDsp extends ItxDsp {
     public void itxfmAdd(int txSize, int txType, short[] dst, int dstOff, int stride, int[] coef, int coefOff,
                          int eob, int[] scratch, int bitdepthMax) {
         if (txType == WHT_WHT || !isSupported(txSize, txType)) {
-            scalar.itxfmAdd(txSize, txType, dst, dstOff, stride, coef, coefOff, eob, scratch, bitdepthMax);
+            SCALAR.itxfmAdd(txSize, txType, dst, dstOff, stride, coef, coefOff, eob, scratch, bitdepthMax);
             return;
         }
         int lw = ScalarItxDsp.LOG2_W[txSize];
@@ -552,7 +554,7 @@ public final class VectorItxDsp extends ItxDsp {
         int first = ScalarItxDsp.FIRST_1D[type];
         int second = ScalarItxDsp.SECOND_1D[type];
         if (type == ScalarItxDsp.DCT_DCT && eob < 1) {
-            scalar.itxfmAdd(txSize, txType, dst, dstOff, stride, coef, coefOff, eob, scratch, bitdepthMax);
+            SCALAR.itxfmAdd(txSize, txType, dst, dstOff, stride, coef, coefOff, eob, scratch, bitdepthMax);
             return;
         }
         if (!vectorized(lw, first) || !vectorized(lh, second)) {

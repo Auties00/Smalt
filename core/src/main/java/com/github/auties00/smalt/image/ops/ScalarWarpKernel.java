@@ -12,17 +12,16 @@ final class ScalarWarpKernel implements WarpKernel {
     }
 
     @Override
-    public void accumulate2(int[] src, int offset, int[] base, float[] w0, float[] w1, float[] wy, float[] red,
+    public void accumulate2(int[] taps0, int[] taps1, float[] w0, float[] w1, float[] wy, float[] red,
                             float[] green, float[] blue, float[] alpha, int count) {
-        accumulate2Range(src, offset, base, w0, w1, wy, red, green, blue, alpha, 0, count);
+        accumulate2Range(taps0, taps1, w0, w1, wy, red, green, blue, alpha, 0, count);
     }
 
     /**
      * Accumulates one row of two taps for the pixels {@code [from, to)} of a run.
      *
-     * @param src    the padded packed pixels
-     * @param offset the offset of the tap row
-     * @param base   the base indices
+     * @param taps0  the first column taps
+     * @param taps1  the second column taps
      * @param w0     the first column weights
      * @param w1     the second column weights
      * @param wy     the row weights
@@ -33,27 +32,28 @@ final class ScalarWarpKernel implements WarpKernel {
      * @param from   the first pixel
      * @param to     the pixel after the last one
      */
-    void accumulate2Range(int[] src, int offset, int[] base, float[] w0, float[] w1, float[] wy, float[] red,
+    void accumulate2Range(int[] taps0, int[] taps1, float[] w0, float[] w1, float[] wy, float[] red,
                           float[] green, float[] blue, float[] alpha, int from, int to) {
         for (var i = from; i < to; i++) {
-            var index = base[i] + offset;
-            tap(src[index], w0[i] * wy[i], red, green, blue, alpha, i);
-            tap(src[index + 1], w1[i] * wy[i], red, green, blue, alpha, i);
+            tap(taps0[i], w0[i] * wy[i], red, green, blue, alpha, i);
+            tap(taps1[i], w1[i] * wy[i], red, green, blue, alpha, i);
         }
     }
 
     @Override
-    public void accumulate4(int[] src, int offset, int[] base, float[] w0, float[] w1, float[] w2, float[] w3,
-                            float[] wy, float[] red, float[] green, float[] blue, float[] alpha, int count) {
-        accumulate4Range(src, offset, base, w0, w1, w2, w3, wy, red, green, blue, alpha, 0, count);
+    public void accumulate4(int[] taps0, int[] taps1, int[] taps2, int[] taps3, float[] w0, float[] w1, float[] w2,
+                            float[] w3, float[] wy, float[] red, float[] green, float[] blue, float[] alpha,
+                            int count) {
+        accumulate4Range(taps0, taps1, taps2, taps3, w0, w1, w2, w3, wy, red, green, blue, alpha, 0, count);
     }
 
     /**
      * Accumulates one row of four taps for the pixels {@code [from, to)} of a run.
      *
-     * @param src    the padded packed pixels
-     * @param offset the offset of the tap row
-     * @param base   the base indices
+     * @param taps0  the first column taps
+     * @param taps1  the second column taps
+     * @param taps2  the third column taps
+     * @param taps3  the fourth column taps
      * @param w0     the first column weights
      * @param w1     the second column weights
      * @param w2     the third column weights
@@ -66,14 +66,14 @@ final class ScalarWarpKernel implements WarpKernel {
      * @param from   the first pixel
      * @param to     the pixel after the last one
      */
-    void accumulate4Range(int[] src, int offset, int[] base, float[] w0, float[] w1, float[] w2, float[] w3,
-                          float[] wy, float[] red, float[] green, float[] blue, float[] alpha, int from, int to) {
+    void accumulate4Range(int[] taps0, int[] taps1, int[] taps2, int[] taps3, float[] w0, float[] w1, float[] w2,
+                          float[] w3, float[] wy, float[] red, float[] green, float[] blue, float[] alpha, int from,
+                          int to) {
         for (var i = from; i < to; i++) {
-            var index = base[i] + offset;
-            tap(src[index], w0[i] * wy[i], red, green, blue, alpha, i);
-            tap(src[index + 1], w1[i] * wy[i], red, green, blue, alpha, i);
-            tap(src[index + 2], w2[i] * wy[i], red, green, blue, alpha, i);
-            tap(src[index + 3], w3[i] * wy[i], red, green, blue, alpha, i);
+            tap(taps0[i], w0[i] * wy[i], red, green, blue, alpha, i);
+            tap(taps1[i], w1[i] * wy[i], red, green, blue, alpha, i);
+            tap(taps2[i], w2[i] * wy[i], red, green, blue, alpha, i);
+            tap(taps3[i], w3[i] * wy[i], red, green, blue, alpha, i);
         }
     }
 

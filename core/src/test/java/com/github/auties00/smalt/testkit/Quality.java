@@ -1,5 +1,8 @@
 package com.github.auties00.smalt.testkit;
 
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -146,6 +149,30 @@ public final class Quality {
                 var a = (Rgba16Picture) actual;
                 yield psnr(squaredError(e.pixels(), e.stride(), a.pixels(), a.stride(), width * 4, height)
                         / (4.0 * width * height), 65535);
+            }
+            case Channel8Picture e -> {
+                var a = (Channel8Picture) actual;
+                var row = width * e.channelCount();
+                yield psnr(squaredError(e.pixels(), e.stride(), a.pixels(), a.stride(), row, height)
+                        / ((double) row * height));
+            }
+            case Channel16Picture e -> {
+                var a = (Channel16Picture) actual;
+                var row = width * e.channelCount();
+                yield psnr(squaredError(e.pixels(), e.stride(), a.pixels(), a.stride(), row, height)
+                        / ((double) row * height), 65535);
+            }
+            case ChannelFloatPicture e -> {
+                var a = (ChannelFloatPicture) actual;
+                var row = width * e.channelCount();
+                double squared = 0;
+                for (var y = 0; y < height; y++) {
+                    for (var x = 0; x < row; x++) {
+                        double difference = e.pixels()[y * e.stride() + x] - a.pixels()[y * a.stride() + x];
+                        squared += difference * difference;
+                    }
+                }
+                yield psnr(squared / ((double) row * height), 1);
             }
         };
     }

@@ -20,10 +20,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers HEIC through ImageIO once {@code smalt-mpeg} is present: the reader is found by name,
- * suffix and MIME type, and reads the pixels the registry decodes, alpha included. The sample is
+ * suffix and MIME type, and reads the pixels the registry decodes, alpha included; the writer
+ * writes a HEIC file that reads back with its alpha. The sample is
  * an 8-bit image with an alpha item from pillow_heif's test images (BSD-3-Clause).
  */
-@DisplayName("ImageIO HEIC reading")
+@DisplayName("ImageIO HEIC reading and writing")
 class ImageIoHeicTest {
     @Test
     @DisplayName("finds the HEIC reader and reads the registry's pixels with alpha")
@@ -50,5 +51,38 @@ class ImageIoHeicTest {
                 assertEquals(argb, image.getRGB(x, y), "pixel " + x + "," + y);
             }
         }
+    }
+
+    @Test
+    @DisplayName("writes a HEIC that reads back with its alpha")
+    void write() throws IOException {
+        var source = new BufferedImage(80, 48, BufferedImage.TYPE_INT_ARGB);
+        for (var y = 0; y < 48; y++) {
+            for (var x = 0; x < 80; x++) {
+                source.setRGB(x, y, ((x * 3) << 24) | ((x * 3) << 16) | ((y * 5) << 8) | ((x + y) * 2));
+            }
+        }
+        var out = new java.io.ByteArrayOutputStream();
+        assertTrue(ImageIO.write(source, "heic", out));
+        assertEquals(com.github.auties00.smalt.image.ImageFormat.HEIC,
+                Images.detect(MediaSource.of(out.toByteArray())).orElseThrow());
+        var image = ImageIO.read(new java.io.ByteArrayInputStream(out.toByteArray()));
+        assertNotNull(image);
+        long sse = 0;
+        var alphaError = 0;
+        for (var y = 0; y < 48; y++) {
+            for (var x = 0; x < 80; x++) {
+                var a = source.getRGB(x, y);
+                var b = image.getRGB(x, y);
+                alphaError = Math.max(alphaError, Math.abs((a >>> 24) - (b >>> 24)));
+                for (var shift = 0; shift < 24; shift += 8) {
+                    var d = ((a >> shift) & 0xFF) - ((b >> shift) & 0xFF);
+                    sse += (long) d * d;
+                }
+            }
+        }
+        assertTrue(alphaError <= 2, "alpha error " + alphaError);
+        var psnr = 10 * Math.log10(255.0 * 255 * 80 * 48 * 3 / Math.max(1, sse));
+        assertTrue(psnr > 30, "psnr " + psnr);
     }
 }

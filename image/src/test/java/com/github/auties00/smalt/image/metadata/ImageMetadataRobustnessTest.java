@@ -52,6 +52,10 @@ class ImageMetadataRobustnessTest {
                 Arguments.of("jpeg", (Supplier<byte[]>) () -> rich(MetadataSupport.jpeg(), true)),
                 Arguments.of("png", (Supplier<byte[]>) () -> rich(MetadataSupport.png(), false)),
                 Arguments.of("webp", (Supplier<byte[]>) () -> rich(MetadataSupport.webp(), false)),
+                Arguments.of("jp2", (Supplier<byte[]>) () -> ImageMetadataEditor.apply(rich(
+                        com.github.auties00.smalt.image.jp2.Jp2Encoder.encode(Jp2MetadataTest.picture()), false),
+                        ImageMetadataEdit.keepAll().toBuilder().iptc(IptcData.of(List.of(new IptcData.DataSet(2, 90,
+                                "Milano".getBytes())))).build())),
                 Arguments.of("gif", (Supplier<byte[]>) () -> ImageMetadataEditor.apply(MetadataSupport.gif(),
                         ImageMetadataEdit.keepAll().toBuilder().xmp(XmpPacket.empty()
                                 .with(XmpPacket.DC, "title", "Gif"))

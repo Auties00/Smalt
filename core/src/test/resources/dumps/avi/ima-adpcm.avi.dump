@@ -1,0 +1,18 @@
+# demux dump of avi/ima-adpcm.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 635625
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 1 AUDIO ADPCM_IMA_WAV timebase=1/8000 duration=5085 config=none
+  audio rate=8000 bits=4 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 5
+0 t1 pts=0 dts=0 dur=1017 flags=KEY size=1024 crc=fb76cfc8
+1 t1 pts=1017 dts=1017 dur=1017 flags=KEY size=1024 crc=c0df7668
+2 t1 pts=2034 dts=2034 dur=1017 flags=KEY size=1024 crc=af3ec22f
+3 t1 pts=3051 dts=3051 dur=1017 flags=KEY size=1024 crc=6be920b3
+4 t1 pts=4068 dts=4068 dur=1017 flags=KEY size=1024 crc=8b8256b4
+seek 0: t1@0
+seek 211875: t1@1
+seek 423750: t1@3
+seek 635625: end
+seek -1000000: t1@0

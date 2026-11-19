@@ -1,0 +1,16 @@
+# H.264 3D-AVC streams written from scratch by tools/testdata/h264-3davc/make-stream.py (syntax) and coded by the
+# 3DV-ATM 14.0 encoder from synthetic sequences by tools/testdata/h264-3davc/atm-streams.sh (atm-*); the
+# atm-cavlc-tools* and atm-tools-monochrome streams come from the encoder patched by atm-encoder-cavlc.py, which adds
+# the CAVLC syntax of the texture coding tools and biases the mode decision towards view synthesis prediction.
+# Columns:
+# name	sha256	bytes	views	frames	content
+syntax	f4e1b62425288165eb5c1d55649bbe78bf79220135c3d90b563ac161645b7d0a	1738	2 texture + 2 depth	2	32x16 I_PCM base view components, skipped P view components, every slice header prediction source, a depth parameter set with a non-linear depth representation
+atm-drwp-p	486609cb61181157edf5eb91d458ccffdc1547623333c53331e1ef418ff68b14	6027	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IPPP, CABAC, depth-range-based weighted prediction of P depth slices, a depth range per view
+atm-drwp-b	ca638a41c842f0c418d8f8895bfca9f47727f0139f52aabf391566c46f031bf7	8816	2 texture + 2 depth	9	128x96 texture, 64x48 depth, IBP, CABAC, depth-range-based weighted prediction of P and B depth slices, a depth parameter set per access unit
+atm-cavlc-dmvp	237925184fefccf0990989b7c77790c806d392b9ef38bb2fcbb543c8a8634803	6334	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IBP, CAVLC, depth-based motion vector prediction, depth-first coding
+atm-cavlc-dmvp-texture-first	7abc4a4aad158c8d31c2a0a640f7d89a16b641cbd052a2984189facc072eaffa	6054	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IBP, CAVLC, depth-based motion vector prediction, texture-first coding
+atm-tools-texture-first	f1ecf151e779eb3f4c21c423fc2487bd385bcd107835bae8fda10b09546c1ab2	5652	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IBP, CABAC, texture-first coding with depth-based motion vector prediction, view synthesis prediction, adaptive luminance compensation and run-length skip coding
+atm-cavlc-tools-texture-first	cfb89552b984ae16d34f5a89d0d0280dde11da6245c01141be5605ab500d8b61	12931	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IBP, CAVLC, texture-first coding with view synthesis skip runs, view synthesis direct and block-based view synthesis prediction, adaptive luminance compensation and depth-based motion vector prediction
+atm-cavlc-tools	887040627e1aa49925b0be3a2d3577e84fe4e08226c9788a1772f457283a5ed1	21299	2 texture + 2 depth	8	128x96 texture, 64x48 depth, IBP, CAVLC, depth-first coding with the same tools, view synthesis prediction from the view's own depth
+atm-tools-monochrome	e3e3fbc757950c66313ce8e3ca809bbb96c7742ed7b4e2a4237a2f136bd92918	13341	2 texture + 2 depth	8	128x96 4:0:0 texture, 64x48 depth, IBP, CABAC, texture-first coding with every texture coding tool
+syntax-high-bit-depth-texture	a24c09e2d0628da38403724994ca9ee7ccbe46e247e39892be0377529e72dd45	1738	2 texture + 2 depth	2	the syntax stream with 10-bit texture views whose P slices set dmvp_flag (make-stream.py --high-bit-depth-texture), which ITU-T H.264 I.10.1.1 forbids
