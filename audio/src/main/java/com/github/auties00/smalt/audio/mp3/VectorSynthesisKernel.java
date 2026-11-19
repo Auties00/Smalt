@@ -144,85 +144,125 @@ final class VectorSynthesisKernel implements SynthesisKernel {
         return table;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @implNote This implementation transforms four slots per pass in three stages, each a method
+     * compiled on its own: in one method, the inlined Vector API code of the last operations could
+     * exceed the compiler's inlining budget, which left them on the allocating fallback.
+     */
     @Override
     public void dct(float[] grbuf, int base, int slots) {
-        var sec = Mp3Tables.DCT_SECANTS;
         var t = rows;
         var vectorSlots = slots & ~3;
         if (vectorSlots < slots) {
             tail.dct(grbuf, base + vectorSlots, slots - vectorSlots);
         }
         for (var k = 0; k < vectorSlots; k += 4) {
-            var y = base + k;
-            for (var i = 0; i < 8; i++) {
-                var x0 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + i * 18));
-                var x1 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + (15 - i) * 18));
-                var x2 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + (16 + i) * 18));
-                var x3 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + (31 - i) * 18));
-                var t0 = x0.lanewise(VectorOperators.ADD, x3);
-                var t1 = x1.lanewise(VectorOperators.ADD, x2);
-                var t2 = x1.lanewise(VectorOperators.SUB, x2).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, sec[3 * i]));
-                var t3 = x0.lanewise(VectorOperators.SUB, x3).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, sec[3 * i + 1]));
-                t0.lanewise(VectorOperators.ADD, t1).intoArray(t, i * 4);
-                t0.lanewise(VectorOperators.SUB, t1).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, sec[3 * i + 2])).intoArray(t, (8 + i) * 4);
-                t3.lanewise(VectorOperators.ADD, t2).intoArray(t, (16 + i) * 4);
-                t3.lanewise(VectorOperators.SUB, t2).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, sec[3 * i + 2])).intoArray(t, (24 + i) * 4);
-            }
-            for (var r = 0; r < 32; r += 8) {
-                var x0 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, r * 4));
-                var x1 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 1) * 4));
-                var x2 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 2) * 4));
-                var x3 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 3) * 4));
-                var x4 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 4) * 4));
-                var x5 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 5) * 4));
-                var x6 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 6) * 4));
-                var x7 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 7) * 4));
-                var xt = x0.lanewise(VectorOperators.SUB, x7);
-                x0 = x0.lanewise(VectorOperators.ADD, x7);
-                x7 = x1.lanewise(VectorOperators.SUB, x6);
-                x1 = x1.lanewise(VectorOperators.ADD, x6);
-                x6 = x2.lanewise(VectorOperators.SUB, x5);
-                x2 = x2.lanewise(VectorOperators.ADD, x5);
-                x5 = x3.lanewise(VectorOperators.SUB, x4);
-                x3 = x3.lanewise(VectorOperators.ADD, x4);
-                x4 = x0.lanewise(VectorOperators.SUB, x3);
-                x0 = x0.lanewise(VectorOperators.ADD, x3);
-                x3 = x1.lanewise(VectorOperators.SUB, x2);
-                x1 = x1.lanewise(VectorOperators.ADD, x2);
-                x0.lanewise(VectorOperators.ADD, x1).intoArray(t, r * 4);
-                x0.lanewise(VectorOperators.SUB, x1).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.70710677f)).intoArray(t, (r + 4) * 4);
-                x5 = x5.lanewise(VectorOperators.ADD, x6);
-                x6 = x6.lanewise(VectorOperators.ADD, x7).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.70710677f));
-                x7 = x7.lanewise(VectorOperators.ADD, xt);
-                x3 = x3.lanewise(VectorOperators.ADD, x4).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.70710677f));
-                x5 = x5.lanewise(VectorOperators.SUB, x7.lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.198912367f)));
-                x7 = x7.lanewise(VectorOperators.ADD, x5.lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.382683432f)));
-                x5 = x5.lanewise(VectorOperators.SUB, x7.lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.198912367f)));
-                x0 = xt.lanewise(VectorOperators.SUB, x6);
-                xt = xt.lanewise(VectorOperators.ADD, x6);
-                xt.lanewise(VectorOperators.ADD, x7).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.50979561f)).intoArray(t, (r + 1) * 4);
-                x4.lanewise(VectorOperators.ADD, x3).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.54119611f)).intoArray(t, (r + 2) * 4);
-                x0.lanewise(VectorOperators.SUB, x5).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.60134488f)).intoArray(t, (r + 3) * 4);
-                x0.lanewise(VectorOperators.ADD, x5).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.89997619f)).intoArray(t, (r + 5) * 4);
-                x4.lanewise(VectorOperators.SUB, x3).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 1.30656302f)).intoArray(t, (r + 6) * 4);
-                xt.lanewise(VectorOperators.SUB, x7).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 2.56291556f)).intoArray(t, (r + 7) * 4);
-            }
-            for (var i = 0; i < 7; i++, y += 4 * 18) {
-                var t3a = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (24 + i) * 4));
-                var t3b = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (24 + i + 1) * 4));
-                var s = t3a.lanewise(VectorOperators.ADD, t3b);
-                FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, i * 4)).intoArray(grbuf, y);
-                FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (16 + i) * 4)).lanewise(VectorOperators.ADD, s).intoArray(grbuf, y + 18);
-                FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (8 + i) * 4)).lanewise(VectorOperators.ADD, FloatVector.fromArray(SPECIES, t, (8 + i + 1) * 4))
-                        .intoArray(grbuf, y + 36);
-                FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (16 + i + 1) * 4)).lanewise(VectorOperators.ADD, s).intoArray(grbuf, y + 54);
-            }
-            FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, 7 * 4)).intoArray(grbuf, y);
-            FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (16 + 7) * 4)).lanewise(VectorOperators.ADD, FloatVector.fromArray(SPECIES, t, (24 + 7) * 4))
-                    .intoArray(grbuf, y + 18);
-            FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (8 + 7) * 4)).intoArray(grbuf, y + 36);
-            FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (24 + 7) * 4)).intoArray(grbuf, y + 54);
+            dctInput(grbuf, base + k, t);
+            dctRows(t);
+            dctOutput(grbuf, base + k, t);
         }
+    }
+
+    /**
+     * Folds the 32 inputs of four slots into the four 8-point rows of {@code t}, the first stage of
+     * {@link #dct(float[], int, int)}.
+     *
+     * @param grbuf the samples
+     * @param y the index in {@code grbuf} of the first slot
+     * @param t receives the rows, four lanes per element
+     */
+    private static void dctInput(float[] grbuf, int y, float[] t) {
+        var sec = Mp3Tables.DCT_SECANTS;
+        for (var i = 0; i < 8; i++) {
+            var x0 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + i * 18));
+            var x1 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + (15 - i) * 18));
+            var x2 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + (16 + i) * 18));
+            var x3 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, grbuf, y + (31 - i) * 18));
+            var t0 = x0.lanewise(VectorOperators.ADD, x3);
+            var t1 = x1.lanewise(VectorOperators.ADD, x2);
+            var t2 = x1.lanewise(VectorOperators.SUB, x2).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, sec[3 * i]));
+            var t3 = x0.lanewise(VectorOperators.SUB, x3).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, sec[3 * i + 1]));
+            t0.lanewise(VectorOperators.ADD, t1).intoArray(t, i * 4);
+            t0.lanewise(VectorOperators.SUB, t1).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, sec[3 * i + 2])).intoArray(t, (8 + i) * 4);
+            t3.lanewise(VectorOperators.ADD, t2).intoArray(t, (16 + i) * 4);
+            t3.lanewise(VectorOperators.SUB, t2).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, sec[3 * i + 2])).intoArray(t, (24 + i) * 4);
+        }
+    }
+
+    /**
+     * Applies the 8-point transform to each row of {@code t} in place, the second stage of
+     * {@link #dct(float[], int, int)}.
+     *
+     * @param t the rows, four lanes per element
+     */
+    private static void dctRows(float[] t) {
+        for (var r = 0; r < 32; r += 8) {
+            var x0 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, r * 4));
+            var x1 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 1) * 4));
+            var x2 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 2) * 4));
+            var x3 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 3) * 4));
+            var x4 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 4) * 4));
+            var x5 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 5) * 4));
+            var x6 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 6) * 4));
+            var x7 = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (r + 7) * 4));
+            var xt = x0.lanewise(VectorOperators.SUB, x7);
+            x0 = x0.lanewise(VectorOperators.ADD, x7);
+            x7 = x1.lanewise(VectorOperators.SUB, x6);
+            x1 = x1.lanewise(VectorOperators.ADD, x6);
+            x6 = x2.lanewise(VectorOperators.SUB, x5);
+            x2 = x2.lanewise(VectorOperators.ADD, x5);
+            x5 = x3.lanewise(VectorOperators.SUB, x4);
+            x3 = x3.lanewise(VectorOperators.ADD, x4);
+            x4 = x0.lanewise(VectorOperators.SUB, x3);
+            x0 = x0.lanewise(VectorOperators.ADD, x3);
+            x3 = x1.lanewise(VectorOperators.SUB, x2);
+            x1 = x1.lanewise(VectorOperators.ADD, x2);
+            x0.lanewise(VectorOperators.ADD, x1).intoArray(t, r * 4);
+            x0.lanewise(VectorOperators.SUB, x1).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.70710677f)).intoArray(t, (r + 4) * 4);
+            x5 = x5.lanewise(VectorOperators.ADD, x6);
+            x6 = x6.lanewise(VectorOperators.ADD, x7).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.70710677f));
+            x7 = x7.lanewise(VectorOperators.ADD, xt);
+            x3 = x3.lanewise(VectorOperators.ADD, x4).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.70710677f));
+            x5 = x5.lanewise(VectorOperators.SUB, x7.lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.198912367f)));
+            x7 = x7.lanewise(VectorOperators.ADD, x5.lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.382683432f)));
+            x5 = x5.lanewise(VectorOperators.SUB, x7.lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.198912367f)));
+            x0 = xt.lanewise(VectorOperators.SUB, x6);
+            xt = xt.lanewise(VectorOperators.ADD, x6);
+            xt.lanewise(VectorOperators.ADD, x7).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.50979561f)).intoArray(t, (r + 1) * 4);
+            x4.lanewise(VectorOperators.ADD, x3).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.54119611f)).intoArray(t, (r + 2) * 4);
+            x0.lanewise(VectorOperators.SUB, x5).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.60134488f)).intoArray(t, (r + 3) * 4);
+            x0.lanewise(VectorOperators.ADD, x5).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 0.89997619f)).intoArray(t, (r + 5) * 4);
+            x4.lanewise(VectorOperators.SUB, x3).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 1.30656302f)).intoArray(t, (r + 6) * 4);
+            xt.lanewise(VectorOperators.SUB, x7).lanewise(VectorOperators.MUL, FloatVector.broadcast(SPECIES, 2.56291556f)).intoArray(t, (r + 7) * 4);
+        }
+    }
+
+    /**
+     * Writes the 32 outputs of four slots from the rows of {@code t}, the last stage of
+     * {@link #dct(float[], int, int)}.
+     *
+     * @param grbuf receives the samples
+     * @param y the index in {@code grbuf} of the first slot
+     * @param t the rows, four lanes per element
+     */
+    private static void dctOutput(float[] grbuf, int y, float[] t) {
+        for (var i = 0; i < 7; i++, y += 4 * 18) {
+            var t3a = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (24 + i) * 4));
+            var t3b = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (24 + i + 1) * 4));
+            var s = t3a.lanewise(VectorOperators.ADD, t3b);
+            FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, i * 4)).intoArray(grbuf, y);
+            FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (16 + i) * 4)).lanewise(VectorOperators.ADD, s).intoArray(grbuf, y + 18);
+            FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (8 + i) * 4)).lanewise(VectorOperators.ADD, FloatVector.fromArray(SPECIES, t, (8 + i + 1) * 4))
+                    .intoArray(grbuf, y + 36);
+            FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (16 + i + 1) * 4)).lanewise(VectorOperators.ADD, s).intoArray(grbuf, y + 54);
+        }
+        FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, 7 * 4)).intoArray(grbuf, y);
+        FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (16 + 7) * 4)).lanewise(VectorOperators.ADD, FloatVector.fromArray(SPECIES, t, (24 + 7) * 4))
+                .intoArray(grbuf, y + 18);
+        FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (8 + 7) * 4)).intoArray(grbuf, y + 36);
+        FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, t, (24 + 7) * 4)).intoArray(grbuf, y + 54);
     }
 
     @Override
