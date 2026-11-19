@@ -227,22 +227,30 @@ class RtpFfmpegInteropTest {
             }
             packets.addAll(packetizer.flush());
             var scratch = Scratch.directory("rtp-interop");
-            var port = freePair();
             var sdp = scratch.resolve(source.name() + "-receive.sdp");
             var media = format.codec().kind() == com.github.auties00.smalt.track.TrackKind.VIDEO ? "video" : "audio";
-            var description = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Smalt\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
-                    + "m=" + media + " " + port + " RTP/AVP 96\r\na=rtpmap:96 " + format.rtpmap() + "\r\n"
-                    + (format.fmtp().isEmpty() ? "" : "a=fmtp:96 " + format.fmtp() + "\r\n");
-            Files.writeString(sdp, description, StandardCharsets.US_ASCII);
             var output = scratch.resolve(source.name() + ".framemd5");
             var log = scratch.resolve(source.name() + "-receive.log");
             // ffmpeg's VP9 and AAC RTP demuxers flag no packet as a key frame, which a stream copy would wait for.
             var arguments = List.of("-loglevel", "debug", "-y", "-protocol_whitelist", "file,udp,rtp",
                     "-reorder_queue_size", "0", "-i", sdp.toString(), "-map", "0:0", "-c", "copy", "-copyinkf",
                     "-f", "framemd5", output.toString());
-            var process = start(arguments, log);
+            int port;
+            Process process;
+            // the port pair is free when chosen but released before ffmpeg binds it, so a parallel fork or another
+            // process may take it first: ffmpeg then exits at once and is started again on another pair
+            for (var attempt = 1; ; attempt++) {
+                port = freePair();
+                var description = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Smalt\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+                        + "m=" + media + " " + port + " RTP/AVP 96\r\na=rtpmap:96 " + format.rtpmap() + "\r\n"
+                        + (format.fmtp().isEmpty() ? "" : "a=fmtp:96 " + format.fmtp() + "\r\n");
+                Files.writeString(sdp, description, StandardCharsets.US_ASCII);
+                process = start(arguments, log);
+                if (waitForLine(log, "Before avformat_find_stream_info", process, attempt < 5)) {
+                    break;
+                }
+            }
             try (var socket = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
-                waitForLine(log, "Before avformat_find_stream_info", process);
                 var target = new InetSocketAddress(InetAddress.getLoopbackAddress(), port);
                 for (var index = 0; index < packets.size(); index++) {
                     var bytes = packets.get(index).toByteArray();
@@ -321,19 +329,29 @@ class RtpFfmpegInteropTest {
         return frames;
     }
 
-    static void waitForLine(Path log, String text, Process process) throws Exception {
+    /**
+     * Waits until ffmpeg's log holds a line, failing when ffmpeg exits first.
+     *
+     * @param retryBusyPort whether an exit because its port was taken returns {@code false} instead of failing
+     * @return {@code true} once the line is logged, {@code false} when ffmpeg could not bind its port
+     */
+    static boolean waitForLine(Path log, String text, Process process, boolean retryBusyPort) throws Exception {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         while (System.nanoTime() < deadline) {
             if (Files.exists(log) && read(log).contains(text)) {
                 Thread.sleep(100);
-                return;
+                return true;
             }
             if (!process.isAlive()) {
-                fail("ffmpeg exited early: " + tail(read(log)));
+                var written = read(log);
+                if (retryBusyPort && written.contains("bind failed: Address already in use")) {
+                    return false;
+                }
+                fail("ffmpeg exited early: " + tail(written));
             }
             Thread.sleep(20);
         }
-        fail("ffmpeg never opened its sockets: " + tail(read(log)));
+        return fail("ffmpeg never opened its sockets: " + tail(read(log)));
     }
 
     static RtpPayloadFormat sdpFormat(String sdp) {
