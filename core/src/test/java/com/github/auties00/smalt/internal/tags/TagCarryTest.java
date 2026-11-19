@@ -330,6 +330,28 @@ class TagCarryTest {
         }
 
         @Test
+        @DisplayName("leaves out an input timecode that is no time address, and fails on one the options give")
+        void invalidTimecode() {
+            // the address of a fuzz finding: a decimal fraction where the frame count belongs
+            var tags = MediaTags.builder().set(StandardTag.TITLE, "Kept").add("timecode", "00:00:00.205000000")
+                    .build();
+            var sink = MediaSink.memory();
+            try (var muxer = muxer(sink)) {
+                assertThrows(IllegalArgumentException.class, () -> muxer.setTags(tags));
+                TagCarry.apply(muxer, tags, TagMode.COPY, null);
+                TONE.packets().forEach(muxer::writePacket);
+                muxer.finish();
+            }
+            var read = TagEditor.read(MediaSource.of(sink.toByteArray()));
+            assertEquals(List.of("Kept"), read.getAll(StandardTag.TITLE));
+            assertTrue(read.get("timecode").isEmpty(), read.toString());
+            try (var muxer = muxer()) {
+                assertThrows(IllegalArgumentException.class, () -> TagCarry.apply(muxer, tags, TagMode.REPLACE, tags));
+                assertThrows(IllegalArgumentException.class, () -> TagCarry.apply(muxer, tags, TagMode.MERGE, tags));
+            }
+        }
+
+        @Test
         @DisplayName("fails on a rejected value the options give")
         void strict() {
             var given = MediaTags.builder().set(StandardTag.BPM, "fast").build();

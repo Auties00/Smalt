@@ -358,7 +358,9 @@ public final class TagCarry {
      * Gives a muxer the tags of a conversion when it stores tags.
      *
      * <p>With {@link TagMode#COPY} and {@link TagMode#MERGE}, the entries, track entries and pictures the muxer
-     * rejects ({@link MediaException.Unsupported} or {@link MediaException.LimitExceeded}) are left out, unless
+     * rejects ({@link MediaException.Unsupported}, {@link MediaException.LimitExceeded} or, for a value the
+     * container cannot hold such as a {@code timecode} tag that is no time address,
+     * {@link IllegalArgumentException}) are left out, unless
      * {@code given} holds them: the values of {@code given} are set first, and every other value is then added in
      * turn (the entries, the track entries, then the pictures) and kept when the muxer accepts it beside those kept
      * before, so that values which fit alone but not together are reduced too. With {@link TagMode#REPLACE} a
@@ -370,6 +372,7 @@ public final class TagCarry {
      * @param given the tags of {@link TagMode#REPLACE} and {@link TagMode#MERGE}, or {@code null}
      * @throws MediaException.Unsupported if the muxer rejects a value that must be written
      * @throws MediaException.LimitExceeded if a value that must be written exceeds a limit of the container
+     * @throws IllegalArgumentException if the muxer rejects a value that must be written as invalid
      */
     public static void apply(Muxer muxer, MediaTags tags, TagMode mode, MediaTags given) {
         if (!muxer.supportsTags()) {
@@ -378,7 +381,7 @@ public final class TagCarry {
         try {
             muxer.setTags(tags);
             return;
-        } catch (MediaException.Unsupported | MediaException.LimitExceeded rejected) {
+        } catch (MediaException.Unsupported | MediaException.LimitExceeded | IllegalArgumentException rejected) {
             if (mode == TagMode.REPLACE) {
                 throw rejected;
             }
@@ -600,7 +603,7 @@ public final class TagCarry {
         try {
             muxer.setTags(kept(tags, entries, trackEntries, pictures));
             return true;
-        } catch (MediaException.Unsupported | MediaException.LimitExceeded rejected) {
+        } catch (MediaException.Unsupported | MediaException.LimitExceeded | IllegalArgumentException rejected) {
             flags[index] = false;
             return false;
         }
