@@ -36,10 +36,10 @@ public abstract class HevcDsp {
     static final HevcDsp SCALAR = new ScalarHevcDsp();
 
     /**
-     * The implementation every picture uses: the Vector API kernels
-     * when {@link Simd#ENABLED}, {@link #SCALAR} otherwise.
+     * The implementation every picture uses: the Vector API kernels, written for 256-bit vectors,
+     * when {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final HevcDsp FIXED = Simd.ENABLED ? VectorHevcDsp.create() : SCALAR;
+    private static final HevcDsp FIXED = Simd.WIDE ? VectorHevcDsp.create() : SCALAR;
 
     /**
      * The flag of {@link #deblockLuma} selecting the strong luma filter of a column.

@@ -3,25 +3,35 @@
 package com.github.auties00.smalt.image.jxl.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Channel;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
-import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ColorTransform;
+import com.github.auties00.smalt.image.color.ColorTransformOptions;
 import com.github.auties00.smalt.image.jxl.internal.color.ColorConverter;
 import com.github.auties00.smalt.image.jxl.internal.color.IccSynthesizer;
 import com.github.auties00.smalt.image.jxl.internal.header.ColorEncoding;
+import com.github.auties00.smalt.image.jxl.internal.header.ExtraChannelInfo;
 import com.github.auties00.smalt.image.jxl.internal.header.ImageHeader;
 import com.github.auties00.smalt.image.jxl.internal.render.FrameImage;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
+import java.util.ArrayList;
 import java.util.Optional;
 
 /**
@@ -30,8 +40,8 @@ import java.util.Optional;
  * <p>Floating-point samples are clamped to {@code 0..1} and rounded to 8 or 16 bits; a grayscale
  * image is replicated into the three color channels; premultiplied alpha is divided out, since
  * Smalt pictures hold straight alpha; a CMYK image is converted to sRGB through its embedded
- * profile; and an XYB image whose original color space is an ICC profile, decoded to linear sRGB,
- * is converted to that profile when Smalt can apply it, else to sRGB.
+ * profile; and an XYB image whose original color space is an ICC profile, decoded to linear sRGB (linear
+ * gray for a grayscale image), is converted to that profile when Smalt can apply it, else to sRGB.
  */
 public final class JxlOutput {
     /**
@@ -132,6 +142,145 @@ public final class JxlOutput {
             picture = deep ? toRgba16(rgb, alpha, width, height) : toRgba8(rgb, alpha, width, height);
         }
         return new Output(picture, Optional.ofNullable(outIcc), profileOf(header, outIcc, cmyk || (xybIcc && outIcc != icc)));
+    }
+
+    /**
+     * Converts a canvas to a channel picture when a packed RGBA picture cannot hold it: a CMYK image, an image
+     * of floating-point samples, or one with extra channels other than a single alpha channel.
+     *
+     * <p>The color channels are gray, RGB or, for an image with a black extra channel, CMYK, whose ink amounts
+     * are {@code 1 - v} of the stored values; the other extra channels follow in file order, the alpha channel
+     * straight or premultiplied as stored. Floating-point images keep every value unclamped in a
+     * {@link ChannelFloatPicture}; integer images are quantized as {@link #toPicture} quantizes them, to 16
+     * bits when {@code highBitDepth} is set and the image is deeper than 8 bits, else to 8 bits.
+     *
+     * @param canvas the canvas, in the color space of {@link #canvasIcc}
+     * @param header the image header
+     * @param icc the embedded ICC profile, or {@code null}
+     * @param highBitDepth whether integer samples deeper than 8 bits keep 16 bits
+     * @return the picture and its color space, or {@code null} when the image needs no channel picture
+     */
+    public static Output toChannels(FrameImage canvas, ImageHeader header, byte[] icc, boolean highBitDepth) {
+        var infos = header.extraChannels();
+        var black = -1;
+        for (var i = 0; i < infos.size() && i < canvas.extraChannels(); i++) {
+            if (infos.get(i).isBlack()) {
+                black = i;
+                break;
+            }
+        }
+        var cmyk = black >= 0 && canvas.colorChannels == 3 && !header.xybEncoded();
+        var alpha = header.alphaChannel();
+        var extraCount = Math.min(infos.size(), canvas.extraChannels());
+        var others = extraCount - (alpha >= 0 && alpha < extraCount ? 1 : 0) - (cmyk ? 1 : 0);
+        var floating = header.bitDepth().floatSample();
+        if (!cmyk && !floating && others == 0) {
+            return null;
+        }
+        var channels = new ArrayList<Channel>();
+        var sources = new ArrayList<float[]>();
+        if (cmyk) {
+            channels.addAll(PixelLayout.CMYK.channels());
+            sources.add(canvas.planes[0]);
+            sources.add(canvas.planes[1]);
+            sources.add(canvas.planes[2]);
+            sources.add(canvas.extra(black));
+        } else if (canvas.colorChannels == 1) {
+            channels.addAll(PixelLayout.GRAY.channels());
+            sources.add(canvas.planes[0]);
+        } else {
+            channels.addAll(PixelLayout.RGB.channels());
+            sources.add(canvas.planes[0]);
+            sources.add(canvas.planes[1]);
+            sources.add(canvas.planes[2]);
+        }
+        var colors = channels.size();
+        for (var i = 0; i < extraCount; i++) {
+            if (cmyk && i == black) {
+                continue;
+            }
+            var info = infos.get(i);
+            channels.add(new Channel(extraType(info, i == alpha), info.name()));
+            sources.add(canvas.extra(i));
+        }
+        var layout = new PixelLayout(channels);
+        var width = canvas.width;
+        var height = canvas.height;
+        var count = layout.count();
+        var length = width * height;
+        var deep = highBitDepth && header.bitDepth().bitsPerSample() > 8;
+        var planes = sources.toArray(float[][]::new);
+        ChannelPicture picture = floating ? ChannelFloatPicture.allocate(width, height, layout)
+                : deep ? Channel16Picture.allocate(width, height, layout)
+                : Channel8Picture.allocate(width, height, layout);
+        interleave(planes, count, colors, cmyk, length, height, picture);
+        var outIcc = cmyk ? icc : canvasIcc(header, icc);
+        return new Output(picture, Optional.ofNullable(outIcc), profileOf(header, outIcc, false));
+    }
+
+    /**
+     * Interleaves planes into the samples of a channel picture, inverting the leading CMYK planes.
+     *
+     * @param planes the planes, in channel order
+     * @param count the number of channels
+     * @param colors the number of leading color channels
+     * @param cmyk whether the color planes hold CMYK as {@code 1 - ink}
+     * @param length the samples per plane
+     * @param height the rows per plane
+     * @param picture the destination, with a tight stride: floating-point samples are stored as they are, integer
+     * ones quantized as {@link #toPicture} quantizes them
+     */
+    private static void interleave(float[][] planes, int count, int colors, boolean cmyk, int length, int height,
+                                   ChannelPicture picture) {
+        var width = length / height;
+        var bands = ParallelBands.bands(height, (long) length * count);
+        ParallelBands.run(bands, band -> {
+            var from = ParallelBands.start(band, bands, height) * width;
+            var to = ParallelBands.start(band + 1, bands, height) * width;
+            for (var c = 0; c < count; c++) {
+                var plane = planes[c];
+                var invert = cmyk && c < colors;
+                switch (picture) {
+                    case ChannelFloatPicture floating -> {
+                        var pixels = floating.pixels();
+                        for (var i = from; i < to; i++) {
+                            pixels[i * count + c] = invert ? 1.0f - plane[i] : plane[i];
+                        }
+                    }
+                    case Channel16Picture sixteen -> {
+                        var pixels = sixteen.pixels();
+                        for (var i = from; i < to; i++) {
+                            pixels[i * count + c] = toUnsigned16(invert ? 1.0f - plane[i] : plane[i]);
+                        }
+                    }
+                    case Channel8Picture eight -> {
+                        var pixels = eight.pixels();
+                        for (var i = from; i < to; i++) {
+                            pixels[i * count + c] = (byte) toUnsigned8(invert ? 1.0f - plane[i] : plane[i]);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns the channel type of a JPEG XL extra channel.
+     *
+     * @param info the extra channel
+     * @param alpha whether it is the image's alpha channel
+     * @return the type; alpha channels other than the image's are unspecified
+     */
+    private static ChannelType extraType(ExtraChannelInfo info, boolean alpha) {
+        return switch (info.type()) {
+            case ExtraChannelInfo.TYPE_ALPHA -> alpha ? (info.alphaAssociated() ? ChannelType.PREMULTIPLIED_ALPHA
+                    : ChannelType.ALPHA) : ChannelType.UNSPECIFIED;
+            case ExtraChannelInfo.TYPE_DEPTH -> ChannelType.DEPTH;
+            case ExtraChannelInfo.TYPE_SPOT_COLOR -> ChannelType.SPOT;
+            case ExtraChannelInfo.TYPE_SELECTION_MASK -> ChannelType.SELECTION_MASK;
+            case ExtraChannelInfo.TYPE_THERMAL -> ChannelType.THERMAL;
+            default -> ChannelType.UNSPECIFIED;
+        };
     }
 
     /**
@@ -256,24 +405,24 @@ public final class JxlOutput {
     }
 
     /**
-     * Converts a linear sRGB picture to the embedded profile.
+     * Converts a linear sRGB picture, or a linear gray one replicated into red, green and blue, to the embedded
+     * profile.
      *
      * @param linear the linear picture
      * @param header the image header
-     * @param icc the embedded profile
+     * @param icc the embedded profile, RGB for a color image and gray for a grayscale one
      * @return the converted picture, or {@code null} when Smalt cannot apply the profile
      */
     private static Rgba16Picture convertLinear(Rgba16Picture linear, ImageHeader header, byte[] icc) {
         try {
             var target = ColorProfile.parse(icc);
-            if (header.isGray()) {
-                // TODO: convert grayscale XYB images to their gray ICC profile; they fall back to sRGB.
-                return null;
-            }
-            var source = ColorProfile.rgb(new Chromaticity(0.639998686, 0.330010138),
-                    new Chromaticity(0.300003784, 0.600003357), new Chromaticity(0.150002046, 0.059997204),
-                    new Chromaticity(0.3127, 0.329), 1.0);
-            var converted = ImageOps.convertColor(linear, source, target);
+            var source = header.isGray() ? ColorProfile.gray(1.0) : ColorProfile.rgb(
+                    new Chromaticity(0.639998686, 0.330010138), new Chromaticity(0.300003784, 0.600003357),
+                    new Chromaticity(0.150002046, 0.059997204), new Chromaticity(0.3127, 0.329), 1.0);
+            // linear 1.0 is the intensity target, which a high-dynamic-range target places in candelas per square meter
+            var white = Math.min(Math.max(header.toneMapping().intensityTarget(), 1.0), 10000.0);
+            var options = ColorTransformOptions.builder().referenceWhite(white).build();
+            var converted = ImageOps.convertColor(linear, source, target, options);
             return converted instanceof Rgba16Picture deep ? deep : null;
         } catch (MediaException | IllegalArgumentException exception) {
             return null;

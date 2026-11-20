@@ -1,0 +1,19 @@
+# demux dump of mp4/dnxhr.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 200000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+track 1 VIDEO DNXHD timebase=1/15360 duration=3072 config=60:06f722ac
+  video 256x128 orientation=NORMAL rate=15/1 sar=1/1
+packets 3
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=8192 crc=6284cd9f
+1 t1 pts=1024 dts=1024 dur=1024 flags=KEY size=8192 crc=c3251994
+2 t1 pts=2048 dts=2048 dur=1024 flags=KEY size=8192 crc=af837a67
+seek 0: t1@0
+seek 66666: t1@0
+seek 133333: t1@1
+seek 200000: end
+seek -1000000: t1@0

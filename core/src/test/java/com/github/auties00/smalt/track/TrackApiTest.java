@@ -10,8 +10,11 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -109,6 +112,47 @@ class TrackApiTest {
     }
 
     @Nested
+    @DisplayName("Packet sample index")
+    class PacketSampleIndex {
+        @Test
+        @DisplayName("is unknown through the constructors that do not take it")
+        void unknownByDefault() {
+            var data = new byte[1];
+            assertEquals(-1, Packet.NO_SAMPLE_INDEX);
+            assertEquals(Packet.NO_SAMPLE_INDEX, new Packet(1, data, 0, 0, 0, true).sampleIndex());
+            assertEquals(Packet.NO_SAMPLE_INDEX, new Packet(1, data, 0, 0, 0, Set.of(), PacketSideData.NONE)
+                    .sampleIndex());
+        }
+
+        @Test
+        @DisplayName("survives every copy method and joins equality")
+        void keptByCopies() {
+            var data = new byte[1];
+            var packet = new Packet(1, data, 0, 0, 0, Set.of(PacketFlag.KEY), PacketSideData.NONE, 7);
+            assertEquals(7, packet.sampleIndex());
+            assertEquals(7, packet.withTrackId(2).sampleIndex());
+            assertEquals(7, packet.withData(new byte[2]).sampleIndex());
+            assertEquals(7, packet.withTiming(1, 1, 1).sampleIndex());
+            assertEquals(7, packet.withFlags(Set.of()).sampleIndex());
+            assertEquals(7, packet.withSideData(PacketSideData.builder().discard(1, 0).build()).sampleIndex());
+            assertEquals(9, packet.withSampleIndex(9).sampleIndex());
+            assertEquals(Packet.NO_SAMPLE_INDEX, packet.withSampleIndex(Packet.NO_SAMPLE_INDEX).sampleIndex());
+            assertEquals(packet, packet.withSampleIndex(7));
+            assertNotEquals(packet, packet.withSampleIndex(8));
+        }
+
+        @Test
+        @DisplayName("rejects negative indexes other than the unknown value")
+        void validates() {
+            var data = new byte[1];
+            assertThrows(IllegalArgumentException.class,
+                    () -> new Packet(1, data, 0, 0, 0, Set.of(), PacketSideData.NONE, -2));
+            var packet = new Packet(1, data, 0, 0, 0, true);
+            assertThrows(IllegalArgumentException.class, () -> packet.withSampleIndex(Long.MIN_VALUE));
+        }
+    }
+
+    @Nested
     @DisplayName("Rational.timeBaseOf")
     class TimeBaseOf {
         @Test
@@ -124,6 +168,73 @@ class TrackApiTest {
         void rejects() {
             assertThrows(IllegalArgumentException.class, () -> Rational.timeBaseOf(0));
             assertThrows(IllegalArgumentException.class, () -> Rational.timeBaseOf(-48_000));
+        }
+    }
+
+    @Nested
+    @DisplayName("VideoTrack sample aspect ratio and scan")
+    class AspectAndScan {
+        private static VideoTrack.Builder video() {
+            return VideoTrack.builder().id(1).codec(Codec.H264).timeBase(new Rational(1, 90_000)).width(720).height(576);
+        }
+
+        @Test
+        @DisplayName("are undeclared by default and kept through toBuilder")
+        void defaults() {
+            var plain = video().build();
+            assertEquals(java.util.Optional.empty(), plain.sampleAspectRatio());
+            assertEquals(java.util.Optional.empty(), plain.interlacing());
+            var declared = video().sampleAspectRatio(new Rational(64, 45)).interlacing(Interlacing.TOP_FIELD_FIRST).build();
+            assertEquals(declared, declared.toBuilder().build());
+            assertEquals(declared.hashCode(), declared.toBuilder().build().hashCode());
+            assertEquals(java.util.Optional.of(new Rational(64, 45)), declared.sampleAspectRatio());
+            assertEquals(java.util.Optional.of(Interlacing.TOP_FIELD_FIRST), declared.interlacing());
+            assertTrue(declared.toString().contains("sampleAspectRatio=64/45"), declared.toString());
+        }
+
+        @Test
+        @DisplayName("store the ratio in lowest terms and take part in equality")
+        void equality() {
+            var reduced = video().sampleAspectRatio(new Rational(128, 90)).build();
+            assertEquals(new Rational(64, 45), reduced.sampleAspectRatio().orElseThrow());
+            assertEquals(video().sampleAspectRatio(new Rational(64, 45)).build(), reduced);
+            assertFalse(video().build().equals(reduced));
+            assertFalse(video().interlacing(Interlacing.PROGRESSIVE).build().equals(video().build()));
+            assertFalse(video().interlacing(Interlacing.TOP_FIELD_FIRST).build()
+                    .equals(video().interlacing(Interlacing.TOP_FIELD_FIRST_SEPARATED).build()));
+        }
+
+        @Test
+        @DisplayName("reject null and reset through the named setters")
+        void resets() {
+            assertThrows(NullPointerException.class, () -> video().sampleAspectRatio(null));
+            assertThrows(NullPointerException.class, () -> video().interlacing(null));
+            var declared = video().sampleAspectRatio(new Rational(4, 3)).interlacing(Interlacing.INTERLACED).build();
+            var cleared = declared.toBuilder().noSampleAspectRatio().noInterlacing().build();
+            assertEquals(video().build(), cleared);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(Interlacing.class)
+        @DisplayName("map every scan to its field order value and back")
+        void codes(Interlacing interlacing) {
+            assertEquals(interlacing, Interlacing.ofCode(interlacing.code()));
+            assertEquals(interlacing != Interlacing.PROGRESSIVE, interlacing.isInterlaced());
+        }
+
+        @Test
+        @DisplayName("name the shared fiel and FieldOrder values")
+        void values() {
+            assertEquals(1, Interlacing.TOP_FIELD_FIRST_SEPARATED.code());
+            assertEquals(6, Interlacing.BOTTOM_FIELD_FIRST_SEPARATED.code());
+            assertEquals(9, Interlacing.TOP_FIELD_FIRST.code());
+            assertEquals(14, Interlacing.BOTTOM_FIELD_FIRST.code());
+            assertEquals(Interlacing.INTERLACED, Interlacing.ofCode(5));
+            assertEquals(Interlacing.INTERLACED, Interlacing.ofCode(-1));
+            assertTrue(Interlacing.TOP_FIELD_FIRST.isTopFieldFirst());
+            assertTrue(Interlacing.TOP_FIELD_FIRST_SEPARATED.isTopFieldFirst());
+            assertFalse(Interlacing.BOTTOM_FIELD_FIRST.isTopFieldFirst());
+            assertFalse(Interlacing.INTERLACED.isTopFieldFirst());
         }
     }
 }

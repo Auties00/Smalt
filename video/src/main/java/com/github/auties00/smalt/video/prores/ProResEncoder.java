@@ -140,7 +140,7 @@ public final class ProResEncoder implements VideoEncoder {
      * @throws IllegalArgumentException if the picture size differs from the encoder's or the
      * timestamp does not follow the previous one
      * @throws MediaException.Unsupported if the picture is RGB and the matrix of
-     * {@link ProResEncoderOptions#color()} is not defined by two luma weights
+     * {@link ProResEncoderOptions#color()} is the identity matrix
      */
     @Override
     public void encode(VideoFrame frame, Consumer<Packet> output) {
@@ -157,7 +157,7 @@ public final class ProResEncoder implements VideoEncoder {
      * @throws IllegalArgumentException if the picture size differs from the encoder's or the
      * timestamp does not follow the previous one
      * @throws MediaException.Unsupported if the picture is RGB and the matrix of
-     * {@link ProResEncoderOptions#color()} is not defined by two luma weights
+     * {@link ProResEncoderOptions#color()} is the identity matrix
      */
     public Packet encodeFrame(VideoFrame frame) {
         return core.encode(frame);

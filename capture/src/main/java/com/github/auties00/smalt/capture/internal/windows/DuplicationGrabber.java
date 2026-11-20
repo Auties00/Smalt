@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.capture.internal.windows;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.capture.internal.CaptureArea;
 import com.github.auties00.smalt.image.YuvPicture;
 
 import java.lang.foreign.Arena;
@@ -150,6 +151,16 @@ final class DuplicationGrabber implements ScreenGrabber {
      * The buffer receiving pointer shapes.
      */
     private MemorySegment shapeBuffer;
+
+    /**
+     * The captured area, or {@code null} for the whole monitor.
+     */
+    private CaptureArea area;
+
+    /**
+     * Whether the pointer is drawn.
+     */
+    private boolean cursorShown = true;
 
     /**
      * The GDI grabber copying the monitor until the duplication delivers an image, or
@@ -354,6 +365,15 @@ final class DuplicationGrabber implements ScreenGrabber {
     @Override
     public int height() {
         return bounds.height();
+    }
+
+    @Override
+    public void configure(CaptureArea area, boolean cursor) {
+        this.area = area;
+        this.cursorShown = cursor;
+        if (seed != null) {
+            seed.configure(area, cursor);
+        }
     }
 
     @Override
@@ -581,7 +601,8 @@ final class DuplicationGrabber implements ScreenGrabber {
         try {
             var pitch = mapped.get(JAVA_INT, Dxgi.MAPPED_SUBRESOURCE_ROW_PITCH);
             var data = mapped.get(ADDRESS, 0).reinterpret((long) pitch * stagingHeight);
-            return converter.convert(data, 0, pitch, stagingWidth, stagingHeight, rotation, pointer, out)
+            return converter.convert(data, 0, pitch, stagingWidth, stagingHeight, rotation, cursorShown ? pointer : null,
+                    area, out)
                     ? Result.CHANGED : Result.UNCHANGED;
         } finally {
             Com.callVoid(context, Dxgi.CONTEXT_UNMAP, staging, 0);
@@ -599,6 +620,7 @@ final class DuplicationGrabber implements ScreenGrabber {
         if (seed == null) {
             try {
                 seed = new GdiGrabber(deviceName, bounds);
+                seed.configure(area, cursorShown);
             } catch (MediaException exception) {
                 return Result.UNCHANGED;
             }

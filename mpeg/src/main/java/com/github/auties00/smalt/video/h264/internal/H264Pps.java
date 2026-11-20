@@ -104,6 +104,11 @@ public final class H264Pps {
     public int initQp;
 
     /**
+     * The initial quantization parameter of SP and SI slices, {@code 26 + pic_init_qs_minus26}.
+     */
+    public int initQs;
+
+    /**
      * The {@code chroma_qp_index_offset} applied to Cb.
      */
     public int chromaQpIndexOffset;
@@ -256,9 +261,9 @@ public final class H264Pps {
             throw new MediaException.Malformed("weighted_bipred_idc 3 is reserved");
         }
         pps.initQp = 26 + reader.readSe();
-        reader.readSe();
+        pps.initQs = 26 + reader.readSe();
         pps.chromaQpIndexOffset = reader.readSe();
-        if (pps.initQp < -6 * (sps.bitDepthLuma - 8) || pps.initQp > 51
+        if (pps.initQp < -6 * (sps.bitDepthLuma - 8) || pps.initQp > 51 || pps.initQs < 0 || pps.initQs > 51
                 || pps.chromaQpIndexOffset < -12 || pps.chromaQpIndexOffset > 12) {
             throw new MediaException.Malformed("picture parameter set quantizer out of range");
         }
@@ -273,7 +278,7 @@ public final class H264Pps {
             if (reader.readFlag()) {
                 var scaling4x4 = new int[6][16];
                 var scaling8x8 = new int[6][64];
-                var count = 6 + (pps.transform8x8Mode ? (sps.chromaFormatIdc != 3 ? 2 : 6) : 0);
+                var count = 6 + (pps.transform8x8Mode ? (sps.codedChromaFormatIdc != 3 ? 2 : 6) : 0);
                 if (sps.scalingMatrixPresent) {
                     H264ScalingLists.parse(reader, count, sps.scaling4x4, sps.scaling8x8, scaling4x4, scaling8x8);
                 } else {

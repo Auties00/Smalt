@@ -179,7 +179,7 @@ final class PlaneConversion {
      * @param weights   receives their weights
      * @return the number of taps
      */
-    private static int taps(int direction, int index, int size, int[] positions, int[] weights) {
+    static int taps(int direction, int index, int size, int[] positions, int[] weights) {
         if (direction == 0) {
             positions[0] = index;
             weights[0] = 1;

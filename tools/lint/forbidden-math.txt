@@ -1,0 +1,25 @@
+# Bans on the transcendental java.lang.Math methods in Smalt's main code, checked by forbidden-apis in verify
+# (smalt-parent pom). Math lets the JVM substitute platform intrinsics whose results differ from one platform to
+# another by an ulp, so a decoder, an encoder or an image operation pinned to a bit-exact digest could change its
+# output with the CPU. StrictMath returns the same bits everywhere. Math.sqrt, Math.fma and the rounding, sign and
+# min/max methods are exact and stay allowed.
+
+@defaultMessage [strict-math] Math may return platform-dependent results; call the StrictMath method of the same name
+java.lang.Math#sin(double)
+java.lang.Math#cos(double)
+java.lang.Math#tan(double)
+java.lang.Math#asin(double)
+java.lang.Math#acos(double)
+java.lang.Math#atan(double)
+java.lang.Math#atan2(double,double)
+java.lang.Math#exp(double)
+java.lang.Math#log(double)
+java.lang.Math#log10(double)
+java.lang.Math#log1p(double)
+java.lang.Math#expm1(double)
+java.lang.Math#pow(double,double)
+java.lang.Math#cbrt(double)
+java.lang.Math#sinh(double)
+java.lang.Math#cosh(double)
+java.lang.Math#tanh(double)
+java.lang.Math#hypot(double,double)

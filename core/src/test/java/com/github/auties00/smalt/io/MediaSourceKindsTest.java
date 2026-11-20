@@ -286,6 +286,36 @@ class MediaSourceKindsTest {
         }
 
         @Test
+        @DisplayName("reports as kept exactly the taken ranges that a read below the watermark can still serve")
+        void keeps() {
+            var data = random(11, 120_000);
+            try (var source = MediaSource.of(new CountingStream(data, 5000), data.length,
+                    StreamSourceOptions.memoryOnly().toBuilder().memoryBudget(64 << 10).build())) {
+                var bytes = new byte[1000];
+                for (var position = 0; position < 100_000; position += 1000) {
+                    source.readFully(position, bytes, 0, 1000);
+                    ForwardOnlySource.release(source, Math.min(position, 50_000));
+                }
+                assertTrue(ForwardOnlySource.keeps(source, 7, 7));
+                assertTrue(ForwardOnlySource.keeps(source, 60_000, 100_000));
+                assertFalse(ForwardOnlySource.keeps(source, 0, 1000));
+                assertFalse(ForwardOnlySource.keeps(source, 99_000, data.length + 1));
+                // the chunk holding the watermark is kept although part of it lies below it
+                assertTrue(ForwardOnlySource.keeps(source, 49_999, 50_000));
+                for (var position = 0; position < 50_000; position += 500) {
+                    var from = position;
+                    if (ForwardOnlySource.keeps(source, from, from + 500)) {
+                        source.readFully(from, bytes, 0, 500);
+                        assertTrue(Arrays.equals(data, from, from + 500, bytes, 0, 500));
+                    } else {
+                        assertThrows(MediaException.Unsupported.class, () -> source.readFully(from, bytes, 0, 500));
+                    }
+                }
+            }
+            assertTrue(ForwardOnlySource.keeps(MediaSource.of(new byte[10]), 0, 10));
+        }
+
+        @Test
         @DisplayName("drops released bytes, fails a read below the watermark and reports kept ranges as local")
         void watermark() {
             var data = random(9, 200_000);

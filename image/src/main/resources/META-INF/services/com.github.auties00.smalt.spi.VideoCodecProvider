@@ -1,2 +1,7 @@
+com.github.auties00.smalt.internal.provider.image.Mj2CodecProvider
 com.github.auties00.smalt.internal.provider.image.MjpegCodecProvider
 com.github.auties00.smalt.internal.provider.image.Vp8CodecProvider
+com.github.auties00.smalt.internal.provider.image.GifVideoCodecProvider
+com.github.auties00.smalt.internal.provider.image.HapCodecProvider
+com.github.auties00.smalt.internal.provider.image.PngVideoCodecProvider
+com.github.auties00.smalt.internal.provider.image.TiffVideoCodecProvider

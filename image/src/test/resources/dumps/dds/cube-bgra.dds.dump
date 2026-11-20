@@ -1,0 +1,44 @@
+# image dump of dds/cube-bgra.dds; regenerate with -Dsmalt.test.updateDumps=true
+format DDS
+info ImageInfo[format=DDS, width=16, height=16, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+decode
+picture 16x16 rgba8 alpha=true crc=8ed7f863
+  format=DDS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+scaled 4x4
+picture 16x16 rgba8 alpha=true crc=8ed7f863
+  format=DDS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+pages 6
+page 0 ImageInfo[format=DDS, width=16, height=16, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=8ed7f863
+  format=DDS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+page 1 ImageInfo[format=DDS, width=16, height=16, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=b3f0ee9a
+  format=DDS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+page 2 ImageInfo[format=DDS, width=16, height=16, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=9f9f25e0
+  format=DDS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+page 3 ImageInfo[format=DDS, width=16, height=16, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=07f0422a
+  format=DDS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+page 4 ImageInfo[format=DDS, width=16, height=16, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=42d359b8
+  format=DDS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+page 5 ImageInfo[format=DDS, width=16, height=16, hasAlpha=true, animated=false, frameCount=6, orientation=NORMAL]
+picture 16x16 rgba8 alpha=true crc=9cf26470
+  format=DDS orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none

@@ -1,0 +1,13 @@
+# image dump of resources/jpeg/jpegls/charls/five8-ilv0.jls; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=23, height=19, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 23x19 rgba8 alpha=false crc=ed6edf76
+  format=JPEG orientation=NORMAL source=23x19
+  icc=none exif=none xmp=none
+  profile=none
+scaled 5x4
+picture 23x19 rgba8 alpha=false crc=ed6edf76
+  format=JPEG orientation=NORMAL source=23x19
+  icc=none exif=none xmp=none
+  profile=none

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.vp9;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
@@ -206,6 +207,17 @@ class Vp9VideoEncoderTest {
     }
 
     /** Returns the frames of a cached clip, read lazily, or synthetic frames when it is absent. */
+    /**
+     * Returns the frames of a cached clip, skipping the calling test without it; for assertions calibrated on
+     * the clip's content, which synthetic video does not reproduce.
+     */
+    static IntFunction<YuvPicture> clipOrSkip(String name, int width, int height, int frames) throws IOException {
+        var clip = Vp9TestVideo.clip(name);
+        Skip.unless(clip != null && Files.size(clip) >= (long) frames * width * height * 3 / 2, "data:clip",
+                "clip " + name + " is not cached (python tools/testdata/testdata.py fetch --tier full)");
+        return clipOrSynthetic(name, width, height, frames);
+    }
+
     static IntFunction<YuvPicture> clipOrSynthetic(String name, int width, int height, int frames) throws IOException {
         var clip = Vp9TestVideo.clip(name);
         if (clip != null && Files.size(clip) >= (long) frames * width * height * 3 / 2) {
@@ -527,7 +539,7 @@ class Vp9VideoEncoderTest {
         /** Encodes a clip whose bitrate steps every {@link #SEGMENT} frames, returning each frame's bits (0 if dropped). */
         static long[] encodeSteps(String clip, int width, int height, int[] steps, boolean dropFrames) throws IOException {
             var count = SEGMENT * steps.length;
-            var frames = clipOrSynthetic(clip, width, height, count);
+            var frames = clipOrSkip(clip, width, height, count);
             var base = Vp9Setup.of(width, height, new Rational(30, 1), new Rational(1, 30), steps[0], 2, 52, 0,
                     6, true, true, 1, dropFrames, 1000, 500, 600, 6, 1);
             var run = encode(base, frames, count, false, i -> false,
@@ -608,7 +620,7 @@ class Vp9VideoEncoderTest {
         @DisplayName("the unreachable 128 kbit/s call step at 1280x720 is met by dropping frames")
         void unreachable() throws IOException {
             var count = 270;
-            var frames = clipOrSynthetic("johnny720.yuv", 1280, 720, count);
+            var frames = clipOrSkip("johnny720.yuv", 1280, 720, count);
             var config = Vp9Setup.of(1280, 720, new Rational(30, 1), new Rational(1, 30), 128_000, 2, 52, 0,
                     6, true, true, 1, true, 1000, 500, 600, 6, 1);
             var run = encode(config, frames, count, false, i -> false, null);

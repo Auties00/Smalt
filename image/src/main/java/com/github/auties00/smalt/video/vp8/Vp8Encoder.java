@@ -8,33 +8,53 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.ops.YuvConverter;
+import com.github.auties00.smalt.internal.codec.AlphaStreamEncoder;
 import com.github.auties00.smalt.internal.codec.RealtimeEncoderClock;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketFlag;
+import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.internal.codec.FrameClock;
 import com.github.auties00.smalt.video.VideoEncoder;
 import com.github.auties00.smalt.video.VideoFrame;
+import com.github.auties00.smalt.video.vp8.internal.GoodEncoder;
 import com.github.auties00.smalt.video.vp8.internal.RtEncoder;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * Encodes pictures into a real-time VP8 stream (RFC 6386) at a constant bitrate, for video calls
- * and live streaming.
+ * Encodes pictures into a VP8 stream (RFC 6386), in real time at a constant bitrate for video
+ * calls and live streaming, or at good quality with a lookahead for files and on-demand video.
  *
- * <p>The stream holds key frames and inter frames that predict, with motion compensation, from
- * the last frame and from the golden and alternate reference frames; it has no frame
- * reordering, so every packet's presentation and decoding timestamps are equal and each input
- * frame produces its packet, or is dropped, before {@link #encode(VideoFrame, Consumer)}
- * returns. Each packet holds one frame, as stored in IVF and WebM. The first frame, the next
- * frame after a {@link #requestKeyframe()} and every {@code keyframeInterval}-th frame are key
- * frames. {@link #reconfigure(Vp8EncoderOptions)} changes the bitrate, frame rate, quantizers,
- * key frame interval, speed and buffer of a running stream, and {@link #setTargetBitrate(long)}
- * its bitrate alone; the rate control follows a new bitrate within about a second.
+ * <p><b>Real time</b> ({@link Vp8EncoderUsage#REALTIME}, {@link Vp8EncoderOptions#defaults()},
+ * {@link Vp8EncoderOptions#forRealtime()}): the stream holds key frames and inter frames that
+ * predict, with motion compensation, from the last frame and from the golden and alternate
+ * reference frames; it has no frame reordering, so every packet's presentation and decoding
+ * timestamps are equal and each input frame produces its packet, or is dropped, before
+ * {@link #encode(VideoFrame, Consumer)} returns. Each packet holds one frame, as stored in IVF and
+ * WebM. The first frame, the next frame after a {@link #requestKeyframe()} and every
+ * {@code keyframeInterval}-th frame are key frames. {@link #reconfigure(Vp8EncoderOptions)}
+ * changes the bitrate, frame rate, quantizers, key frame interval, speed and buffer of a running
+ * stream, and {@link #setTargetBitrate(long)} its bitrate alone; the rate control follows a new
+ * bitrate within about a second.
+ *
+ * <p><b>Good quality</b> ({@link Vp8EncoderUsage#GOOD_QUALITY}, {@link Vp8EncoderOptions#ofBitrate(long)},
+ * {@link Vp8EncoderOptions#ofQuality(int)}, {@link Vp8EncoderOptions#forArchive()}): the encoder
+ * buffers {@link Vp8EncoderOptions#lookahead()} pictures, plans golden frame groups from their
+ * first-pass statistics or from those of a whole clip ({@link Vp8FirstPass}), and codes each
+ * group after a hidden alternate reference made by temporally filtering the picture that ends it.
+ * Packets arrive in decoding order: each shown frame in a packet with its own timestamp and
+ * duration, each hidden frame in a packet of its own just before the shown frame after it,
+ * flagged {@link PacketFlag#DISCARD}, with that frame's timestamp and no duration. The last
+ * packets arrive at {@link #flush}; only {@link #encode} codes in this usage. Key frames come
+ * also at scene cuts. The best-quality usage ({@link Vp8EncoderUsage#BEST_QUALITY}) codes the same
+ * way with a fuller search; what this class says of the good-quality usage applies to it too.
  *
  * <p>Frames may be given in any {@link Picture} representation of exactly the encoder's size.
  * VP8 defines one color space, limited-range BT.601 4:2:0: a picture in it (or in limited-range
@@ -43,6 +63,11 @@ import java.util.function.Consumer;
  * increase; a frame whose timestamp is {@link Packet#NO_TIMESTAMP} is placed one nominal frame
  * after the previous one, and a frame without a duration lasts one nominal frame. The rate
  * control measures the frame rate from the timestamps.
+ *
+ * <p>With {@link Vp8EncoderOptions#alpha()}, the alpha plane of each picture is coded as a second
+ * VP8 stream, at the constant quantizer of {@link Vp8EncoderOptions#alphaQuality()}, and each packet
+ * of a shown frame carries its alpha frame in {@link PacketSideData#alphaFrame()}, as WebM stores
+ * transparent video; the alpha stream has a key frame wherever the main stream has one.
  *
  * <p>With {@link Vp8EncoderOptions#threads()} 0 or above 1, the macroblock rows of a frame are
  * coded on threads of the library's shared pool together with the calling thread (see
@@ -64,13 +89,31 @@ public final class Vp8Encoder implements VideoEncoder {
      */
     private static final int MAX_DIMENSION = 16_383;
 
+    /**
+     * The flags of a packet holding a hidden frame.
+     */
+    private static final Set<PacketFlag> HIDDEN = Set.of(PacketFlag.DISCARD);
+
     private Vp8EncoderOptions options;
 
     private final int width;
 
     private final int height;
 
+    /**
+     * The real-time frame encoder, or {@code null} in the good-quality usage.
+     */
     private final RtEncoder encoder;
+
+    /**
+     * The good-quality loop, or {@code null} in the real-time usage.
+     */
+    private final GoodEncoder good;
+
+    /**
+     * The total size of the hidden frames coded, in bytes.
+     */
+    private long hiddenBytes;
 
     /**
      * The timestamps, key frame requests and counters of the stream.
@@ -87,6 +130,11 @@ public final class Vp8Encoder implements VideoEncoder {
      * The converter of the pictures VP8 does not define, owning their converted copies.
      */
     private final YuvConverter converter = YuvConverter.create(ChromaFormat.YUV420, ColorInfo.BT601_LIMITED);
+
+    /**
+     * The coder of the alpha planes, or {@code null} without {@link Vp8EncoderOptions#alpha()}.
+     */
+    private final AlphaStreamEncoder alpha;
 
     private boolean closed;
 
@@ -111,6 +159,8 @@ public final class Vp8Encoder implements VideoEncoder {
      * @param options the encoder settings
      * @throws IllegalArgumentException if a dimension is outside 1 to 16383, the largest the
      * frame header can carry
+     * @throws IllegalArgumentException if the first-pass statistics were measured on pictures of
+     * another size
      * @throws MediaException.LimitExceeded if the picture or the encoder's frame buffers exceed
      * the options' limits
      */
@@ -119,12 +169,68 @@ public final class Vp8Encoder implements VideoEncoder {
         if (width < 1 || height < 1 || width > MAX_DIMENSION || height > MAX_DIMENSION) {
             throw new IllegalArgumentException("invalid picture size " + width + "x" + height);
         }
+        var stats = options.firstPassStats();
+        if (stats.isPresent() && (stats.get().width() != width || stats.get().height() != height)) {
+            throw new IllegalArgumentException("the first-pass statistics were measured on " + stats.get().width()
+                    + "x" + stats.get().height() + " pictures, not " + width + "x" + height);
+        }
         LimitChecks.checkPicture(options.limits(), width, height);
         this.width = width;
         this.height = height;
-        this.encoder = new RtEncoder(width, height, options);
         this.clock = new RealtimeEncoderClock(options.frameRate(), options.timeBase());
-        encoder.configure(options);
+        if (options.usage() != Vp8EncoderUsage.REALTIME) {
+            this.encoder = null;
+            this.good = new GoodEncoder(width, height, options);
+            good.configure(settings(options));
+        } else {
+            this.good = null;
+            this.encoder = new RtEncoder(width, height, options);
+            encoder.configure(options);
+        }
+        this.alpha = options.alpha()
+                ? new AlphaStreamEncoder(new Vp8Encoder(width, height, alphaOptions(options)), ColorInfo.BT601_LIMITED)
+                : null;
+    }
+
+    /**
+     * Returns the settings of the alpha stream of an encoder: its usage, speed, time base, threads and
+     * limits, a fixed quantizer, no lookahead, no hidden frames, no dropped frames and no periodic key
+     * frames, so that every picture gives one shown frame at once.
+     *
+     * @param options the settings of the main stream
+     * @return the settings of the alpha stream
+     */
+    private static Vp8EncoderOptions alphaOptions(Vp8EncoderOptions options) {
+        var quantizer = options.alphaQuality();
+        var builder = options.toBuilder().alpha(false).noFirstPassStats().noPeriodicKeyframes()
+                .quantizers(quantizer, quantizer).cqLevel(quantizer);
+        if (options.usage() == Vp8EncoderUsage.REALTIME) {
+            builder.dropFrames(false).temporalLayers(1);
+        } else {
+            builder.rateControl(Vp8RateControl.CONSTANT_QUALITY).lookahead(0).alternateReferences(false);
+        }
+        return builder.build();
+    }
+
+    /**
+     * Returns the settings of the good-quality loop.
+     *
+     * @param options the encoder settings
+     * @return the loop's settings
+     */
+    private static GoodEncoder.Settings settings(Vp8EncoderOptions options) {
+        var mode = switch (options.rateControl()) {
+            case CONSTRAINED_QUALITY -> 1;
+            case CONSTANT_QUALITY -> 2;
+            default -> 0;
+        };
+        var stats = options.firstPassStats();
+        return new GoodEncoder.Settings(mode, options.bitrate(), options.frameRate().toDouble(),
+                GoodEncoder.qindexOf(options.minQuantizer()), GoodEncoder.qindexOf(options.maxQuantizer()),
+                GoodEncoder.qindexOf(options.cqLevel()), options.keyframeInterval().orElse(0), options.lookahead(),
+                options.alternateReferences(), options.temporalFilterStrength(), options.temporalFilterFrames(),
+                options.speed().level(), options.usage() == Vp8EncoderUsage.BEST_QUALITY, stats.map(Vp8FirstPassStats::values).orElse(null),
+                stats.map(Vp8FirstPassStats::frameCount).orElse(0));
     }
 
     /**
@@ -136,7 +242,8 @@ public final class Vp8Encoder implements VideoEncoder {
     }
 
     /**
-     * {@return the encoding engine, for tests in this package}
+     * {@return the real-time encoding engine, for tests in this package, or {@code null} in the
+     * good-quality usage}
      */
     RtEncoder engine() {
         return encoder;
@@ -175,17 +282,59 @@ public final class Vp8Encoder implements VideoEncoder {
     /**
      * {@inheritDoc}
      *
-     * <p>At most one packet is emitted per frame, before this method returns; none when the rate
-     * control drops the frame.
+     * <p>In the real-time usage at most one packet is emitted per frame, before this method
+     * returns; none when the rate control drops the frame. In the good-quality usage the picture
+     * enters the lookahead and the packets of the frames it lets out are passed on.
      *
      * @throws IllegalArgumentException if the picture size differs from the encoder's or the
      * timestamp does not increase
-     * @throws IllegalStateException if the encoder is closed
+     * @throws IllegalStateException if the encoder is closed, or a two-pass encode receives more
+     * pictures than its first pass measured
      */
     @Override
     public void encode(VideoFrame frame, Consumer<Packet> output) {
         Objects.requireNonNull(output, "output");
-        encodeFrame(frame).ifPresent(output);
+        if (good == null) {
+            encodeFrame(frame).ifPresent(output);
+            return;
+        }
+        Objects.requireNonNull(frame, "frame");
+        try (var _ = ParallelBands.operation(operation)) {
+            if (closed) {
+                throw new IllegalStateException("encoder is closed");
+            }
+            var picture = frame.picture();
+            if (picture.width() != width || picture.height() != height) {
+                throw new IllegalArgumentException("picture is " + picture.width() + "x" + picture.height()
+                        + ", encoder expects " + width + "x" + height);
+            }
+            var frames = clock.clock();
+            var timing = frames.resolve(frame);
+            var ticks = frames.endTicks(timing, TICKS) - frames.startTicks(timing, TICKS);
+            var key = clock.takeKeyframe(false);
+            if (alpha != null) {
+                alpha.push(picture, timing.pts(), timing.duration());
+            }
+            good.encode(toYuv420(picture), timing.pts(), timing.duration(), ticks, key,
+                    packet -> output.accept(packet(packet)));
+            frames.commit(timing.pts());
+        }
+    }
+
+    /**
+     * Counts a good-quality packet and wraps it in a packet.
+     *
+     * @param packet the loop's packet
+     * @return the packet
+     */
+    private Packet packet(GoodEncoder.Packet packet) {
+        if (packet.hidden()) {
+            hiddenBytes += packet.data().length;
+            return new Packet(0, packet.data(), packet.pts(), packet.pts(), 0, HIDDEN, PacketSideData.NONE);
+        }
+        var delivered = clock.delivered(packet.data(), new FrameClock.Timing(packet.pts(), packet.duration()),
+                packet.key());
+        return alpha != null ? alpha.attach(delivered) : delivered;
     }
 
     /**
@@ -201,13 +350,18 @@ public final class Vp8Encoder implements VideoEncoder {
      * empty
      * @throws IllegalArgumentException if the picture size differs from the encoder's or the
      * timestamp does not increase
-     * @throws IllegalStateException if the encoder is closed
+     * @throws IllegalStateException if the encoder is closed or codes in the good-quality usage,
+     * whose lookahead holds pictures back; use {@link #encode(VideoFrame, Consumer)} there
      */
     public Optional<Packet> encodeFrame(VideoFrame frame) {
         Objects.requireNonNull(frame, "frame");
         try (var _ = ParallelBands.operation(operation)) {
             if (closed) {
                 throw new IllegalStateException("encoder is closed");
+            }
+            if (good != null) {
+                throw new IllegalStateException("a good-quality vp8 encoder holds frames back; use encode(frame, "
+                        + "output) and flush(output)");
             }
             var picture = frame.picture();
             if (picture.width() != width || picture.height() != height) {
@@ -216,13 +370,17 @@ public final class Vp8Encoder implements VideoEncoder {
             }
             var frames = clock.clock();
             var timing = frames.resolve(frame);
+            if (alpha != null) {
+                alpha.push(picture, timing.pts(), timing.duration());
+            }
             var data = encoder.encode(toYuv420(picture), frames.startTicks(timing, TICKS),
                     frames.endTicks(timing, TICKS), clock.takeKeyframe(false));
             if (data == null) {
                 clock.dropped(timing);
                 return Optional.empty();
             }
-            return Optional.of(clock.coded(data, timing, encoder.lastKeyFrame()));
+            var coded = clock.coded(data, timing, encoder.lastKeyFrame());
+            return Optional.of(alpha != null ? alpha.attach(coded) : coded);
         }
     }
 
@@ -255,11 +413,24 @@ public final class Vp8Encoder implements VideoEncoder {
     /**
      * {@inheritDoc}
      *
-     * <p>The encoder has no delay, so this emits nothing.
+     * <p>In the real-time usage the encoder has no delay, so this emits nothing. In the
+     * good-quality usage the pictures of the lookahead are coded and their packets passed on; the
+     * encoder stays usable, later pictures continuing the stream.
+     *
+     * @throws IllegalStateException if the encoder is closed
      */
     @Override
     public void flush(Consumer<Packet> output) {
         Objects.requireNonNull(output, "output");
+        if (closed) {
+            throw new IllegalStateException("encoder is closed");
+        }
+        if (good == null) {
+            return;
+        }
+        try (var _ = ParallelBands.operation(operation)) {
+            good.flush(packet -> output.accept(packet(packet)));
+        }
     }
 
     /**
@@ -267,7 +438,8 @@ public final class Vp8Encoder implements VideoEncoder {
      * decoding from it.
      *
      * <p>This method may be called from any thread, also while another thread encodes a frame:
-     * the request is then taken by that frame or by the next one, and is never lost.
+     * the request is then taken by that frame or by the next one, and is never lost. In the
+     * good-quality usage, the next picture passed to {@link #encode} becomes a key frame.
      */
     @Override
     public void requestKeyframe() {
@@ -275,15 +447,18 @@ public final class Vp8Encoder implements VideoEncoder {
     }
 
     /**
-     * Changes the bitrate, frame rate, quantizer window, key frame interval, speed, frame
-     * dropping, buffer, encode breakout and rate tolerances of a running stream.
+     * Changes the rate control of a running stream; the next frame uses it.
      *
-     * <p>The new settings apply from the next frame; the buffer keeps its fullness in
-     * milliseconds, so the rate follows a new bitrate within about a second.
+     * <p>In the real-time usage the bitrate, frame rate, quantizer window, key frame interval,
+     * speed, frame dropping, buffer, encode breakout and rate tolerances may change; the buffer
+     * keeps its fullness in milliseconds, so the rate follows a new bitrate within about a second.
+     * In the good-quality usage the bitrate, quantizer window and quality level may change.
      *
      * @param options the new options
-     * @throws IllegalArgumentException if the new options change the time base, the temporal
-     * layers, the token partitions, the threads, error resilience or the limits
+     * @throws IllegalArgumentException if the new options change the usage, the time base, the
+     * temporal layers, the token partitions, the threads, error resilience, the limits or the alpha
+     * stream, or, in the good-quality usage, anything but the bitrate, the quantizer window and the
+     * quality level
      * @throws IllegalStateException if the encoder is closed
      */
     public void reconfigure(Vp8EncoderOptions options) {
@@ -292,11 +467,25 @@ public final class Vp8Encoder implements VideoEncoder {
             throw new IllegalStateException("encoder is closed");
         }
         var current = this.options;
-        if (!options.timeBase().equals(current.timeBase()) || options.temporalLayers() != current.temporalLayers()
+        if (options.usage() != current.usage() || !options.timeBase().equals(current.timeBase())
+                || options.temporalLayers() != current.temporalLayers()
                 || options.tokenPartitions() != current.tokenPartitions() || options.threads() != current.threads()
-                || options.errorResilient() != current.errorResilient() || !options.limits().equals(current.limits())) {
-            throw new IllegalArgumentException("the time base, temporal layers, token partitions, threads, error "
-                    + "resilience and limits of a running vp8 encoder cannot change");
+                || options.errorResilient() != current.errorResilient() || !options.limits().equals(current.limits())
+                || options.alpha() != current.alpha() || options.alphaQuality() != current.alphaQuality()) {
+            throw new IllegalArgumentException("the usage, time base, temporal layers, token partitions, threads, "
+                    + "error resilience, limits and alpha stream of a running vp8 encoder cannot change");
+        }
+        if (good != null) {
+            var retargeted = options.toBuilder().bitrate(current.bitrate())
+                    .quantizers(current.minQuantizer(), current.maxQuantizer()).cqLevel(current.cqLevel()).build();
+            if (!retargeted.equals(current)) {
+                throw new IllegalArgumentException("a running good-quality vp8 encoder changes only its bitrate, "
+                        + "quantizer window and quality level");
+            }
+            this.options = options;
+            good.retarget(options.bitrate(), GoodEncoder.qindexOf(options.minQuantizer()),
+                    GoodEncoder.qindexOf(options.maxQuantizer()), GoodEncoder.qindexOf(options.cqLevel()));
+            return;
         }
         this.options = options;
         clock.clock().setFrameRate(options.frameRate());
@@ -321,6 +510,10 @@ public final class Vp8Encoder implements VideoEncoder {
      * {@return a snapshot of the encoder's counters and rate control state}
      */
     public Vp8EncoderStats stats() {
+        if (good != null) {
+            return new Vp8EncoderStats(clock.framesEncoded(), clock.keyFramesEncoded(), 0,
+                    clock.bytesEncoded() + hiddenBytes, good.lastQindex(), 0, 0);
+        }
         return new Vp8EncoderStats(clock.framesEncoded(), clock.keyFramesEncoded(), clock.framesDropped(),
                 clock.bytesEncoded(), encoder.lastQuantizer(), encoder.lastLayer(), encoder.bufferLevel());
     }
@@ -334,5 +527,8 @@ public final class Vp8Encoder implements VideoEncoder {
     @Override
     public void close() {
         closed = true;
+        if (alpha != null) {
+            alpha.close();
+        }
     }
 }

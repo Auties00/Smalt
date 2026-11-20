@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.capture.internal.convert;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
@@ -25,7 +26,6 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks the capture conversion kernels: the scalar kernel bit for bit against {@link ImageOps#toYuv}
@@ -218,7 +218,7 @@ class ConversionKernelTest {
         private final ScalarConversionKernel scalar = new ScalarConversionKernel();
 
         private ConversionKernel vector() {
-            assumeTrue(Simd.ENABLED, "the Vector API is not enabled");
+            Skip.unlessVector(Simd.ENABLED);
             return VectorConversionKernel.create();
         }
 

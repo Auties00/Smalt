@@ -112,8 +112,11 @@ final class VectorAc3Kernel implements Ac3Kernel {
 
     /**
      * The scalar reference used for loop remainders.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarAc3Kernel scalar = new ScalarAc3Kernel();
+    private static final ScalarAc3Kernel SCALAR = new ScalarAc3Kernel();
 
     /**
      * Creates the kernel.
@@ -161,7 +164,7 @@ final class VectorAc3Kernel implements Ac3Kernel {
     @Override
     public void butterflies(float[] re, float[] im, float[] cos, float[] sin, int half, int length) {
         if (half < LANES) {
-            scalar.butterflies(re, im, cos, sin, half, length);
+            SCALAR.butterflies(re, im, cos, sin, half, length);
             return;
         }
         for (var start = 0; start < length; start += 2 * half) {
@@ -188,7 +191,7 @@ final class VectorAc3Kernel implements Ac3Kernel {
     public void butterflyPair(float[] re, float[] im, float[] cos1, float[] sin1, float[] cos2, float[] sin2,
                               int half, int length) {
         if (half < LANES) {
-            scalar.butterflyPair(re, im, cos1, sin1, cos2, sin2, half, length);
+            SCALAR.butterflyPair(re, im, cos1, sin1, cos2, sin2, half, length);
             return;
         }
         for (var start = 0; start < length; start += 4 * half) {
@@ -242,7 +245,7 @@ final class VectorAc3Kernel implements Ac3Kernel {
     @Override
     public void firstStages(float[] re, float[] im, float[] cos, float[] sin, int length) {
         if (!IN_VECTOR_STAGES) {
-            scalar.firstStages(re, im, cos, sin, length);
+            SCALAR.firstStages(re, im, cos, sin, length);
             return;
         }
         for (var i = 0; i < length; i += LANES) {
@@ -339,7 +342,7 @@ final class VectorAc3Kernel implements Ac3Kernel {
                             .lanewise(VectorOperators.MUL, factor))
                     .intoArray(out, outOffset + i);
         }
-        scalar.scale(in, inOffset + bound, gain, out, outOffset + bound, count - bound);
+        SCALAR.scale(in, inOffset + bound, gain, out, outOffset + bound, count - bound);
     }
 
     @Override
@@ -352,6 +355,6 @@ final class VectorAc3Kernel implements Ac3Kernel {
                     .lanewise(VectorOperators.MUL, factor);
             FLOAT_VECTOR.cast(sum.lanewise(VectorOperators.ADD, term)).intoArray(out, outOffset + i);
         }
-        scalar.accumulate(in, inOffset + bound, gain, out, outOffset + bound, count - bound);
+        SCALAR.accumulate(in, inOffset + bound, gain, out, outOffset + bound, count - bound);
     }
 }

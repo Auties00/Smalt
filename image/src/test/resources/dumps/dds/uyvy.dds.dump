@@ -1,0 +1,13 @@
+# image dump of dds/uyvy.dds; regenerate with -Dsmalt.test.updateDumps=true
+format DDS
+info ImageInfo[format=DDS, width=23, height=16, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 23x16 rgba8 alpha=false crc=a06b83c4
+  format=DDS orientation=NORMAL source=23x16
+  icc=none exif=none xmp=none
+  profile=none
+scaled 5x4
+picture 23x16 rgba8 alpha=false crc=a06b83c4
+  format=DDS orientation=NORMAL source=23x16
+  icc=none exif=none xmp=none
+  profile=none

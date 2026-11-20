@@ -169,6 +169,7 @@ final class ChannelDecoder {
         var maxPrev = Math.min(tree.maxPrev(), prev.length);
         var props = new int[LOCAL_PROPERTIES + 4 * Math.max(tree.maxPrev(), 0)];
         var weighted = tree.usesWeighted() ? new WeightedPredictor(wp, width) : null;
+        var lookup = Predictors.usesGradientLookup(property, value, left, right, multiplier, 0, -1, -1);
         for (var y = 0; y < height; y++) {
             var row = y * width;
             var prevGrad = 0;
@@ -193,7 +194,7 @@ final class ChannelDecoder {
                 props[6] = n;
                 props[7] = w;
                 props[8] = w - prevGrad;
-                props[9] = grad;
+                props[9] = lookup ? Predictors.lookupGradient(n, w, nw) : grad;
                 props[10] = w - nw;
                 props[11] = nw - n;
                 props[12] = n - ne;

@@ -15,7 +15,7 @@ import java.util.Objects;
  * image (format, size, bit depth, transparency, orientation, animation frame count and loops) or
  * a container (format, duration, overall bit rate, metadata tags, chapters, cover art, and per
  * track the codec with its profile and level, the picture size, orientation, frame rate, sample
- * aspect ratio, color description with HDR metadata and chroma siting, bit depth, the sampling
+ * aspect ratio, scan, color description with HDR metadata and chroma siting, bit depth, the sampling
  * rate, channels and bits per sample, the language and the track's tags). No pixel or sample is
  * decoded; the demuxer reads the container headers, as opening it for playback does, and the
  * codec configuration records are parsed in core, so a probe needs no codec artifact.

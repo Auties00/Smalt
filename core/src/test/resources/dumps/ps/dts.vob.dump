@@ -1,0 +1,73 @@
+# demux dump of ps/dts.vob; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_PS
+duration 405333
+seekable true
+track 224 VIDEO MPEG2_VIDEO timebase=1/90000 duration=? config=22:647584fe
+  video 160x120 orientation=NORMAL rate=25/1 sar=1/1
+track 392 AUDIO DTS timebase=1/48000 duration=? config=none
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 48
+0 t392 pts=0 dts=0 dur=512 flags=KEY size=1884 crc=475310f2
+1 t224 pts=0 dts=-3600 dur=3600 flags=KEY size=3465 crc=20b3bbc9
+2 t224 pts=10800 dts=0 dur=3600 flags=- size=1829 crc=64250370
+3 t224 pts=3600 dts=3600 dur=3600 flags=- size=1131 crc=7ca22291
+4 t392 pts=512 dts=512 dur=512 flags=KEY size=1884 crc=3dfad8a9
+5 t224 pts=7200 dts=7200 dur=3600 flags=- size=902 crc=53bebfc3
+6 t224 pts=21600 dts=10800 dur=3600 flags=KEY size=3553 crc=cd6bd5c8
+7 t224 pts=14400 dts=14400 dur=3600 flags=- size=1173 crc=3c241429
+8 t224 pts=18000 dts=18000 dur=3600 flags=- size=1090 crc=e93d2ba8
+9 t224 pts=32400 dts=21600 dur=3600 flags=KEY size=3639 crc=6ceedc35
+10 t392 pts=1024 dts=1024 dur=512 flags=KEY size=1884 crc=e094b516
+11 t392 pts=1536 dts=1536 dur=512 flags=KEY size=1884 crc=42623cf9
+12 t392 pts=2048 dts=2048 dur=512 flags=KEY size=1884 crc=a69f3760
+13 t392 pts=2560 dts=2560 dur=512 flags=KEY size=1884 crc=d8012e0c
+14 t392 pts=3072 dts=3072 dur=512 flags=KEY size=1884 crc=a388ca55
+15 t392 pts=3584 dts=3584 dur=512 flags=KEY size=1884 crc=1a3b4062
+16 t392 pts=4096 dts=4096 dur=512 flags=KEY size=1884 crc=ef1c3969
+17 t392 pts=4608 dts=4608 dur=512 flags=KEY size=1884 crc=ad9e6362
+18 t392 pts=5120 dts=5120 dur=512 flags=KEY size=1884 crc=c74674e4
+19 t392 pts=5632 dts=5632 dur=512 flags=KEY size=1884 crc=1166f764
+20 t392 pts=6144 dts=6144 dur=512 flags=KEY size=1884 crc=753d8c00
+21 t392 pts=6656 dts=6656 dur=512 flags=KEY size=1884 crc=9c2da370
+22 t392 pts=7168 dts=7168 dur=512 flags=KEY size=1884 crc=5aa3f201
+23 t392 pts=7680 dts=7680 dur=512 flags=KEY size=1884 crc=257cc394
+24 t392 pts=8192 dts=8192 dur=512 flags=KEY size=1884 crc=69d6f78c
+25 t392 pts=8704 dts=8704 dur=512 flags=KEY size=1884 crc=112a31f1
+26 t392 pts=9216 dts=9216 dur=512 flags=KEY size=1884 crc=ef2686fa
+27 t392 pts=9728 dts=9728 dur=512 flags=KEY size=1884 crc=a1a0227e
+28 t392 pts=10240 dts=10240 dur=512 flags=KEY size=1884 crc=7b9af24f
+29 t392 pts=10752 dts=10752 dur=512 flags=KEY size=1884 crc=b9732e3b
+30 t392 pts=11264 dts=11264 dur=512 flags=KEY size=1884 crc=d6ad671d
+31 t392 pts=11776 dts=11776 dur=512 flags=KEY size=1884 crc=0ac361ab
+32 t392 pts=12288 dts=12288 dur=512 flags=KEY size=1884 crc=4a2e7ca5
+33 t392 pts=12800 dts=12800 dur=512 flags=KEY size=1884 crc=18b7710d
+34 t392 pts=13312 dts=13312 dur=512 flags=KEY size=1884 crc=5abf7848
+35 t392 pts=13824 dts=13824 dur=512 flags=KEY size=1884 crc=73571f77
+36 t392 pts=14336 dts=14336 dur=512 flags=KEY size=1884 crc=48000939
+37 t392 pts=14848 dts=14848 dur=512 flags=KEY size=1884 crc=8cfb9602
+38 t392 pts=15360 dts=15360 dur=512 flags=KEY size=1884 crc=9e8916c1
+39 t392 pts=15872 dts=15872 dur=512 flags=KEY size=1884 crc=2c6b445c
+40 t392 pts=16384 dts=16384 dur=512 flags=KEY size=1884 crc=47241d87
+41 t392 pts=16896 dts=16896 dur=512 flags=KEY size=1884 crc=cf64ba44
+42 t392 pts=17408 dts=17408 dur=512 flags=KEY size=1884 crc=8b5691fd
+43 t392 pts=17920 dts=17920 dur=512 flags=KEY size=1884 crc=2520dacf
+44 t392 pts=18432 dts=18432 dur=512 flags=KEY size=1884 crc=6075ef73
+45 t224 pts=25200 dts=25200 dur=3600 flags=- size=1404 crc=da7ee13c
+46 t224 pts=28800 dts=28800 dur=3600 flags=- size=1311 crc=d67c561e
+47 t392 pts=18944 dts=18944 dur=512 flags=KEY size=1884 crc=813a6c3f
+seek 0: t224@0 t392@0
+seek 135111: t224@0 t392@12
+seek 270222: t224@4 t392@25
+seek 405334: end
+seek 405333: t224@end t392@37
+seek -1000000: t224@0 t392@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_PS
+  duration -1
+  seekable false
+  track 224 VIDEO MPEG2_VIDEO timebase=1/90000 duration=? config=22:647584fe
+    video 160x120 orientation=NORMAL rate=25/1 sar=1/1
+  track 392 AUDIO DTS timebase=1/48000 duration=? config=none
+    audio rate=48000 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

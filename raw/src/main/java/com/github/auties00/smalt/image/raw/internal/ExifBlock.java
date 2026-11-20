@@ -145,6 +145,8 @@ final class ExifBlock {
                 }
                 entries.add(new Entry(tag, type, count, value));
             }
+        } catch (MediaException.Io exception) {
+            throw exception;
         } catch (MediaException exception) {
             // an unreadable value is dropped
         }

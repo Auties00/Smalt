@@ -1,0 +1,68 @@
+# H.264 4:4:4 and lossless streams, self-generated for H264Chroma444Test. Columns:
+# name	sha256	bytes	chroma luma/chroma depth, size, frames	encoder parameters
+#
+# The JM streams (names starting with c, l and q) were encoded with the JM reference encoder 19.1 (lencod,
+# jvet/JM master 8b34eee, built from source) from its cfg/encoder.cfg with YUVFormat set to the chroma format,
+# ProfileIDC=244, LevelIDC=30, HierarchicalCoding=0, InputFile holding ffmpeg 7.1's
+# "testsrc2=size=WxH:rate=25,noise=alls=10:allf=t+u" in the 16-bit planar format of the chroma format with
+# each plane shifted right to its bit depth (8-bit samples when both depths are 8), SourceBitDepth* and
+# OutputBitDepth* set to the depths, and the parameters below; QmatrixFile=q_matrix444.cfg is cfg/q_matrix.cfg
+# with distinct 8x8 Cb and Cr lists (INTRA8X8_CHROMAU 10+3x+2y, INTER8X8_CHROMAU 40-2x+3y, INTRA8X8_CHROMAV
+# 12+4((x+y)%5)+x, INTER8X8_CHROMAV 20+5(y%3)+2(x%4) at column x, row y). The streams marked "pcm source" use
+# "testsrc2=size=80x64:rate=25,split[a][b];[b]crop=40:64:40:0,noise=alls=100:allf=t+u[n];[a][n]overlay=40:0",
+# so the noisy right half codes as I_PCM ("left pcm source": the left 32 columns, crop=32:64:0:0 and
+# overlay=0:0; "interlaced pcm source": "testsrc2=size=80x32:rate=50,tinterlace=mode=merge,split..." with the
+# overlay of the right half). The JM decoder (ldecod) reproduces each encoder reconstruction, the expected
+# hashes in frames.tsv are its output, FFmpeg's output matches for every stream with equal depths, and the
+# lossless streams decode to their encoder input exactly.
+# The separate-color-plane streams (names starting with m) were made by encoding each plane of such a 4:4:4
+# source as a 4:0:0 stream with the JM encoder (the same parameters for the three planes) and merging the
+# three into one stream with separate_colour_plane_flag: profile_idc 244, chroma_format_idc 3, the absent
+# Cb and Cr 8x8 scaling lists, colour_plane_id inserted in every slice header, and the slices of each picture
+# written Y, Cb, Cr. Each plane decodes as its monochrome stream does (ITU-T H.264 8, separate_colour_plane_flag)
+# except for the choice of scaling lists, so the expected hashes are those of the three JM encoder
+# reconstructions stacked, or, for the stream with scaling matrices, which each plane takes from its own lists,
+# the output of the JM decoder. The JM 19.1 decoder agrees on the progressive streams without temporal direct
+# prediction, fails on field pictures and differs on MBAFF with I_PCM and on temporal direct prediction of the
+# Cb and Cr planes.
+# The x264 streams (names starting with x) were encoded by FFmpeg 7.1 with libx264 (core 164 r3192) or
+# libx264rgb from "testsrc2=size=WxH:rate=25,noise=alls=12:allf=t+u" (the fade-in source:
+# "testsrc2=size=96x64:rate=25" filtered by "fade=in:0:8,noise=alls=8:allf=t"); FFmpeg and the JM decoder agree on
+# every frame, and the lossless ones decode to their source exactly.
+# frames.tsv also holds the hashes of the ITU-T Professional_profiles 4:4:4 conformance streams, which come
+# without a reference YUV: the output of the JM decoder in Y, Cb, Cr order (JM writes the planes of streams with
+# matrix_coefficients 0 as R, G, B), which FFmpeg's output matches for the streams it decodes.
+c8-cabac-pcm	135dc34b833b514d680895b7d34534be18ac49c085bd8cafe652c920d7a9984a	37082	4:4:4 8/8, 80x64, 4 (pcm source)	SymbolMode=1 NumberBFrames=1 QPISlice=0 QPPSlice=2 QPBSlice=4 Transform8x8Mode=1 ReferenceReorder=0 PocMemoryManagement=0
+c8-cabac-pcm-left	e3a60d4624941fed6ecd4384381194a3c639bd0e6f66052f6b9d2942aa8ea222	21202	4:4:4 8/8, 80x64, 3 (left pcm source)	SymbolMode=1 NumberBFrames=0 QPISlice=6 QPPSlice=8 Transform8x8Mode=2 ReferenceReorder=0 PocMemoryManagement=0
+c10-cavlc-pcm	d7e771d8d3b9bdb6e8adb9f7cfe473e8c327bd80372bf9e04b5404fc1c606e7b	50448	4:4:4 10/10, 80x64, 4 (pcm source)	SymbolMode=0 NumberBFrames=1 QPISlice=-12 QPPSlice=-10 QPBSlice=-8 Transform8x8Mode=1 ReferenceReorder=0 PocMemoryManagement=0
+c10-8-cabac	f7065d265c911dfdf935f93a964f072c99438d927547b70b42dfb062954f9e0f	24026	4:4:4 10/8, 96x64, 6	SymbolMode=1 NumberBFrames=2 QPISlice=12 QPPSlice=14 QPBSlice=16 Transform8x8Mode=1 CbQPOffset=-4 CrQPOffset=3
+c8-12-cavlc	c3f1bb03e6c98989604c835d6de93b555ea7d1e9e402c44f370962c4ba90fa25	49333	4:4:4 8/12, 64x48, 4	SymbolMode=0 NumberBFrames=1 QPISlice=16 QPPSlice=18 QPBSlice=20 Transform8x8Mode=1 CbQPOffset=6 CrQPOffset=-5
+c12-cavlc-scaling	97ec9ef7b9c7d6839a148002a6a377692e159dfb8e43b4208ffe8b7df3bb0d1d	41000	4:4:4 12/12, 96x64, 6	SymbolMode=0 NumberBFrames=2 QPISlice=6 QPPSlice=8 QPBSlice=10 DirectModeType=0 ScalingMatrixPresentFlag=3 QmatrixFile=q_matrix444.cfg ScalingListPresentFlag10=0 ScalingListPresentFlag11=1 Transform8x8Mode=1 CbQPOffset=5 CrQPOffset=-6
+c8-cabac-scaling-pps	ebe0662cf41d9dfa41dcc908c9e5f6174c3cb29f7ce13d39664e2ed487d5a615	13561	4:4:4 8/8, 96x64, 6	SymbolMode=1 NumberBFrames=1 QPISlice=18 QPPSlice=20 QPBSlice=22 ScalingMatrixPresentFlag=2 QmatrixFile=q_matrix444.cfg ScalingListPresentFlag8=0 ScalingListPresentFlag9=2 Transform8x8Mode=1
+c14-paff	4e0351247fc7ec0dfec0bda17e19b8ddbb9b818296c5327eb12c0e8ab0e4c7e9	46086	4:4:4 14/14, 96x96, 6	SymbolMode=0 NumberBFrames=1 PicInterlace=2 QPISlice=10 QPPSlice=12 QPBSlice=14 ReferenceReorder=0 PocMemoryManagement=0 Transform8x8Mode=1
+c10-fields-temporal	51983f81a74059fae9f39352a039ad409e923b6be874da0f9700cc9d6120f4be	8042	4:4:4 10/10, 64x64, 5	SymbolMode=0 NumberBFrames=1 PicInterlace=1 QPISlice=20 QPPSlice=22 QPBSlice=24 DirectModeType=0 ReferenceReorder=0 PocMemoryManagement=0
+c8-cabac-cip-slices	61993be1ec5587a76a9faf359b66464ec7d77e862937493967c82e6735c3fe6a	7377	4:4:4 8/8, 96x64, 6	SymbolMode=1 NumberBFrames=0 QPISlice=24 QPPSlice=26 UseConstrainedIntraPred=1 RandomIntraMBRefresh=4 SliceMode=1 SliceArgument=5 Transform8x8Mode=1 DFParametersFlag=1 DFAlphaRefPSlice=3 DFBetaRefPSlice=-2
+c8-cavlc-intra	e10f4cd65402342c53d930bb3d8c329639f3ee9e712fa7c29c80e2efa326a736	24251	4:4:4 8/8, 64x64, 4	IntraProfile=1 SymbolMode=0 IntraPeriod=1 IDRPeriod=1 NumberBFrames=0 QPISlice=8 Transform8x8Mode=1
+m8-cavlc-sep	aede3ea78a92c6e88eb4a6ce2db1225523fdb051beeae70859d46ff26f4ea145	3693	separate planes from 4:0:0, 8 bits, 64x48, 4	EnableIPCM=0 SymbolMode=0 NumberBFrames=1 QPISlice=20 QPPSlice=22 QPBSlice=24 ReferenceReorder=0 PocMemoryManagement=0
+m10-cabac-mbaff-pcm-sep	c7849fb5da5dabcb8e0fe07420a3ebf6125f31ba7056ea3dd95077da19ceb33d	45908	separate planes from 4:0:0, 10 bits, 80x64, 4 (interlaced pcm source)	SymbolMode=1 NumberBFrames=1 MbInterlace=2 QPISlice=-12 QPPSlice=-10 QPBSlice=-8 Transform8x8Mode=1 ReferenceReorder=0 PocMemoryManagement=0
+m12-fields-wp-sep	27b84c72b8e81473bd86ff94b4b6f8bf949010442d9485ac60bde9729cf51611	30339	separate planes from 4:0:0, 12 bits, 64x64, 6	EnableIPCM=0 SymbolMode=0 NumberBFrames=1 PicInterlace=1 QPISlice=6 QPPSlice=8 QPBSlice=10 WeightedPrediction=1 WeightedBiprediction=1 ReferenceReorder=0 PocMemoryManagement=0
+m8-cabac-slices-sep	0c05709da586e9d8f2616a3adf4b8abdbf760c216b8415b46a098721d305fa6e	6220	separate planes from 4:0:0, 8 bits, 96x64, 6	SymbolMode=1 NumberBFrames=2 QPISlice=24 QPPSlice=26 QPBSlice=28 SliceMode=1 SliceArgument=7 DirectModeType=0 Transform8x8Mode=1
+m14-cavlc-fields-sep	70359d34044361fa6434b6113c7a735b1b456a885b0f5c1483ebd68b6efcba5e	34170	separate planes from 4:0:0, 14 bits, 64x64, 5	EnableIPCM=0 SymbolMode=0 NumberBFrames=1 PicInterlace=1 QPISlice=0 QPPSlice=2 QPBSlice=4 ReferenceReorder=0 PocMemoryManagement=0
+m8-cavlc-scaling-sep	9fc46c0685539c4c2773d728561076499a4ed36b90e50ea6fc5470c7acf622b8	4960	separate planes from 4:0:0, 8 bits, 64x48, 4 (hashes of the JM decoder)	EnableIPCM=0 SymbolMode=0 NumberBFrames=1 QPISlice=18 QPPSlice=20 QPBSlice=22 ScalingMatrixPresentFlag=1 Transform8x8Mode=1 ReferenceReorder=0 PocMemoryManagement=0
+m8-lossless-mbaff-sep	516af1b358c2bb7334ebfb0d1797ec3af358cd5e0d80cf60911966f9519cb27b	29128	separate planes from 4:0:0, 8 bits, 64x64, 4 (lossless)	LosslessCoding=1 SymbolMode=1 NumberBFrames=1 MbInterlace=2 QPISlice=0 QPPSlice=0 QPBSlice=0 Transform8x8Mode=1 ReferenceReorder=0 PocMemoryManagement=0
+l8-444-cavlc	caa9ebfaa66bf20989a52d8736a6d914dada8fa48ea1e19652c8dbae8588b132	20813	4:4:4 8/8, 64x48, 4 (lossless)	LosslessCoding=1 SymbolMode=0 NumberBFrames=1 QPISlice=0 QPPSlice=0 QPBSlice=0 Transform8x8Mode=1
+l10-444-cabac-fields	4b815cf8bb82e8b4b78672bf327da775248685a07b5f800bc3831df680edd8de	31936	4:4:4 10/10, 64x32, 4 (lossless)	LosslessCoding=1 SymbolMode=1 NumberBFrames=1 PicInterlace=1 QPISlice=-12 QPPSlice=-12 QPBSlice=-12 Transform8x8Mode=1 ReferenceReorder=0 PocMemoryManagement=0
+l8-420-cabac	b44387d2e0639164164dc78be28d232ad0ab586883d904c457028615cf000776	10937	4:2:0 8/8, 64x48, 4 (lossless)	LosslessCoding=1 SymbolMode=1 NumberBFrames=1 QPISlice=0 QPPSlice=0 QPBSlice=0 Transform8x8Mode=1
+l10-420-cavlc	032a67df8be715a353f1ddd5c4ca4440852abff2bf0e0bdd801f0d9041742b9e	18038	4:2:0 10/10, 64x48, 4 (lossless)	LosslessCoding=1 SymbolMode=0 NumberBFrames=1 QPISlice=-12 QPPSlice=-12 QPBSlice=-12
+l10-422-cabac	ba1a0b60df7c93b4b923ad21819ef50d3151e6aae10127c7a7e23246fd073a79	29854	4:2:2 10/10, 64x48, 4 (lossless)	LosslessCoding=1 SymbolMode=1 NumberBFrames=1 QPISlice=-12 QPPSlice=-12 QPBSlice=-12 Transform8x8Mode=1
+l8-422-cavlc-fields	578716bc4f4e6c6fa3c6224847a9be9ae45c73393938195c9f08c18091def39c	23000	4:2:2 8/8, 64x64, 4 (lossless)	LosslessCoding=1 SymbolMode=0 NumberBFrames=1 PicInterlace=1 QPISlice=0 QPPSlice=0 QPBSlice=0 ReferenceReorder=0 PocMemoryManagement=0
+l8-444-pcm	53ef5d88a5b8e0eece80f45dcf5073a5a582ca3501a4173959b3f94ec7eeaead	37967	4:4:4 8/8, 80x64, 4 (pcm source, lossless)	LosslessCoding=1 SymbolMode=0 NumberBFrames=0 QPISlice=0 QPPSlice=0
+q8-444-mixed-lossless	c7271f4affe3ff28b822ec229470cca1a0e3a85099e80f950e2037c7444c2199	26583	4:4:4 8/8, 64x48, 6	LosslessCoding=1 SymbolMode=1 NumberBFrames=1 QPISlice=0 QPPSlice=4 QPBSlice=0 Transform8x8Mode=1
+x8-mbaff-wp	07e56d55dbbf65fc128032f2b8a1dfcb0012321d42ba67c91b9c0b159c5d6ecc	6689	yuv444p, 96x64, 8	libx264 interlaced=1:bframes=2:weightp=2:weightb=1:ref=3:qp=26:cabac=0
+x10-mbaff-cabac-wp	c7e53d6d0c8e4b8b51defa188330f0491bad7f45368bfeaac5ae191038034eed	27781	yuv444p10le, 96x64, 8	libx264 interlaced=1:bframes=2:weightp=2:weightb=1:ref=3:qp=28:b-pyramid=normal
+x8-lossless-mbaff	674b32fe8013146acf08e42d63d2045c7bb0c802d568f3ba6da30e915a7d846a	44030	yuv444p, 96x64, 4 (lossless)	libx264 interlaced=1:bframes=2:qp=0
+x8-cavlc-8x8-wp	ac14fbfaafe32b958cea7d884c508487a19118fcb79511d4c46517f6d3c8af6a	8757	yuv444p, 96x64, 8	libx264 cabac=0:8x8dct=1:bframes=2:weightp=1:direct=temporal:qp=24
+x8-rgb-lossless	224709a34126d05211287dc4e7c26470baddff3aa0e7ec39879f03c830665562	47113	gbrp, 96x64, 4 (lossless)	libx264rgb qp=0:bframes=1
+x8-rgb	a088ac898c99aa1b6f9a8505debfd876909c1b4e1ebd6d4587434e34fae702eb	23101	gbrp, 96x64, 6	libx264rgb qp=22:bframes=2:weightp=2
+x10-mbaff-deblock	9542f99d4b643f34a9a0ee015b84014faec8751acbdd9e47f7434d65f17b86de	43912	yuv444p10le, 192x128, 4	libx264 interlaced=1:bframes=1:qp=30
+x8-fade-wp	f3533e2e6a6b3d4ef89cefca97d106ba6fbdc760f451847735d791827deac396	11724	yuv444p, 96x64, 8 (fade-in source)	libx264 bframes=2:weightp=2:weightb=1:qp=24:ref=3

@@ -4,7 +4,8 @@ package com.github.auties00.smalt.image.color;
  * Transforms pixels through a lookup table sampled from a linked pipeline.
  *
  * <p>The pipeline is sampled on a regular grid of 16-bit coordinates (33 points per input for one
- * to three inputs, 17 for four, 7 for more) and pixels are interpolated in the grid: linearly for
+ * to three inputs, 17 for four, 7 for more; a pipeline whose grid would exceed {@link #MAX_SAMPLES} samples is
+ * evaluated per pixel by {@link PipelineEngine} instead) and pixels are interpolated in the grid: linearly for
  * one input, tetrahedrally for three, and for four inputs tetrahedrally in the last three
  * between the two grid planes around the first. When the device white of the source does not map
  * exactly to the device white of the target, the grid node at the source white is set to the
@@ -14,7 +15,9 @@ package com.github.auties00.smalt.image.color;
  *
  * @implNote This implementation follows Little CMS 2.17's {@code OptimizeByResampling}, {@code XFormSampler16},
  * {@code FixWhiteMisalignment} and {@code PatchLUT} ({@code cmsopt.c}) and {@code _cmsReasonableGridpointsByColorspace}
- * ({@code cmspcs.c}), with the default flags.
+ * ({@code cmspcs.c}), with the default flags. Little CMS also samples the grids of nine inputs, and those of eight
+ * inputs with more than five outputs, up to its 512 MiB allocation limit; this implementation evaluates them per pixel
+ * instead, which is more accurate and takes no table of hundreds of megabytes.
  */
 final class ClutEngine implements ColorEngine {
     /**
@@ -53,6 +56,30 @@ final class ClutEngine implements ColorEngine {
      * the last node.
      */
     private final int[][] steps;
+
+    /**
+     * The largest number of 16-bit samples of a grid, {@code 2^25}: enough for eight inputs at 7 points and three
+     * outputs.
+     */
+    private static final long MAX_SAMPLES = 1L << 25;
+
+    /**
+     * Returns whether the grid of a pipeline holds at most {@link #MAX_SAMPLES} samples.
+     *
+     * @param pipeline the linked pipeline to sample
+     * @return {@code true} when the pipeline can be sampled into a grid
+     */
+    static boolean fits(Pipeline pipeline) {
+        var points = gridPoints(pipeline.inputs(), pipeline.stages().isEmpty());
+        var samples = (long) pipeline.outputs();
+        for (var i = 0; i < pipeline.inputs(); i++) {
+            samples *= points;
+            if (samples > MAX_SAMPLES) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /**
      * Samples a pipeline into a grid.

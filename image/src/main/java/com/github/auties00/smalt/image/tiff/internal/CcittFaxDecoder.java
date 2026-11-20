@@ -69,7 +69,7 @@ public final class CcittFaxDecoder {
     /**
      * White terminating codes for runs 0 to 63 (ITU-T T.4 table 2).
      */
-    private static final String[] WHITE_TERMINATING = {
+    static final String[] WHITE_TERMINATING = {
             "00110101", "000111", "0111", "1000", "1011", "1100", "1110", "1111",
             "10011", "10100", "00111", "01000", "001000", "000011", "110100", "110101",
             "101010", "101011", "0100111", "0001100", "0001000", "0010111", "0000011", "0000100",
@@ -83,7 +83,7 @@ public final class CcittFaxDecoder {
     /**
      * White make-up codes for runs 64 to 1728 in steps of 64 (ITU-T T.4 table 3).
      */
-    private static final String[] WHITE_MAKEUP = {
+    static final String[] WHITE_MAKEUP = {
             "11011", "10010", "010111", "0110111", "00110110", "00110111", "01100100", "01100101",
             "01101000", "01100111", "011001100", "011001101", "011010010", "011010011", "011010100", "011010101",
             "011010110", "011010111", "011011000", "011011001", "011011010", "011011011", "010011000", "010011001",
@@ -93,7 +93,7 @@ public final class CcittFaxDecoder {
     /**
      * Black terminating codes for runs 0 to 63 (ITU-T T.4 table 2).
      */
-    private static final String[] BLACK_TERMINATING = {
+    static final String[] BLACK_TERMINATING = {
             "0000110111", "010", "11", "10", "011", "0011", "0010", "00011",
             "000101", "000100", "0000100", "0000101", "0000111", "00000100", "00000111", "000011000",
             "0000010111", "0000011000", "0000001000", "00001100111", "00001101000", "00001101100", "00000110111", "00000101000",
@@ -107,7 +107,7 @@ public final class CcittFaxDecoder {
     /**
      * Black make-up codes for runs 64 to 1728 in steps of 64 (ITU-T T.4 table 3).
      */
-    private static final String[] BLACK_MAKEUP = {
+    static final String[] BLACK_MAKEUP = {
             "0000001111", "000011001000", "000011001001", "000001011011", "000000110011", "000000110100", "000000110101",
             "0000001101100", "0000001101101", "0000001001010", "0000001001011", "0000001001100", "0000001001101",
             "0000001110010", "0000001110011", "0000001110100", "0000001110101", "0000001110110", "0000001110111",
@@ -119,7 +119,7 @@ public final class CcittFaxDecoder {
      * Extended make-up codes shared by both colors, for runs 1792 to 2560 in steps of 64 (ITU-T
      * T.4 table 3).
      */
-    private static final String[] EXTENDED_MAKEUP = {
+    static final String[] EXTENDED_MAKEUP = {
             "00000001000", "00000001100", "00000001101", "000000010010", "000000010011", "000000010100", "000000010101",
             "000000010110", "000000010111", "000000011100", "000000011101", "000000011110", "000000011111"
     };
@@ -200,9 +200,9 @@ public final class CcittFaxDecoder {
     /**
      * Adds one run code to a run table.
      *
-     * @param table the table
-     * @param code  the code bits
-     * @param run   the run length, or {@link #EOL_RUN}
+     * @param table the lookup table, indexed by the next code bits, updated
+     * @param code the code bits
+     * @param run the run length, or {@link #EOL_RUN}
      * @throws IllegalStateException if the code collides with one already registered
      */
     private static void register(int[] table, String code, int run) {
@@ -221,7 +221,7 @@ public final class CcittFaxDecoder {
      * Adds one mode code to the mode table.
      *
      * @param code the code bits
-     * @param mode the mode
+     * @param mode the mode constant the code selects
      * @throws IllegalStateException if the code collides with one already registered
      */
     private static void registerMode(String code, int mode) {

@@ -23,7 +23,9 @@ import com.github.auties00.smalt.video.prores.ProResProfile;
  *           of the codec-independent decoder options to {@link ProResDecoderOptions}, so the
  *           registry decodes to 8-bit pictures unless asked otherwise. It encodes
  *           {@link ProResProfile#HQ} at the requested frame rate, bitrate (when positive) and
- *           thread count; real-time tuning does not apply to an intra-only codec.
+ *           thread count, with the color description when one is given (ProRes codes at least 10
+ *           bits whatever the bit depth); real-time tuning and the key frame settings do not apply to an intra-only
+ *           codec, whose every frame is a key frame.
  */
 public final class ProResCodecProvider implements VideoCodecProvider {
     /**
@@ -59,6 +61,7 @@ public final class ProResCodecProvider implements VideoCodecProvider {
         if (options.bitrate() > 0) {
             builder.bitrate(options.bitrate());
         }
+        options.color().ifPresent(builder::color);
         return new ProResEncoder(options.width(), options.height(), builder.build());
     }
 }

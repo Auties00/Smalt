@@ -1,0 +1,67 @@
+ink2	clrt	0	Cyan	57355,22711,28634
+ink2	clrt	1	Magenta	43407,49310,23149
+ink5	clrt	0	Cyan	57355,22711,28634
+ink5	clrt	1	Magenta	43407,49310,23149
+ink5	clrt	2	Yellow	62067,30409,51445
+ink5	clrt	3	Black	17745,33435,31073
+ink5	clrt	4	Orange	51305,37831,49876
+ink6-xyz	clrt	0	Cyan	16987,23288,25078
+ink6-xyz	clrt	1	Magenta	18504,11675,19610
+ink6-xyz	clrt	2	Yellow	25828,28485,5651
+ink6-xyz	clrt	3	Black	1674,1678,1820
+ink6-xyz	clrt	4	Orange	19487,17597,3036
+ink6-xyz	clrt	5	Green	14672,22732,8783
+ink7	clrt	0	Cyan	57355,22711,28634
+ink7	clrt	1	Magenta	43407,49310,23149
+ink7	clrt	2	Yellow	62067,30409,51445
+ink7	clrt	3	Black	17745,33435,31073
+ink7	clrt	4	Orange	51305,37831,49876
+ink7	clrt	5	Green	56811,18650,43061
+ink7	clrt	6	Violet	39655,42372,18894
+ink8	clrt	0	Black	17745,33435,31073
+ink8	clrt	1	Cyan	57355,22711,28634
+ink8	clrt	2	Magenta	43407,49310,23149
+ink8	clrt	3	Yellow	62067,30409,51445
+ink8	clrt	4	Orange	51305,37831,49876
+ink8	clrt	5	Green	56811,18650,43061
+ink8	clrt	6	Violet	39655,42372,18894
+ink8	clrt	7	Red	43452,44938,40950
+ink12	clrt	0	Cyan	57355,22711,28634
+ink12	clrt	1	Magenta	43407,49310,23149
+ink12	clrt	2	Yellow	62067,30409,51445
+ink12	clrt	3	Black	17745,33435,31073
+ink12	clrt	4	Orange	51305,37831,49876
+ink12	clrt	5	Green	56811,18650,43061
+ink12	clrt	6	Violet	39655,42372,18894
+ink12	clrt	7	Red	43452,44938,40950
+ink12	clrt	8	Blue	40744,34977,18648
+ink12	clrt	9	Light Cyan	61668,28613,30981
+ink12	clrt	10	Light Magenta	56421,38834,29187
+ink12	clrt	11	Gray	49901,33016,32458
+ink15	clrt	0	Cyan	57355,22711,28634
+ink15	clrt	1	Magenta	43407,49310,23149
+ink15	clrt	2	Yellow	62067,30409,51445
+ink15	clrt	3	Black	17745,33435,31073
+ink15	clrt	4	Orange	51305,37831,49876
+ink15	clrt	5	Green	56811,18650,43061
+ink15	clrt	6	Violet	39655,42372,18894
+ink15	clrt	7	Red	43452,44938,40950
+ink15	clrt	8	Blue	40744,34977,18648
+ink15	clrt	9	Light Cyan	61668,28613,30981
+ink15	clrt	10	Light Magenta	56421,38834,29187
+ink15	clrt	11	Gray	49901,33016,32458
+ink15	clrt	12	Light Gray	58602,32942,32724
+ink15	clrt	13	Gold	57467,33007,45588
+ink15	clrt	14	Silver	57567,32792,32294
+link-ink5-ink7	clrt	0	Cyan	57355,22711,28634
+link-ink5-ink7	clrt	1	Magenta	43407,49310,23149
+link-ink5-ink7	clrt	2	Yellow	62067,30409,51445
+link-ink5-ink7	clrt	3	Black	17745,33435,31073
+link-ink5-ink7	clrt	4	Orange	51305,37831,49876
+link-ink5-ink7	clot	0	Cyan	57355,22711,28634
+link-ink5-ink7	clot	1	Magenta	43407,49310,23149
+link-ink5-ink7	clot	2	Yellow	62067,30409,51445
+link-ink5-ink7	clot	3	Black	17745,33435,31073
+link-ink5-ink7	clot	4	Orange	51305,37831,49876
+link-ink5-ink7	clot	5	Green	56811,18650,43061
+link-ink5-ink7	clot	6	Violet	39655,42372,18894

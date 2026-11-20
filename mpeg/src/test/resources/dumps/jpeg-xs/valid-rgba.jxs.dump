@@ -1,0 +1,13 @@
+# image dump of jpeg-xs/valid-rgba.jxs; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG_XS
+info ImageInfo[format=JPEG_XS, width=40, height=24, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 40x24 rgba8 alpha=true crc=a92273d1
+  format=JPEG_XS orientation=NORMAL source=40x24
+  icc=none exif=none xmp=none
+  profile=none
+scaled 10x6
+picture 40x24 rgba8 alpha=true crc=a92273d1
+  format=JPEG_XS orientation=NORMAL source=40x24
+  icc=none exif=none xmp=none
+  profile=none

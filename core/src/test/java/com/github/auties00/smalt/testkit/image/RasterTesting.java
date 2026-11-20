@@ -1,9 +1,11 @@
 package com.github.auties00.smalt.testkit.image;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -38,6 +40,11 @@ public final class RasterTesting {
             System.arraycopy(picture.pixels(), y * picture.stride(), out, y * picture.width() * 4, picture.width() * 4);
         }
         return out;
+    }
+
+    /** Returns the tightly packed RGBA bytes of a picture that must be an 8-bit {@link RgbaPicture}. */
+    public static byte[] tight(Picture picture) {
+        return tight(org.junit.jupiter.api.Assertions.assertInstanceOf(RgbaPicture.class, picture));
     }
 
     /** Asserts two RGBA buffers are identical, reporting the first differing pixel. */
@@ -126,9 +133,7 @@ public final class RasterTesting {
     /** Writes bytes to a file under target/raster-tests and returns the path. */
     public static Path write(String name, byte[] data) {
         try {
-            var directory = Path.of("target", "raster-tests");
-            Files.createDirectories(directory);
-            var file = directory.resolve(name);
+            var file = Scratch.directory("raster-tests").resolve(name);
             Files.write(file, data);
             return file;
         } catch (IOException exception) {

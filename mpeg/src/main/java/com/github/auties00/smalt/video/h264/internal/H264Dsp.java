@@ -99,7 +99,7 @@ public abstract class H264Dsp {
      * @param dstOffset the index of the destination top-left sample
      * @param dstStride the destination row stride
      * @param width the block width: 2, 4 or 8
-     * @param height the block height: 2, 4 or 8
+     * @param height the block height: 2, 4 or 8, and 16 for 4:2:2 chroma
      * @param fracX the horizontal eighth-sample fraction, 0 to 7
      * @param fracY the vertical eighth-sample fraction, 0 to 7
      */
@@ -231,15 +231,17 @@ public abstract class H264Dsp {
     /**
      * Adds the inverse transforms of the four 4x4 blocks of an 8x8 chroma block none of which
      * has a non-zero AC coefficient: {@code (dc + 32) >> 6} of each block's DC coefficient (at
-     * {@code 0}, {@code 16}, {@code 32} and {@code 48}, blocks in raster order) to its samples,
-     * and clears the four coefficients.
+     * {@code coeffOffset}, {@code coeffOffset + 16}, {@code coeffOffset + 32} and
+     * {@code coeffOffset + 48}, blocks in raster order) to its samples, and clears the four
+     * coefficients.
      *
      * @param coefficients the scaled coefficients of the four blocks, 16 per block
+     * @param coeffOffset the index of the first block's coefficients
      * @param dst the prediction plane; receives the reconstruction
      * @param dstOffset the index of the top-left sample of the 8x8 block
      * @param dstStride the row stride
      */
-    public abstract void chromaDcAdd(int[] coefficients, byte[] dst, int dstOffset, int dstStride);
+    public abstract void chromaDcAdd(int[] coefficients, int coeffOffset, byte[] dst, int dstOffset, int dstStride);
 
     /**
      * Filters the samples across one vertical luma edge of 16 rows with boundary strengths below

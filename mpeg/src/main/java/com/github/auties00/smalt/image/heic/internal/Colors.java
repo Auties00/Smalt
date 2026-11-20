@@ -9,11 +9,10 @@ import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifMovie;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
-import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
 
 /**
  * Builds the {@link ColorInfo} of HEIC images and sequences from their color properties and the
- * video usability information of their HEVC streams.
+ * video usability information of their HEVC or AVC streams.
  *
  * <p>The color of a coded picture starts from its stream: each H.273 code point the VUI
  * signals, and the full range flag when the VUI carries a video signal type; a code point the
@@ -53,42 +52,48 @@ final class Colors {
     }
 
     /**
-     * Returns the color description an HEVC stream gives a decoded picture.
+     * The MIAF default color description: sRGB primaries and transfer, the BT.601 matrix and full
+     * range.
+     */
+    static final ColorInfo MIAF_DEFAULT = new ColorInfo(MatrixCoefficients.of(DEFAULT_MATRIX), ColorRange.FULL,
+            ColorPrimaries.of(DEFAULT_PRIMARIES), TransferCharacteristics.of(DEFAULT_TRANSFER));
+
+    /**
+     * Returns the color description a video stream gives a decoded picture.
      *
-     * @param frame the decoded picture
+     * @param primaries the {@code colour_primaries} of the stream, 2 when unspecified
+     * @param transfer the {@code transfer_characteristics} of the stream, 2 when unspecified
+     * @param matrix the {@code matrix_coefficients} of the stream, 2 when unspecified
+     * @param signalTypePresent whether the stream carries a video signal type
+     * @param fullRange the full range flag of the stream
+     * @param signaled the color description the decoder derived, whose transfer, chroma siting and
+     * high-dynamic-range metadata are kept
      * @return the description, with the MIAF defaults for what the stream leaves unspecified
      */
-    static ColorInfo of(HevcFrame frame) {
-        var sps = frame.sps;
-        var signaled = frame.color;
-        var primaries = sps.colorPrimaries != UNSPECIFIED ? sps.colorPrimaries : DEFAULT_PRIMARIES;
-        var matrix = sps.matrixCoefficients != UNSPECIFIED ? sps.matrixCoefficients : DEFAULT_MATRIX;
-        var transfer = sps.transferCharacteristics != UNSPECIFIED ? signaled.transfer()
-                : TransferCharacteristics.of(DEFAULT_TRANSFER);
-        var full = !sps.videoSignalTypePresent || sps.fullRange;
-        return new ColorInfo(MatrixCoefficients.of(matrix), full ? ColorRange.FULL : ColorRange.LIMITED,
-                ColorPrimaries.of(primaries), transfer)
+    static ColorInfo ofStream(int primaries, int transfer, int matrix, boolean signalTypePresent, boolean fullRange,
+                              ColorInfo signaled) {
+        var full = !signalTypePresent || fullRange;
+        return new ColorInfo(MatrixCoefficients.of(matrix != UNSPECIFIED ? matrix : DEFAULT_MATRIX),
+                full ? ColorRange.FULL : ColorRange.LIMITED,
+                ColorPrimaries.of(primaries != UNSPECIFIED ? primaries : DEFAULT_PRIMARIES),
+                transfer != UNSPECIFIED ? signaled.transfer() : TransferCharacteristics.of(DEFAULT_TRANSFER))
                 .withChromaSiting(signaled.chromaSiting())
                 .withMasteringDisplay(signaled.masteringDisplay().orElse(null))
                 .withContentLightLevel(signaled.contentLightLevel().orElse(null));
     }
 
     /**
-     * Returns whether the alpha samples of a decoded auxiliary picture are limited range.
+     * Returns the color of a decoded coded item with the color properties of the item applied.
      *
-     * <p>The range follows the rules of the color of a coded picture: an {@code nclx} color box
-     * decides, then the full range flag of the stream's video signal type, and full range
-     * otherwise.
-     *
-     * @param frame the decoded alpha picture
-     * @param nclx the {@code nclx} color box of the alpha item or track, or {@code null}
-     * @return {@code true} when the samples span the limited range and must be expanded
+     * @param frame the decoded picture
+     * @param item the coded item
+     * @return the description: {@code frame}'s, overridden by the item's {@code nclx},
+     * {@code clli} and {@code mdcv} properties, with the identity matrix and full range kept for
+     * RGB samples
      */
-    static boolean limitedAlpha(HevcFrame frame, HeifProperty.ColorNclx nclx) {
-        if (nclx != null) {
-            return !nclx.fullRange();
-        }
-        return frame.sps.videoSignalTypePresent && !frame.sps.fullRange;
+    static ColorInfo of(CodedFrame frame, HeifItem item) {
+        var color = override(frame.color(), item);
+        return frame.rgb() ? color.withMatrix(MatrixCoefficients.IDENTITY).withRange(ColorRange.FULL) : color;
     }
 
     /**

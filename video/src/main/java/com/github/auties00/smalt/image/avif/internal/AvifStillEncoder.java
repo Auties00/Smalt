@@ -1,15 +1,24 @@
-/* Ports libavif (src/write.c: avifEncoderAddImage, avifEncoderFinish, avifSetTileConfiguration and
-   avifImageExifOrientationToIrotImir). Copyright 2019 Joe Drago; BSD 2-Clause License. Modified for Smalt. */
+/* Ports libavif (src/write.c: avifEncoderAddImage, avifEncoderFinish and avifSetTileConfiguration). Copyright
+   2019 Joe Drago; BSD 2-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.image.avif.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorModel;
+import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
-import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.avif.AvifEncoderOptions;
+import com.github.auties00.smalt.image.gainmap.GainMap;
+import com.github.auties00.smalt.internal.heif.EncodeImage;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
+import com.github.auties00.smalt.internal.heif.HeifWriter;
 import com.github.auties00.smalt.video.av1.internal.DequantTables;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
 import com.github.auties00.smalt.video.av1.internal.encoder.StillFrameEncoder;
@@ -26,8 +35,7 @@ import java.util.List;
  * @implNote This implementation follows libavif's {@code avifEncoderAddImage} and
  * {@code avifEncoderFinish} ({@code src/write.c}, BSD-2): the quality to quantizer
  * mapping {@code ((100 - quality) * 63 + 50) / 100}, the property order of each item,
- * the {@code auxl}, {@code prem}, {@code dimg} and {@code cdsc} references, and the
- * Exif to rotation and mirroring mapping of {@code avifImageExifOrientationToIrotImir}.
+ * and the {@code auxl}, {@code prem}, {@code dimg} and {@code cdsc} references.
  */
 public final class AvifStillEncoder {
     /**
@@ -118,7 +126,28 @@ public final class AvifStillEncoder {
      * @return the file
      */
     public static byte[] encode(Picture picture, AvifEncoderOptions options) {
-        var image = EncodeImage.of(picture, options.chromaFormat().orElse(null), options.bitDepth().orElse(0),
+        return encode(picture, options, null, null);
+    }
+
+    /**
+     * Encodes a picture as an AVIF file, with a gain map.
+     *
+     * <p>The gain map is a hidden {@code av01} item, monochrome for a gray gain map image and 4:4:4 with the
+     * identity matrix otherwise, both full range, with the orientation of the color item; a {@code tmap} item
+     * with the gain map metadata and the {@code ispe} and alternate color properties, derived from the color item
+     * and the gain map item in that order, is preferred to the color item by an {@code altr} group, and the file
+     * gains the {@code tmap} brand. The color item stays the primary item, so that readers without gain map
+     * support show the base image.
+     *
+     * @param picture the picture, in any representation
+     * @param options the encoder settings of the picture
+     * @param gainMap the gain map, or {@code null} for none
+     * @param gainMapOptions the encoder settings of the gain map image, or {@code null} without a gain map
+     * @return the file
+     */
+    public static byte[] encode(Picture picture, AvifEncoderOptions options, GainMap gainMap,
+                                AvifEncoderOptions gainMapOptions) {
+        var image = EncodeImage.of("avif", picture, options.chromaFormat().orElse(null), options.bitDepth().orElse(0),
                 options.color(), options.isLossless(), options.premultipliedAlpha());
         var tileSize = options.gridTileSize().orElse(
                 image.width() > GRID_THRESHOLD || image.height() > GRID_THRESHOLD ? AUTO_GRID_TILE : 0);
@@ -148,14 +177,18 @@ public final class AvifStillEncoder {
                 alphaImages.add(code(image.alphaImage(), options.alphaQuality(), options, false));
             }
         }
-        var writer = new AvifWriter("avif", brands(colorImages, alphaImages));
+        var brands = brands(colorImages, alphaImages);
+        if (gainMap != null) {
+            brands.add("tmap");
+        }
+        var writer = new HeifWriter("avif", "avif", brands);
         var depth = image.bitDepth();
         var channels = image.format() == ChromaFormat.MONOCHROME ? 1 : 3;
-        var colorProps = new ArrayList<AvifWriter.Property>();
-        colorProps.add(AvifWriter.ispe(image.width(), image.height()));
-        colorProps.add(AvifWriter.pixi(depth, channels));
+        var colorProps = new ArrayList<HeifWriter.Property>();
+        colorProps.add(HeifWriter.ispe(image.width(), image.height()));
+        colorProps.add(HeifWriter.pixi(depth, channels));
         colorProps.addAll(colorProperties(image.color(), options));
-        colorProps.addAll(orientation(options.orientation()));
+        colorProps.addAll(HeifWriter.orientation(options.orientation()));
         var tileW = tileSize > 0 ? tileSize : image.width();
         var tileH = tileSize > 0 ? tileSize : image.height();
         int colorId;
@@ -164,37 +197,40 @@ public final class AvifStillEncoder {
             var tileIds = new int[colorImages.size()];
             for (var i = 0; i < tileIds.length; i++) {
                 var coded = colorImages.get(i);
-                tileIds[i] = writer.addItem("av01", coded.data(), true, AvifWriter.av1C(coded.av1C()),
-                        AvifWriter.ispe(tileW, tileH), AvifWriter.pixi(depth, channels));
+                tileIds[i] = writer.addItem("av01", coded.data(), true, av1C(coded.av1C()),
+                        HeifWriter.ispe(tileW, tileH), HeifWriter.pixi(depth, channels));
             }
-            colorId = writer.addIdatItem("grid", AvifWriter.grid(rows, cols, image.width(), image.height()),
-                    colorProps.toArray(AvifWriter.Property[]::new));
+            colorId = writer.addIdatItem("grid", HeifWriter.grid(rows, cols, image.width(), image.height()),
+                    colorProps.toArray(HeifWriter.Property[]::new));
             writer.reference("dimg", colorId, tileIds);
             if (!alphaImages.isEmpty()) {
                 var alphaTiles = new int[alphaImages.size()];
                 for (var i = 0; i < alphaTiles.length; i++) {
                     var coded = alphaImages.get(i);
-                    alphaTiles[i] = writer.addItem("av01", coded.data(), true, AvifWriter.av1C(coded.av1C()),
-                            AvifWriter.ispe(tileW, tileH), AvifWriter.pixi(depth, 1));
+                    alphaTiles[i] = writer.addItem("av01", coded.data(), true, av1C(coded.av1C()),
+                            HeifWriter.ispe(tileW, tileH), HeifWriter.pixi(depth, 1));
                 }
-                alphaId = writer.addIdatItem("grid", AvifWriter.grid(rows, cols, image.width(), image.height()),
-                        AvifWriter.ispe(image.width(), image.height()), AvifWriter.pixi(depth, 1),
-                        AvifWriter.auxC(HeifProperty.AuxiliaryType.ALPHA_URN));
+                alphaId = writer.addIdatItem("grid", HeifWriter.grid(rows, cols, image.width(), image.height()),
+                        HeifWriter.ispe(image.width(), image.height()), HeifWriter.pixi(depth, 1),
+                        HeifWriter.auxC(HeifProperty.AuxiliaryType.ALPHA_URN));
                 writer.reference("dimg", alphaId, alphaTiles);
             }
         } else {
             var coded = colorImages.getFirst();
-            var props = new ArrayList<AvifWriter.Property>();
+            var props = new ArrayList<HeifWriter.Property>();
             props.add(colorProps.get(0));
             props.add(colorProps.get(1));
-            props.add(AvifWriter.av1C(coded.av1C()));
+            props.add(av1C(coded.av1C()));
             props.addAll(colorProps.subList(2, colorProps.size()));
-            colorId = writer.addItem("av01", coded.data(), false, props.toArray(AvifWriter.Property[]::new));
+            colorId = writer.addItem("av01", coded.data(), false, props.toArray(HeifWriter.Property[]::new));
             if (!alphaImages.isEmpty()) {
                 var alpha = alphaImages.getFirst();
-                alphaId = writer.addItem("av01", alpha.data(), false, AvifWriter.ispe(image.width(), image.height()),
-                        AvifWriter.pixi(depth, 1), AvifWriter.av1C(alpha.av1C()), AvifWriter.auxC(HeifProperty.AuxiliaryType.ALPHA_URN));
+                alphaId = writer.addItem("av01", alpha.data(), false, HeifWriter.ispe(image.width(), image.height()),
+                        HeifWriter.pixi(depth, 1), av1C(alpha.av1C()), HeifWriter.auxC(HeifProperty.AuxiliaryType.ALPHA_URN));
             }
+        }
+        if (gainMap != null) {
+            addGainMap(writer, colorId, image.width(), image.height(), options, gainMap, gainMapOptions);
         }
         writer.primary(colorId);
         if (alphaId != 0) {
@@ -205,6 +241,65 @@ public final class AvifStillEncoder {
         }
         writer.addMetadata(colorId, options.exif().orElse(null), options.xmp().orElse(null));
         return writer.write();
+    }
+
+    /**
+     * Adds the gain map item, the {@code tmap} item that derives the alternate rendition, and their
+     * {@code altr} group.
+     *
+     * @param writer the file
+     * @param colorId the color item
+     * @param width the width of the color image
+     * @param height the height of the color image
+     * @param options the encoder settings of the picture
+     * @param gainMap the gain map
+     * @param gainMapOptions the encoder settings of the gain map image
+     */
+    private static void addGainMap(HeifWriter writer, int colorId, int width, int height, AvifEncoderOptions options,
+                                   GainMap gainMap, AvifEncoderOptions gainMapOptions) {
+        var picture = gainMap.image();
+        var gray = switch (picture) {
+            case YuvPicture yuv -> yuv.chromaFormat() == ChromaFormat.MONOCHROME;
+            case Yuv16Picture yuv -> yuv.chromaFormat() == ChromaFormat.MONOCHROME;
+            case ChannelPicture channels -> channels.layout().colorModel() == ColorModel.GRAY;
+            default -> false;
+        };
+        var color = new ColorInfo(gray ? MatrixCoefficients.BT601 : MatrixCoefficients.IDENTITY, ColorRange.FULL,
+                ColorPrimaries.UNSPECIFIED, TransferCharacteristics.UNSPECIFIED);
+        var image = EncodeImage.of("avif", picture, gray ? ChromaFormat.MONOCHROME : ChromaFormat.YUV444,
+                gainMapOptions.bitDepth().orElse(0), color, gainMapOptions.isLossless(), false);
+        var coded = code(image, gainMapOptions.quality(), gainMapOptions, false);
+        var signaled = image.color();
+        var gainMapProps = new ArrayList<HeifWriter.Property>();
+        gainMapProps.add(HeifWriter.ispe(image.width(), image.height()));
+        gainMapProps.add(HeifWriter.pixi(image.bitDepth(), gray ? 1 : 3));
+        gainMapProps.add(av1C(coded.av1C()));
+        gainMapProps.add(HeifWriter.nclx(signaled.primaries().code(), signaled.transfer().code(),
+                signaled.matrix().code(), signaled.range() == ColorRange.FULL));
+        // the orientation goes on both inputs of the tmap item and not on the tmap item itself, the layout
+        // libavif writes and the only one it accepts
+        gainMapProps.addAll(HeifWriter.orientation(options.orientation()));
+        var gainMapId = writer.addItem("av01", coded.data(), true, gainMapProps.toArray(HeifWriter.Property[]::new));
+        var properties = new ArrayList<HeifWriter.Property>();
+        properties.add(HeifWriter.ispe(width, height));
+        gainMap.alternateProfile().ifPresent(profile -> {
+            var info = profile.colorInfo();
+            if (info.isPresent()) {
+                var cicp = info.get();
+                properties.add(HeifWriter.nclx(cicp.primaries().code(), cicp.transfer().code(), cicp.matrix().code(),
+                        cicp.range() == ColorRange.FULL));
+            } else {
+                properties.add(HeifWriter.icc(profile.toByteArray()));
+            }
+        });
+        gainMap.alternateLightLevel().ifPresent(level -> properties.add(HeifWriter.clli(
+                level.maxContentLightLevel(), level.maxFrameAverageLightLevel())));
+        var metadata = gainMap.metadata().toByteArray();
+        var payload = new byte[metadata.length + 1];
+        System.arraycopy(metadata, 0, payload, 1, metadata.length);
+        var toneMapId = writer.addIdatItem("tmap", payload, properties.toArray(HeifWriter.Property[]::new));
+        writer.reference("dimg", toneMapId, colorId, gainMapId);
+        writer.alternatives(toneMapId, colorId);
     }
 
     /**
@@ -234,6 +329,16 @@ public final class AvifStillEncoder {
     }
 
     /**
+     * Returns an AV1 codec configuration property.
+     *
+     * @param record the {@code av1C} record
+     * @return the property, essential
+     */
+    static HeifWriter.Property av1C(byte[] record) {
+        return HeifWriter.configuration("av1C", record);
+    }
+
+    /**
      * Returns the color properties of the color item: the {@code nclx} description, the ICC
      * profile, and the high dynamic range metadata.
      *
@@ -241,51 +346,8 @@ public final class AvifStillEncoder {
      * @param options the encoder settings, whose ICC profile is added
      * @return the properties
      */
-    static List<AvifWriter.Property> colorProperties(ColorInfo color, AvifEncoderOptions options) {
-        var props = new ArrayList<AvifWriter.Property>();
-        props.add(AvifWriter.nclx(color.primaries().code(), color.transfer().code(), color.matrix().code(),
-                color.range() == ColorRange.FULL));
-        options.colorProfile().ifPresent(profile -> props.add(AvifWriter.icc(profile.toByteArray())));
-        color.contentLightLevel().ifPresent(level -> props.add(AvifWriter.clli(
-                Math.clamp(level.maxContentLightLevel(), 0, 65535), Math.clamp(level.maxFrameAverageLightLevel(), 0,
-                        65535))));
-        color.masteringDisplay().ifPresent(display -> props.add(AvifWriter.mdcv(new int[]{
-                chromaticity(display.green().x()), chromaticity(display.green().y()),
-                chromaticity(display.blue().x()), chromaticity(display.blue().y()),
-                chromaticity(display.red().x()), chromaticity(display.red().y())},
-                chromaticity(display.whitePoint().x()), chromaticity(display.whitePoint().y()),
-                Math.clamp(Math.round(display.maxLuminance() * 10000), 0, 0xFFFFFFFFL),
-                Math.clamp(Math.round(display.minLuminance() * 10000), 0, 0xFFFFFFFFL))));
-        return props;
+    static List<HeifWriter.Property> colorProperties(ColorInfo color, AvifEncoderOptions options) {
+        return HeifWriter.colorProperties(color, options.colorProfile().orElse(null));
     }
 
-    /**
-     * Returns a chromaticity coordinate in units of 0.00002.
-     *
-     * @param value the coordinate
-     * @return the coded value
-     */
-    private static int chromaticity(double value) {
-        return (int) Math.clamp(Math.round(value / 0.00002), 0, 65535);
-    }
-
-    /**
-     * Returns the rotation and mirroring properties that display an image in an orientation
-     * ({@code avifImageExifOrientationToIrotImir}).
-     *
-     * @param orientation the display orientation
-     * @return the properties, rotation first
-     */
-    static List<AvifWriter.Property> orientation(Orientation orientation) {
-        return switch (orientation) {
-            case NORMAL -> List.of();
-            case FLIP_HORIZONTAL -> List.of(AvifWriter.imir(1));
-            case ROTATE_180 -> List.of(AvifWriter.irot(2));
-            case FLIP_VERTICAL -> List.of(AvifWriter.imir(0));
-            case TRANSPOSE -> List.of(AvifWriter.irot(1), AvifWriter.imir(0));
-            case ROTATE_90 -> List.of(AvifWriter.irot(3));
-            case TRANSVERSE -> List.of(AvifWriter.irot(3), AvifWriter.imir(0));
-            case ROTATE_270 -> List.of(AvifWriter.irot(1));
-        };
-    }
 }

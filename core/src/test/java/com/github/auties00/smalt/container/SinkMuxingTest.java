@@ -41,6 +41,7 @@ class SinkMuxingTest {
         var viaMemory = Mp4Remuxer.remux(MediaSource.of(input), memory);
         var stream = new ByteArrayOutputStream();
         var viaStream = Mp4Remuxer.remux(MediaSource.of(input), MediaSink.of(stream), RemuxOptions.video());
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("sink-remux.mp4", channel.toByteArray());
         assertArrayEquals(channel.toByteArray(), memory.toByteArray());
         assertArrayEquals(channel.toByteArray(), stream.toByteArray());
         assertEquals(viaChannel.outputSize(), viaMemory.outputSize());
@@ -67,6 +68,7 @@ class SinkMuxingTest {
         mux.apply(memory);
         var stream = new ByteArrayOutputStream();
         mux.apply(MediaSink.of(stream));
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("sink-fast-start.mp4", stream.toByteArray());
         assertArrayEquals(memory.toByteArray(), stream.toByteArray());
         var progressive = Mp4MuxerOptions.mp4().toBuilder().fastStart(false).build();
         var failure = assertThrows(MediaException.Unsupported.class,

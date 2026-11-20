@@ -31,4 +31,6 @@ def main(root):
 
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        sys.exit(__doc__ or 'usage: ' + sys.argv[0] + ' [path]')
     main(sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', '..', '..'))

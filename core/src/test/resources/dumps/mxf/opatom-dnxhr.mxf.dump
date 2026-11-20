@@ -1,0 +1,37 @@
+# demux dump of mxf/opatom-dnxhr.mxf; regenerate with -Dsmalt.test.updateDumps=true
+format MXF
+duration 120000
+seekable true
+metadata application_platform="Lavf (mingw32)"
+metadata company_name="FFmpeg"
+metadata material_package_umid="060a2b340101010501010d00139924af52947134f49924af0052947134f49900"
+metadata operational_pattern="OPAtom"
+metadata product_name="OPAtom Muxer"
+metadata product_version="61.7.100"
+timecode 00:00:00:00 fps=25
+track 2 VIDEO DNXHD timebase=1/25 duration=3 config=4:2825f58f
+  video 256x128 orientation=NORMAL rate=25/1 interlacing=PROGRESSIVE
+packets 3
+0 t2 pts=0 dts=0 dur=1 flags=KEY size=8192 crc=6284cd9f
+1 t2 pts=1 dts=1 dur=1 flags=KEY size=8192 crc=ccee3553
+2 t2 pts=2 dts=2 dur=1 flags=KEY size=8192 crc=781d3462
+seek 0: t2@0
+seek 40000: t2@1
+seek 80000: t2@2
+seek 120000: end
+seek -1000000: t2@0
+header over READ_ONCE, READ_ONCE_UNKNOWN_LENGTH:
+  format MXF
+  duration 120000
+  seekable false
+  metadata application_platform="Lavf (mingw32)"
+  metadata company_name="FFmpeg"
+  metadata material_package_umid="060a2b340101010501010d00139924af52947134f49924af0052947134f49900"
+  metadata operational_pattern="OPAtom"
+  metadata product_name="OPAtom Muxer"
+  metadata product_version="61.7.100"
+  timecode 00:00:00:00 fps=25
+  track 2 VIDEO DNXHD timebase=1/25 duration=3 config=4:2825f58f
+    video 256x128 orientation=NORMAL rate=25/1 interlacing=PROGRESSIVE
+not seekable over READ_ONCE
+not seekable over READ_ONCE_UNKNOWN_LENGTH

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.ops;
 
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
@@ -49,6 +50,7 @@ final class Orienter {
             case YuvPicture yuv -> orientYuv(yuv, orientation);
             case Rgba16Picture rgba -> HighDepth.orient(rgba, orientation);
             case Yuv16Picture yuv -> HighDepth.orient(yuv, orientation);
+            case ChannelPicture channels -> ChannelOps.orient(channels, orientation);
         };
     }
 
@@ -82,7 +84,7 @@ final class Orienter {
         var swap = orientation.swapsDimensions();
         var format = yuv.chromaFormat();
         var source = yuv;
-        if (swap && format == ChromaFormat.YUV422) {
+        if (swap && format.shiftX() != format.shiftY()) {
             source = widenChroma(yuv);
             format = ChromaFormat.YUV444;
         }
@@ -101,23 +103,25 @@ final class Orienter {
     }
 
     /**
-     * Converts a 4:2:2 picture to 4:4:4 by replicating every chroma sample over the two columns
-     * it covers; the luma and alpha planes are shared, not copied.
+     * Converts a 4:2:2 or 4:4:0 picture to 4:4:4 by replicating every chroma sample over the two
+     * columns or rows it covers; the luma and alpha planes are shared, not copied.
      *
-     * @param yuv the 4:2:2 picture
+     * @param yuv the 4:2:2 or 4:4:0 picture
      * @return the 4:4:4 picture
      */
     private static YuvPicture widenChroma(YuvPicture yuv) {
         var width = yuv.width();
         var height = yuv.height();
+        var shiftX = yuv.chromaFormat().shiftX();
+        var shiftY = yuv.chromaFormat().shiftY();
         var u = new byte[width * height];
         var v = new byte[width * height];
         for (var row = 0; row < height; row++) {
-            var in = row * yuv.uvStride();
+            var in = (row >> shiftY) * yuv.uvStride();
             var out = row * width;
             for (var x = 0; x < width; x++) {
-                u[out + x] = yuv.u()[in + (x >> 1)];
-                v[out + x] = yuv.v()[in + (x >> 1)];
+                u[out + x] = yuv.u()[in + (x >> shiftX)];
+                v[out + x] = yuv.v()[in + (x >> shiftX)];
             }
         }
         return yuv.toBuilder()
