@@ -20,6 +20,7 @@ import com.github.auties00.smalt.audio.loudness.TruePeakLimiterOptions;
 import com.github.auties00.smalt.audio.process.TimeStretcher;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.internal.codec.EncoderTail;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -287,7 +288,7 @@ final class AudioEncodeStage implements Stage {
         this.doubleBlock = format == SampleFormat.DOUBLE ? new DoubleAudioBuffer(encoder.layout(), rate, BLOCK_FRAMES) : null;
         AudioChain built;
         try {
-            built = changes ? createChain() : null;
+            built = changes ? createChain(limits) : null;
         } catch (RuntimeException exception) {
             close();
             throw exception;
@@ -323,12 +324,14 @@ final class AudioEncodeStage implements Stage {
     /**
      * Creates the chain of sample steps at the encoder's input format.
      *
+     * @param limits the limits the time stretcher's buffers are checked against
      * @return the chain
      * @throws IllegalArgumentException if a filter's frequency is not below half the sampling rate, a fade-out at
      * the end has no known output duration, or a speed change that does not keep the pitch multiplies the pitch
      * factor out of range
+     * @throws MediaException.LimitExceeded if a tempo or pitch change needs buffers larger than the limits allow
      */
-    private AudioChain createChain() {
+    private AudioChain createChain(MediaLimits limits) {
         var rate = encoder.sampleRate();
         var micros = timing.cutsMicros();
         var cuts = new long[micros.length];
@@ -341,6 +344,9 @@ final class AudioEncodeStage implements Stage {
             throw new IllegalArgumentException("a speed of " + timing.speed() + " that does not keep the pitch, with a "
                     + "pitch of " + options.pitch() + ", changes the pitch by " + pitch + ", outside "
                     + TimeStretcher.MIN_FACTOR + " to " + TimeStretcher.MAX_FACTOR);
+        }
+        if (timing.speed() != 1 || pitch != 1) {
+            LimitChecks.checkAllocation(limits, TimeStretcher.footprint(encoder.layout().channels(), rate));
         }
         return new AudioChain(encoder.layout().channels(), rate, BLOCK_FRAMES, cuts, timing.speed(), pitch,
                 options.filters(), options.fades(), timing.outputMicros());
@@ -422,7 +428,7 @@ final class AudioEncodeStage implements Stage {
      */
     void normalize(Demuxer demuxer, LoudnessNormalization normalization, Cancellation cancellation) {
         var meter = new LoudnessMeter(encoder.layout(), encoder.sampleRate());
-        var measuringChain = chain == null ? null : createChain();
+        var measuringChain = chain == null ? null : createChain(LimitChecks.UNLIMITED);
         AudioChain.Receiver metered = (planes, frames) -> meter.accept(planes, 0, frames);
         var measuringOptions = floatOptions();
         try (var measuring = new SegmentedAudioDecoder(AudioStreamDecoder.create(source, measuringOptions),

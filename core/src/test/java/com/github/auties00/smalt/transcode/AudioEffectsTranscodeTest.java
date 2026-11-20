@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.transcode;
 
+import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.loudness.SilenceDetectorOptions;
 import com.github.auties00.smalt.audio.process.Biquad;
 import com.github.auties00.smalt.audio.process.BiquadFilter;
@@ -221,6 +223,20 @@ class AudioEffectsTranscodeTest {
                     .builder().preservePitch(false).pitch(2)).speed(8).build()));
             assertEquals(RATE / 4, audio(transcode(input, wavOptions(AudioTranscodeOptions.builder()
                     .preservePitch(false).pitch(2)).speed(4).build()))[0].length);
+        }
+        @Test
+        @DisplayName("rejects a speed change whose stretcher buffers exceed the byte limit")
+        void bufferLimit() {
+            var input = wav(RATE, new float[][]{sine(440, RATE, RATE), sine(660, RATE, RATE)});
+            var footprint = TimeStretcher.footprint(2, RATE);
+            var tight = MediaLimits.builder().maxBytes(footprint - 1).build();
+            assertThrows(MediaException.LimitExceeded.class, () -> transcode(input, wavOptions(AudioTranscodeOptions
+                    .builder()).limits(tight).speed(1.5).build()));
+            var enough = MediaLimits.builder().maxBytes(footprint).build();
+            assertEquals(2 * RATE / 3, audio(transcode(input, wavOptions(AudioTranscodeOptions.builder()).limits(enough)
+                    .speed(1.5).build()))[0].length);
+            assertEquals(RATE, audio(transcode(input, wavOptions(AudioTranscodeOptions.builder()).limits(tight)
+                    .build()))[0].length, "without a speed change no stretcher is built");
         }
     }
 

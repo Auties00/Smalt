@@ -9,7 +9,10 @@ import java.util.Objects;
  * <p>The tempo is time-scaled by waveform-similarity overlap-add (WSOLA): frames of {@value #FRAME_MILLIS} ms with a
  * periodic Hann window are overlapped by half, each taken from near its nominal input position at the offset (within
  * {@value #SEARCH_MILLIS} ms) whose waveform best matches the continuation of the previous frame, measured on the sum
- * of the channels so that every channel moves by the same offset and the stereo image stays intact. A pitch change
+ * of the channels so that every channel moves by the same offset and the stereo image stays intact. The search first
+ * compares every {@code s}-th candidate on every {@code s}-th sample, {@code s} being the power of two (at least 2)
+ * that brings the sampling rate down to between 24 and 48 kHz, and then halves the step around the best candidate
+ * down to one sample, so that the work per output sample does not grow with the sampling rate. A pitch change
  * time-scales by the ratio of tempo to pitch, then resamples by the pitch with a {@link Resampler}. A tempo of
  * {@code t} and a pitch of {@code p} turn {@code n} input frames into exactly {@code round(n / t)} output frames,
  * shorter by a factor {@code t} and with every frequency multiplied by {@code p}; with both at 1 the output equals the
@@ -31,6 +34,11 @@ public final class TimeStretcher {
      * How far from its nominal position, in milliseconds, a frame may be taken.
      */
     static final int SEARCH_MILLIS = 12;
+
+    /**
+     * The lowest rate, in hertz, at which the coarse search samples the frames.
+     */
+    static final int ANALYSIS_RATE = 24_000;
 
     /**
      * The smallest tempo and pitch accepted.
@@ -66,6 +74,11 @@ public final class TimeStretcher {
      * The search radius in samples.
      */
     private final int search;
+
+    /**
+     * The candidate and sample step of the coarse search, a power of two of at least 2.
+     */
+    private final int coarse;
 
     private final double[] window;
 
@@ -173,6 +186,7 @@ public final class TimeStretcher {
         this.frame = Math.max(16, (int) Math.round(sampleRate * FRAME_MILLIS / 1000.0) & ~1);
         this.hop = frame / 2;
         this.search = Math.max(1, (int) Math.round(sampleRate * SEARCH_MILLIS / 1000.0));
+        this.coarse = coarseStep(sampleRate);
         this.window = new double[frame];
         for (var index = 0; index < frame; index++) {
             window[index] = 0.5 - 0.5 * StrictMath.cos(2 * StrictMath.PI * index / frame);
@@ -194,6 +208,41 @@ public final class TimeStretcher {
             this.resampler = null;
         }
         this.output = new AudioFifo(channels);
+    }
+
+    /**
+     * Returns the number of bytes the buffers of a stretcher take, besides the output not read yet and the input
+     * written in a single call beyond a few frames.
+     *
+     * <p>A caller that bounds its memory checks this before constructing a stretcher: the buffers grow with the
+     * number of channels times the sampling rate.
+     *
+     * @param channels the number of channels, positive
+     * @param sampleRate the sampling rate in hertz, positive
+     * @return the size in bytes
+     * @throws IllegalArgumentException if a count or the rate is not positive
+     */
+    public static long footprint(int channels, int sampleRate) {
+        if (channels <= 0) {
+            throw new IllegalArgumentException("channel count " + channels + " is not positive");
+        }
+        if (sampleRate <= 0) {
+            throw new IllegalArgumentException("sampling rate " + sampleRate + " is not positive");
+        }
+        long frame = Math.max(16, (int) Math.round(sampleRate * FRAME_MILLIS / 1000.0) & ~1);
+        var inputs = (long) Float.BYTES * 4 * frame * (channels + 1);
+        var overlaps = (long) Double.BYTES * frame * (channels + 1);
+        var hops = (long) Float.BYTES * (frame / 2) * channels * 3;
+        return inputs + overlaps + hops;
+    }
+
+    /**
+     * {@return the coarse search step at a sampling rate}
+     *
+     * @param sampleRate the sampling rate in hertz
+     */
+    static int coarseStep(int sampleRate) {
+        return Math.max(2, Integer.highestOneBit(sampleRate / ANALYSIS_RATE));
     }
 
     /**
@@ -395,37 +444,38 @@ public final class TimeStretcher {
         var natural = (int) (previous + hop - base);
         var first = (int) (low - base);
         var last = (int) (high - base);
+        var step = coarse;
+        var span = (frame + step - 1) / step * step;
         var bestIndex = first;
         var bestScore = Double.NEGATIVE_INFINITY;
-        var energy = 0.0;
-        for (var n = 0; n < frame; n += 2) {
-            energy += (double) mono[first + n] * mono[first + n];
-        }
-        for (var candidate = first; candidate <= last; candidate += 2) {
+        var energy = energy(first, step);
+        for (var candidate = first; candidate <= last; candidate += step) {
             if (candidate > first) {
-                double leaving = mono[candidate - 2];
-                double entering = mono[candidate - 2 + frame];
+                double leaving = mono[candidate - step];
+                double entering = mono[candidate - step + span];
                 energy = Math.max(0, energy - leaving * leaving + entering * entering);
             }
-            var score = correlation(natural, candidate, 2) / Math.sqrt(energy + 1e-9);
+            var score = correlation(natural, candidate, step) / Math.sqrt(energy + 1e-9);
             if (score > bestScore) {
                 bestScore = score;
                 bestIndex = candidate;
             }
         }
-        var refined = bestIndex;
-        var refinedScore = correlation(natural, bestIndex, 1) / Math.sqrt(energy(bestIndex) + 1e-9);
-        for (var candidate = bestIndex - 1; candidate <= bestIndex + 1; candidate += 2) {
-            if (candidate < first || candidate > last) {
-                continue;
-            }
-            var score = correlation(natural, candidate, 1) / Math.sqrt(energy(candidate) + 1e-9);
-            if (score > refinedScore) {
-                refinedScore = score;
-                refined = candidate;
+        for (step /= 2; step >= 1; step /= 2) {
+            var center = bestIndex;
+            var centerScore = correlation(natural, center, step) / Math.sqrt(energy(center, step) + 1e-9);
+            for (var candidate = center - step; candidate <= center + step; candidate += 2 * step) {
+                if (candidate < first || candidate > last) {
+                    continue;
+                }
+                var score = correlation(natural, candidate, step) / Math.sqrt(energy(candidate, step) + 1e-9);
+                if (score > centerScore) {
+                    centerScore = score;
+                    bestIndex = candidate;
+                }
             }
         }
-        return base + refined;
+        return base + bestIndex;
     }
 
     /**
@@ -433,7 +483,7 @@ public final class TimeStretcher {
      *
      * @param a the first frame's buffer index
      * @param b the second frame's buffer index
-     * @param step the sample step, 1 or 2
+     * @param step the sample step, a power of two
      */
     private double correlation(int a, int b, int step) {
         var sum = 0.0;
@@ -447,10 +497,11 @@ public final class TimeStretcher {
      * {@return the energy of the frame at a buffer index of {@link #mono}}
      *
      * @param a the buffer index
+     * @param step the sample step, a power of two
      */
-    private double energy(int a) {
+    private double energy(int a, int step) {
         var sum = 0.0;
-        for (var n = 0; n < frame; n++) {
+        for (var n = 0; n < frame; n += step) {
             sum += (double) mono[a + n] * mono[a + n];
         }
         return sum;

@@ -41,7 +41,7 @@ sample:
   smalt-erps-b-slices), Reference Picture Resampling in both layers of SNR scalability (smalt-snr-rpr), and the
   four vectors of INTER4V and INTER4V+Q macroblocks in data partitioned slices (smalt-dps-four), and the
   arithmetic code of Annex E with macroblock stuffing, quantizer changes, ESCAPE events and group of blocks
-  headers, without PLUSPTYPE (smalt-sac, also decoded with tmndec -r) and with PLUSPTYPE, Annex I and Annex S
+  headers, without PLUSPTYPE (smalt-sac, also decoded with tmndec -r) and with PLUSPTYPE and Annex I
   (smalt-sac-plus), SNR scalability with groups of blocks in the enhancement pictures (smalt-snr-gob, whose
   enhancement layer tmndec -r reproduces, and smalt-snr-gob-erps with Annexes R and U, macroblock stuffing at the end
   of groups of blocks, which tmndec loops on, macroblocks coded by PR0 alone and group of blocks layers in EI- and

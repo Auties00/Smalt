@@ -1961,7 +1961,13 @@ apartment.
   their six to eight channels as primary channels and the others in data arrays the specification never defines; Smalt
   places the primary channels by the core loudspeaker mask of an XXCH extension, which the specification has a decoder
   of more than 5.1 channels follow instead of the arrangement, and raises `MediaException.Unsupported` for such a
-  frame without one, as for the user defined arrangements 16 to 63 (ffmpeg refuses them all). XLL channels coded
+  frame without one, as for the user defined arrangements 16 to 63 (ffmpeg refuses them all). Two kinds of synthetic stream
+  decode differently from ffmpeg, and their tests compare Smalt's output with an equivalent stream of its own instead:
+  an XXCH channel set with an embedded downmix of random coefficients, which ffmpeg undoes otherwise than Smalt (the
+  outputs differ by 16 to 20 dB), and the sum/difference pairs of
+  arrangement 8 under an XXCH core loudspeaker mask, where ffmpeg leaves the XXCH channels out when that mask names
+  side surround channels and decodes other samples under the other masks tried. No real stream seen exercises
+  either. XLL channels coded
   against a core add to a fixed-point reconstruction of that core, which the specification does not define; Smalt's,
   at the rate of the core and at twice it, was measured from ffmpeg's lossless output and matches it bit for bit
   (ffmpeg refuses 88.2 kHz channels over a 44.1 kHz core, which use the same reconstruction), with two exceptions:
@@ -1976,8 +1982,13 @@ apartment.
   the stream, so that the track keeps one rate: the core is synthesized through the 64-band filter bank of X96, as
   ffmpeg synthesizes a core with an X96 extension that codes no upper subband, and joined with a silent upper band for
   four times the rate, where ffmpeg's decoder outputs the core at its own rate (its full-band channels agree with
-  ffmpeg's X96 synthesis to about 115 dB, its LFE channel, whose interpolation starts from another history after
-  lossless frames, to about 35 dB). Before the first lossless frame such a frame takes the rate the track declares
+  ffmpeg's X96 synthesis to about 115 dB). Its LFE channel is interpolated twice linearly halfway between the samples,
+  as the fixed-point reconstruction of the lossless frames interpolates it and ffmpeg's X96 synthesis does, and that
+  interpolation restarts with the filter banks when a frame changes between the fixed-point and the floating-point
+  reconstruction, as in ffmpeg; every channel then agrees with ffmpeg within a few units of the 24-bit samples. A
+  frame that carries its own X96 extension interpolates its LFE channel through the 5-tap filter of Table 6-11, as
+  the specification asks, where ffmpeg interpolates it linearly too (the two differ by about 50 dB on a low-passed LFE
+  signal). Before the first lossless frame such a frame takes the rate the track declares
   when that is above 48 kHz. ffmpeg refuses a core with a 128 times interpolated LFE channel in its lossless mode, so
   nothing shows what channels coded against it add to; such a stream outputs its core with the other extensions,
   unless all its channels are coded alone. ffmpeg refuses channel sets of different widths or resolutions and parallel

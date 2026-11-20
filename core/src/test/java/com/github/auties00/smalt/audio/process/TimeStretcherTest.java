@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.SplittableRandom;
 
@@ -184,6 +185,77 @@ class TimeStretcherTest {
         }
         var split = stretch(new TimeStretcher(1, RATE, tempo, pitch), input, sizes);
         assertArrayEquals(whole[0], split[0]);
+    }
+
+    /**
+     * Returns the share of a tone's energy in the bins within a band around its frequency, from a Hann-windowed DFT of
+     * the middle half of the signal evaluated bin by bin (Goertzel) and Parseval's total.
+     */
+    static double toneShare(float[] samples, int rate, double frequency, double band) {
+        var from = samples.length / 4;
+        var length = samples.length / 2;
+        var windowed = new double[length];
+        var energy = 0.0;
+        for (var index = 0; index < length; index++) {
+            windowed[index] = samples[from + index] * (0.5 - 0.5 * Math.cos(2 * Math.PI * index / length));
+            energy += windowed[index] * windowed[index];
+        }
+        var spacing = (double) rate / length;
+        var inside = 0.0;
+        for (var bin = (int) Math.ceil((frequency - band) / spacing); bin * spacing <= frequency + band; bin++) {
+            var coefficient = 2 * Math.cos(2 * Math.PI * bin / length);
+            double previous = 0, before = 0;
+            for (var value : windowed) {
+                var current = value + coefficient * previous - before;
+                before = previous;
+                previous = current;
+            }
+            inside += previous * previous + before * before - coefficient * previous * before;
+        }
+        return 2 * inside / (length * energy);
+    }
+
+    @ParameterizedTest(name = "{0} Hz")
+    @CsvSource({"96000", "192000", "768000"})
+    @DisplayName("keeps a tone pure at high sampling rates, where the search starts on a coarser grid")
+    void highRates(int rate) {
+        var frames = rate;
+        var samples = new float[frames];
+        for (var index = 0; index < frames; index++) {
+            samples[index] = (float) (0.5 * Math.sin(2 * Math.PI * 440 * index / rate));
+        }
+        var output = stretch(new TimeStretcher(1, rate, 1.5, 1), new float[][]{samples}, new int[]{8192});
+        assertEquals(Math.round(frames / 1.5), output[0].length);
+        assertTrue(toneShare(output[0], rate, 440, 12) > 0.97, "the energy stays at the tone");
+    }
+
+    @Test
+    @DisplayName("bounds the search work by the input, not by the square of the sampling rate")
+    void hostileRate() {
+        // the sampling rate of a fuzzed WAV header that took 36 s in an exhaustive search
+        var rate = 9_641_792;
+        assertEquals(2, TimeStretcher.coarseStep(48_000));
+        assertEquals(2, TimeStretcher.coarseStep(44_100));
+        assertEquals(4, TimeStretcher.coarseStep(96_000));
+        assertEquals(256, TimeStretcher.coarseStep(rate));
+        var samples = new float[2400];
+        for (var index = 0; index < samples.length; index++) {
+            samples[index] = (float) (0.5 * Math.sin(2 * Math.PI * 1_000_000.0 * index / rate));
+        }
+        var output = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> stretch(new TimeStretcher(1, rate, 1.5,
+                0.8), new float[][]{samples}, new int[]{1024}));
+        assertEquals(1600, output[0].length);
+    }
+
+    @Test
+    @DisplayName("reports buffers growing with the channels times the sampling rate")
+    void footprint() {
+        var base = TimeStretcher.footprint(1, 48_000);
+        assertTrue(base > 4L * 4 * 1920, "at least the input planes");
+        assertTrue(TimeStretcher.footprint(2, 48_000) > base);
+        assertTrue(TimeStretcher.footprint(1, 96_000) > 1.9 * base);
+        assertThrows(IllegalArgumentException.class, () -> TimeStretcher.footprint(0, 48_000));
+        assertThrows(IllegalArgumentException.class, () -> TimeStretcher.footprint(1, 0));
     }
 
     @Test

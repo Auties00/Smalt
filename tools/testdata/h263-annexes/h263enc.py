@@ -3891,7 +3891,7 @@ def recipe_sac(enc):
 
 CONFIGS.update({
     'sacv1': {'width': 176, 'height': 144, 'modes': {'SAC', 'AP'}, 'v1': True, 'recipe': recipe_sac},
-    'sacplus': {'width': 176, 'height': 144, 'modes': {'SAC', 'AP', 'AIC', 'AIV'}, 'recipe': recipe_sac},
+    'sacplus': {'width': 176, 'height': 144, 'modes': {'SAC', 'AP', 'AIC'}, 'recipe': recipe_sac},
 })
 
 

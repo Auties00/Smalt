@@ -56,6 +56,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 final class DtsFixedCoreDifferentialTest {
     private static final Tolerance EXACT = Tolerance.exact();
+
+    /**
+     * The agreement of a frame synthesized in floating point with ffmpeg's: 16 units of a 24-bit sample, in 32-bit
+     * samples.
+     */
+    private static final Tolerance GAP = Tolerance.maxAbs(16 << 8);
+
+    /**
+     * The agreement of the LFE channel of a frame upsampled for a lossless stream with its linear interpolation: the
+     * single precision rounding of the 64 times interpolation, about 8 units of a 24-bit sample.
+     */
+    private static final Tolerance LFE = Tolerance.maxAbs(1e-6);
     private static final int FRAME = 512;
     private static final int FRAMES = 6;
 
@@ -617,10 +629,13 @@ final class DtsFixedCoreDifferentialTest {
         EXACT.assertWithin("the frames after the gap", Arrays.copyOfRange(reference, reference.length - 2 * size,
                 reference.length), Arrays.copyOfRange(decoded.samples, decoded.samples.length - 2 * size,
                 decoded.samples.length));
-        // the gap starts from a restarted synthesis, so ffmpeg's 96 kHz synthesis of its two core frames with an empty
-        // X96 extension, as a stream of their own, joined with a silent upper band is the reference
-        var low = ffmpeg(gapUnits(plan, 4, true).subList(2, 4), List.of());
-        assertEquals(2 * FRAME * 2 * 6, low.length, "samples of the gap at 96 kHz");
+        // ffmpeg's 96 kHz synthesis of the two core frames of the gap with an empty X96 extension, after the same cores
+        // with channels coded at 96 kHz, joined with a silent upper band whose synthesis restarts, is the reference:
+        // the filter banks and the two times LFE interpolation restart after the lossless frames, the 64 times LFE
+        // interpolation goes on
+        var primed = ffmpeg(gapUnits(plan, 4, true, true), List.of());
+        assertEquals(plan.length * FRAME * 2 * 6, primed.length, "samples of the stream at 96 kHz");
+        var low = Arrays.copyOfRange(primed, 2 * FRAME * 2 * 6, 4 * FRAME * 2 * 6);
         var joined = new int[2 * low.length];
         var history = new int[6][XllBandSynthesis.HISTORY];
         var band = new int[FRAME * 2];
@@ -664,11 +679,28 @@ final class DtsFixedCoreDifferentialTest {
         // the frame at 96 kHz is the frame with an X96 extension that codes no upper subband, but for the noise that
         // extension fills its subbands without bits with, at the smallest scale factor
         var x96 = decodeBuffers(gapUnits(new boolean[]{false}, 2, true)).getFirst();
-        for (var ch = 0; ch < 6; ch++) {
+        // output channels: L, R, C, LFE, Ls, Rs
+        for (var ch : new int[]{0, 1, 2, 4, 5}) {
             var expected = Arrays.copyOf(x96.plane(ch), FRAME * 2);
             var actual = Arrays.copyOf(buffers.getFirst().plane(ch), FRAME * 2);
             Tolerance.snr(90).assertPcm("channel " + ch, expected, actual);
         }
+        // the LFE channel is the core's, at 48 kHz, interpolated linearly halfway between its samples from silence,
+        // as the fixed-point reconstruction of the lossless frames interpolates it, where X96 uses the 5-tap filter
+        var core = new DtsDecoder(AudioTrack.builder().codec(Codec.DTS).timeBase(Rational.timeBaseOf(48000))
+                .sampleRate(48000).build(), DtsDecoderOptions.coreOnly());
+        var low = new ArrayList<AudioBuffer>();
+        core.decode(new Packet(0, units.getFirst(), 0, 0, 0, true), buffer -> low.add(buffer.copy()));
+        assertEquals(48000, low.getFirst().sampleRate(), "rate of the core alone");
+        var lfe = low.getFirst().plane(3);
+        var expected = new float[FRAME * 2];
+        var last = 0f;
+        for (var n = 0; n < FRAME; n++) {
+            expected[2 * n] = 0.25f * lfe[n] + 0.75f * last;
+            expected[2 * n + 1] = 0.75f * lfe[n] + 0.25f * last;
+            last = lfe[n];
+        }
+        LFE.assertPcm("LFE channel", expected, Arrays.copyOf(buffers.getFirst().plane(3), FRAME * 2));
     }
 
     @Test
@@ -751,6 +783,16 @@ final class DtsFixedCoreDifferentialTest {
      * @param x96 whether the frames without the extension carry an X96 extension that codes no upper subband
      */
     static List<byte[]> gapUnits(boolean[] plan, int ratio, boolean x96) {
+        return gapUnits(plan, ratio, x96, false);
+    }
+
+    /**
+     * Builds access units of 5.1 core frames as {@link #gapUnits(boolean[], int, boolean)} does, optionally with the
+     * lossless frames of a stream at four times the core rate coded at twice it, over the same cores.
+     *
+     * @param halfRate whether the lossless frames at four times the core rate are coded at twice it instead
+     */
+    static List<byte[]> gapUnits(boolean[] plan, int ratio, boolean x96, boolean halfRate) {
         var random = new SplittableRandom(78 + ratio);
         var units = new ArrayList<byte[]>();
         for (var lossless : plan) {
@@ -776,6 +818,13 @@ final class DtsFixedCoreDifferentialTest {
                             row[n] = random.nextInt(-3000, 3000);
                         }
                     }
+                }
+                if (halfRate) {
+                    set.rateCode = 13;
+                    set.highResiduals = null;
+                    set.history = null;
+                    units.add(unit(frame, List.of(set), 6, 0xF, FRAME * 2, 2));
+                    continue;
                 }
                 var out = new ByteArrayOutputStream();
                 out.writeBytes(CoreStreamWriter.write(frame));
@@ -805,9 +854,11 @@ final class DtsFixedCoreDifferentialTest {
     }
 
     /**
-     * Asserts interleaved 5.1 samples synthesized from the core in floating point, channel by channel: the full band
-     * channels within the float rounding of two synthesis filter banks, and the LFE channel, whose interpolation in
-     * ffmpeg's X96 synthesis starts from another history after fixed-point frames, to the level of that transient.
+     * Asserts interleaved 5.1 samples synthesized from the core in floating point, channel by channel, within the
+     * float rounding of two synthesis filter banks: 16 units of the 24-bit samples on every channel, and 100 dB on
+     * the full band ones. The LFE channel, interpolated twice linearly as ffmpeg's X96 synthesis interpolates it and
+     * restarted with the filter banks after fixed-point frames as ffmpeg restarts it, is about 50 dB quieter than the
+     * others in these streams, so its signal-to-noise ratio is lower for the same error.
      */
     private static void assertGap(String name, int[] expected, int[] actual) {
         for (var ch = 0; ch < 6; ch++) {
@@ -817,9 +868,11 @@ final class DtsFixedCoreDifferentialTest {
                 expectedChannel[n] = expected[n * 6 + ch];
                 actualChannel[n] = actual[n * 6 + ch];
             }
-            // the full band channels agree to about 115 dB, the LFE channel to 33 to 41 dB
-            (ch == 3 ? Tolerance.snr(30) : Tolerance.snr(100)).assertWithin(name + " channel " + ch, expectedChannel,
-                    actualChannel);
+            // every channel agrees within about 11 units of the 24-bit samples, the full band ones to about 115 dB
+            GAP.assertWithin(name + " channel " + ch, expectedChannel, actualChannel);
+            if (ch != 3) {
+                Tolerance.snr(100).assertWithin(name + " channel " + ch, expectedChannel, actualChannel);
+            }
         }
     }
 

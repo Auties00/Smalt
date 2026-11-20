@@ -1652,7 +1652,7 @@ final class MacroblockParser {
             Arrays.fill(levels, 0);
             var position = reader.position();
             if (readEvents(0, Tables.ZIGZAG, false, false, false) < 0) {
-                if (!aiv || sac) {
+                if (!aiv) {
                     throw CORRUPT;
                 }
                 reader.seek(position);

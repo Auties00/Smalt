@@ -4,6 +4,8 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
@@ -418,6 +420,28 @@ class H263CorruptStreamsTest {
                 () -> stream.decode(umv, 0, umv.length, sink));
         assertEquals("H.263 Unrestricted Motion Vector mode with arithmetic coding and PLUSPTYPE",
                 exception.getMessage());
+    }
+
+    @ParameterizedTest(name = "{1}")
+    @CsvSource({"12, Alternative INTER VLC", "13, Modified Quantization"})
+    @DisplayName("refuses the Alternative INTER VLC and Modified Quantization modes with the arithmetic code, which "
+            + "5.1.4.6 forbids, and keeps Advanced INTRA Coding with it")
+    void arithmeticCodeWithAnnexSOrT(int bit, String mode) {
+        // OPPTYPE after the source format: the custom picture clock, then UMV, SAC, AP, AIC, DF, SS, RPS, ISD, AIV,
+        // MQ; Annex E gives INTRA_MODE of Annex I a model of its own (E.7)
+        var data = H263AnnexStreamsTest.resource("smalt-sac-plus.263");
+        var intra = picture(data, 0);
+        assertEquals(1, field(intra, UFEP, 3));
+        assertEquals(1, field(intra, SOURCE_FORMAT + 5, 1), "SAC");
+        assertEquals(1, field(intra, SOURCE_FORMAT + 7, 1), "AIC");
+        assertEquals(0, field(intra, SOURCE_FORMAT + bit, 1), mode);
+        H263PlusStream.Sink sink = (picture, time, keyframe, layer, subBitstream) -> { };
+        new H263PlusStream(MediaLimits.defaults()).decode(intra, 0, intra.length, sink);
+        setField(intra, SOURCE_FORMAT + bit, 1, 1);
+        var stream = new H263PlusStream(MediaLimits.defaults());
+        var exception = org.junit.jupiter.api.Assertions.assertThrows(MediaException.Malformed.class,
+                () -> stream.decode(intra, 0, intra.length, sink));
+        assertEquals("H.263 " + mode + " mode with arithmetic coding", exception.getMessage());
     }
 
     private static byte[] pictureOfType(byte[] data, int type) {

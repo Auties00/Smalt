@@ -265,6 +265,12 @@ public final class CoreDecoder {
     private boolean joined;
 
     /**
+     * Whether the frame codes no X96 data and is synthesized at twice the core rate for a lossless stream of that
+     * rate, which interpolates the LFE channel as the fixed-point reconstruction of the lossless extension does.
+     */
+    private boolean upsampled;
+
+    /**
      * Whether the previous frame was synthesized with {@link #joined}, whose band history continues.
      */
     private boolean previousJoined;
@@ -408,6 +414,7 @@ public final class CoreDecoder {
         synthesized = false;
         x96Present = false;
         joined = false;
+        upsampled = false;
         var position = 0;
         lfeSamples = 0;
         for (var subframe = 0; subframe < subframes; subframe++) {
@@ -856,6 +863,7 @@ public final class CoreDecoder {
         if (!synthesized) {
             var base = header.sampleRate;
             if ((rate == 2 * base || rate == 4 * base) && rate >= outputRate()) {
+                upsampled = !x96Present;
                 x96Present = true;
                 joined = rate == 4 * base;
             }
@@ -901,6 +909,7 @@ public final class CoreDecoder {
                 fixedQmf32[ch].reset();
                 fixedQmf64[ch].reset();
             }
+            Arrays.fill(lfeHistory, 0);
             previousX96 = x96Present;
             previousFixed = fixed;
         }
@@ -923,7 +932,11 @@ public final class CoreDecoder {
             var factor = header.lfe == 1 ? 128 : 64;
             if (x96Present) {
                 lfeInterpolator.interpolate(lfeDecimated, lfeSamples, factor, lfeX96, 0, OUTPUT_SCALE);
-                X96Decoder.interpolateLfe(lfeX96, lfeSamples * factor, target, lfeHistory);
+                if (upsampled) {
+                    X96Decoder.interpolateLfeLinearly(lfeX96, lfeSamples * factor, target, lfeHistory);
+                } else {
+                    X96Decoder.interpolateLfe(lfeX96, lfeSamples * factor, target, lfeHistory);
+                }
             } else {
                 lfeInterpolator.interpolate(lfeDecimated, lfeSamples, factor, target, 0, OUTPUT_SCALE);
             }

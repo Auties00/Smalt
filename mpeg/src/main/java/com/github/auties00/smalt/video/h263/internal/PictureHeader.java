@@ -554,6 +554,14 @@ final class PictureHeader {
             // U.1: the reference indexes of the ERPS mode have no arithmetic code
             throw new MediaException.Malformed("H.263 ERPS mode with arithmetic coding");
         }
+        if ((state.modes & LayerState.SAC) != 0 && (state.modes & LayerState.AIV) != 0) {
+            // 5.1.4.6 item 1: the alternative interpretation of the INTER codes of Annex S has no arithmetic code
+            throw new MediaException.Malformed("H.263 Alternative INTER VLC mode with arithmetic coding");
+        }
+        if ((state.modes & LayerState.SAC) != 0 && (state.modes & LayerState.MQ) != 0) {
+            // 5.1.4.6 item 1: the quantizer and coefficient codes of Annex T have no arithmetic code
+            throw new MediaException.Malformed("H.263 Modified Quantization mode with arithmetic coding");
+        }
         if ((state.modes & LayerState.SAC) != 0 && (state.modes & LayerState.UMV) != 0) {
             // 5.1.4.6: with PLUSPTYPE the vectors of the UMV mode take the reversible code of Table D.3, which has no
             // arithmetic code

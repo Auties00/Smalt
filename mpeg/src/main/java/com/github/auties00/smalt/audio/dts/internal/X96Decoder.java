@@ -17,6 +17,16 @@ final class X96Decoder {
     private static final float[] LFE_FILTER = {0.12553677676342990f, 0.49999913800216800f, 0.74892817046880420f,
             0.49999913800216800f, 0.12553677676342990f};
 
+    /**
+     * The tap of the linear two times LFE interpolation on the nearer sample.
+     */
+    private static final float LFE_NEAR = DtsFixedTables.LFE_DOUBLE_NEAR / (float) (1 << 23);
+
+    /**
+     * The tap of the linear two times LFE interpolation on the farther sample.
+     */
+    private static final float LFE_FAR = DtsFixedTables.LFE_DOUBLE_FAR / (float) (1 << 23);
+
     private static final DtsHuffman[] SCALE_BOOKS = {DtsHuffman.book("SA129"), DtsHuffman.book("SB129"),
             DtsHuffman.book("SC129"), DtsHuffman.book("SD129"), DtsHuffman.book("SE129")};
 
@@ -488,6 +498,33 @@ final class X96Decoder {
             return firstPlane + index - 2;
         }
         return index - 1;
+    }
+
+    /**
+     * Interpolates the LFE channel twice by linear interpolation halfway between the samples, the two times
+     * interpolation of the fixed-point core reconstruction the lossless extension codes its residuals against,
+     * continuing from the samples of the previous call.
+     *
+     * @param in the LFE samples at the core rate
+     * @param count the number of input samples
+     * @param out receives {@code 2 * count} samples
+     * @param history the last two input samples of the previous call, newest last; updated
+     */
+    static void interpolateLfeLinearly(float[] in, int count, float[] out, float[] history) {
+        var last = history[1];
+        for (var n = 0; n < count; n++) {
+            var current = in[n];
+            out[2 * n] = LFE_FAR * current + LFE_NEAR * last;
+            out[2 * n + 1] = LFE_NEAR * current + LFE_FAR * last;
+            last = current;
+        }
+        if (count >= 2) {
+            history[0] = in[count - 2];
+            history[1] = in[count - 1];
+        } else if (count == 1) {
+            history[0] = history[1];
+            history[1] = in[0];
+        }
     }
 
     /**
