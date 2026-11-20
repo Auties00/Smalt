@@ -97,7 +97,7 @@ public final class TrainingOptions {
     /**
      * {@return the longest time the run spends running workloads, positive; 15 minutes by default}
      *
-     * <p>The time counts from the end of the setup, which creates the workloads; the run then waits up to
+     * <p>The time counts from the first cycle, after the setup, which creates the workloads; the run then waits up to
      * 20 seconds more for the JIT compiler to finish the compilations it queued.
      */
     public Duration maxDuration() {

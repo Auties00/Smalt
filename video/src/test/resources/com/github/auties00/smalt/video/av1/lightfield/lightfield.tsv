@@ -1,0 +1,4 @@
+# Written by tools/testdata/av1-lightfield/make-vectors.py: name, anchor frames, tile lists,
+# SHA-256 of the stream, SHA-256 of lightfield_tile_list_decoder's output (libaom 3.13.1).
+lightfield-testsrc2.ivf	4	3	036a6c9535754e6860dfa355d41dd257f1eafeb976daf79c4686618f717800fb	d3ae6cac6a974401696d168dc297047f138adfdf4910779c0a604acd435e01db
+lightfield-mandelbrot.ivf	3	2	a096167a62b2a5c7de2ab7432aabb070a440ea1e7fb11a7b202377e5ad63d3f2	d69b26b26a45a2aafb6442e047e7c34f40328f1b3802704541594d4f85a1c9bc

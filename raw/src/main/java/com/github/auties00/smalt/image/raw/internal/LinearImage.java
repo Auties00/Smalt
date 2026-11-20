@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.raw.CfaPattern;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -37,7 +38,8 @@ final class LinearImage {
     final float[] data;
 
     /**
-     * The color filter array of this image, or {@code null}.
+     * The color filter array of this image, or {@code null}; an image of two samples per pixel with
+     * one holds two readings of each photosite.
      */
     final CfaPattern cfa;
 
@@ -109,16 +111,26 @@ final class LinearImage {
         var maximum = sensor.maximum();
         var white = new double[spp];
         for (var sample = 0; sample < spp; sample++) {
-            white[sample] = sensor.white != null && sensor.white[sample] > 0 ? sensor.white[sample] : maximum;
+            // a single white level applies to every sample
+            var level = sensor.white == null || sensor.white.length == 0 ? 0
+                    : sensor.white[Math.min(sample, sensor.white.length - 1)];
+            white[sample] = level > 0 ? level : maximum;
         }
         var table = sensor.linearization;
         var rowCount = sensor.blackRows;
         var columnCount = sensor.blackColumns;
+        // a pattern of one level per position applies to every sample of the position
+        var blackSamples = sensor.black != null && sensor.black.length >= (long) rowCount * columnCount * spp ? spp : 1;
+        if (sensor.black != null && sensor.black.length < (long) rowCount * columnCount) {
+            throw new MediaException.Malformed("raw black level pattern of " + sensor.black.length
+                    + " values for a repeat of " + rowCount + "x" + columnCount);
+        }
         var rowBlack = new float[rowCount][width * spp];
         for (var row = 0; row < rowCount; row++) {
             for (var column = 0; column < width; column++) {
                 for (var sample = 0; sample < spp; sample++) {
-                    var black = sensor.black == null ? 0 : sensor.black[((row * columnCount) + column % columnCount) * spp + sample];
+                    var black = sensor.black == null ? 0 : sensor.black[((row * columnCount) + column % columnCount)
+                            * blackSamples + Math.min(sample, blackSamples - 1)];
                     if (sensor.blackDeltaH != null && column < sensor.blackDeltaH.length) {
                         black += sensor.blackDeltaH[column];
                     }
@@ -130,7 +142,7 @@ final class LinearImage {
         if (sensor.blackDeltaV == null) {
             for (var row = 0; row < rowCount; row++) {
                 rowScale[row] = new float[width * spp];
-                scales(rowBlack[row], 0f, white, spp, rowBlack[row], rowScale[row]);
+                scales(rowBlack[row], 0f, white, spp, sensor.gain, rowBlack[row], rowScale[row]);
             }
         }
         var bands = ParallelBands.bands(height, (long) width * height * spp);
@@ -148,7 +160,7 @@ final class LinearImage {
                     scale = rowScale[row % rowCount];
                 } else {
                     var delta = row < sensor.blackDeltaV.length ? (float) sensor.blackDeltaV[row] : 0f;
-                    scales(rowBlack[row % rowCount], delta, white, spp, rowOffset, rowScales);
+                    scales(rowBlack[row % rowCount], delta, white, spp, sensor.gain, rowOffset, rowScales);
                     offset = rowOffset;
                     scale = rowScales;
                 }
@@ -167,6 +179,14 @@ final class LinearImage {
                             data[target + index] = ((in[source + index] & 0xFFFF) - offset[index]) * scale[index];
                         }
                     }
+                } else if (plane.wide != null) {
+                    var in = plane.wide;
+                    var last1 = table != null ? table.length - 1 : 0;
+                    for (var index = 0; index < count; index++) {
+                        var stored = Integer.toUnsignedLong(in[source + index]);
+                        double value = table != null ? table[(int) Math.min(stored, last1)] : stored;
+                        data[target + index] = (float) ((value - offset[index]) * scale[index]);
+                    }
                 } else {
                     var in = plane.floats;
                     for (var index = 0; index < count; index++) {
@@ -178,7 +198,7 @@ final class LinearImage {
         });
         CfaPattern cfa = null;
         int[] planes = null;
-        if (sensor.cfa != null && spp == 1) {
+        if (sensor.cfa != null && spp <= 2) {
             cfa = sensor.cfa.shifted(top, left);
             planes = new int[cfa.width() * cfa.height()];
             var colors = 0;
@@ -204,15 +224,17 @@ final class LinearImage {
      * @param delta the row's black delta
      * @param white the white level of each sample of a pixel
      * @param spp the samples of each pixel
+     * @param gain the factor the stored values carry relative to the main image, divided out
      * @param offset receives the black offsets; may be {@code blacks} when {@code delta} is 0
-     * @param scale receives the reciprocals, 0 for an empty range
+     * @param scale receives the reciprocals, divided by the gain, 0 for an empty range
      */
-    private static void scales(float[] blacks, float delta, double[] white, int spp, float[] offset, float[] scale) {
+    private static void scales(float[] blacks, float delta, double[] white, int spp, double gain, float[] offset,
+                               float[] scale) {
         for (var index = 0; index < blacks.length; index++) {
             var black = blacks[index] + delta;
             var range = (float) white[index % spp] - black;
             offset[index] = black;
-            scale[index] = range > 1e-6f ? 1 / range : 0;
+            scale[index] = range > 1e-6f ? gain == 1 ? 1 / range : (float) (1 / (range * gain)) : 0;
         }
     }
 }

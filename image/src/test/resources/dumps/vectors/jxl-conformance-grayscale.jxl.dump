@@ -1,0 +1,13 @@
+# image dump of vectors/jxl-conformance-grayscale.jxl; regenerate with -Dsmalt.test.updateDumps=true
+format JXL
+info ImageInfo[format=JXL, width=200, height=200, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 200x200 rgba8 alpha=false crc=61b32f7d
+  format=JXL orientation=NORMAL source=200x200
+  icc=912:e04c6ab0 exif=none xmp=none
+  profile=ColorProfile[Dot Gain 10%, GRAY, OUTPUT, v2.1.0]
+scaled 50x50
+picture 200x200 rgba8 alpha=false crc=61b32f7d
+  format=JXL orientation=NORMAL source=200x200
+  icc=912:e04c6ab0 exif=none xmp=none
+  profile=ColorProfile[Dot Gain 10%, GRAY, OUTPUT, v2.1.0]

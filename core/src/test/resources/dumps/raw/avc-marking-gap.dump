@@ -1,0 +1,18 @@
+# demux dump of raw/avc-marking-gap; regenerate with -Dsmalt.test.updateDumps=true
+format H264
+duration -1
+seekable true
+track 1 VIDEO H264 timebase=1/50 duration=? config=36:11d148bb
+  video 16x16 orientation=NORMAL rate=25/1
+packets 6
+0 t1 pts=0 dts=-4 dur=2 flags=KEY size=427 crc=7a50693d
+1 t1 pts=4 dts=-2 dur=2 flags=- size=9 crc=e8785fb6
+2 t1 pts=2 dts=0 dur=2 flags=- size=8 crc=7708ea86
+3 t1 pts=? dts=2 dur=0 flags=- size=8 crc=4d1adc6e
+4 t1 pts=6 dts=4 dur=2 flags=KEY size=395 crc=d617e5ef
+5 t1 pts=8 dts=6 dur=2 flags=- size=9 crc=ecf52304
+seek 0: t1@0
+seek 66666: t1@0
+seek 133333: t1@4
+seek 200000: end
+seek -1000000: t1@0

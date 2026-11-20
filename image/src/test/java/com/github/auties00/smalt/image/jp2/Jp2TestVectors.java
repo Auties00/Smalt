@@ -5,18 +5,25 @@ import com.github.auties00.smalt.testkit.Conformance;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipFile;
 
 /**
  * Pins the files of the OpenJPEG test data repository (uclouvain/openjpeg-data) the JPEG 2000
  * tests use: the ISO/IEC 15444-4 conformance codestreams and JP2 files with their reference
- * decodes, and the Kakadu and Richter conformance files.
+ * decodes, and the Kakadu and Richter conformance files; and the electronic insert of ISO/IEC 15444-4:2024, which
+ * adds the high fidelity, HTJ2K, Part 2 and JPX test files.
  */
 final class Jp2TestVectors {
     private static final String BASE = "https://raw.githubusercontent.com/uclouvain/openjpeg-data/"
             + "39524bd3a601d90ed8e0177559400d23945f96a9/";
 
     private static final Map<String, String> HASHES = Map.ofEntries(
+            Map.entry("input/nonregression/htj2k/Bretagne1_ht.j2k", "fa82708024118771d58d90231e406ec40ad3eedf623927697c3659c123d89ec4"),
+            Map.entry("input/nonregression/htj2k/Bretagne1_ht_lossy.j2k", "372c5b8c5f136c8cabca266d1af7bd8078c0fee14441e7dc850f228d28152d2d"),
+            Map.entry("input/nonregression/htj2k/byte.jph", "87841874ed8f530babe1ea49aef3cbdf1a605f1984b9c06713fc9d9ca0fcd5a0"),
+            Map.entry("input/nonregression/htj2k/byte_causal.jhc", "8d4a48d1cfff47420203283f3eb1b5c48f92dd1a6c23916a18934a44f154002f"),
             Map.entry("baseline/conformance/a1_mono.ppm", "be285266a1c2f803f40b2d7deb7a449956a00882c4923fc4d26a988696081c7f"),
             Map.entry("baseline/conformance/a2_colr.ppm", "22d53aea0bd3005724f08f0fad01e20716bea433fe5d2befa8d3466ce1404145"),
             Map.entry("baseline/conformance/a3_mono.ppm", "be285266a1c2f803f40b2d7deb7a449956a00882c4923fc4d26a988696081c7f"),
@@ -212,5 +219,24 @@ final class Jp2TestVectors {
     /** Returns whether a path is pinned. */
     static boolean pinned(String path) {
         return HASHES.containsKey(path);
+    }
+
+    /**
+     * Returns a file of the ISO/IEC 15444-4:2024 (Rec. ITU-T T.803 (02/2024)) electronic insert, by its path in the
+     * archive ({@code files/codestreams_profile1/hifi_p1_02.j2k}).
+     */
+    static byte[] edition4(String path) {
+        var archive = Conformance.fetchListed("jp2-15444-4-ed4-electronic_insert.zip");
+        try (var zip = new ZipFile(archive.toFile())) {
+            var entry = zip.getEntry(path);
+            if (entry == null) {
+                throw new IllegalArgumentException("no " + path + " in " + archive);
+            }
+            try (var input = zip.getInputStream(entry)) {
+                return input.readAllBytes();
+            }
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
     }
 }

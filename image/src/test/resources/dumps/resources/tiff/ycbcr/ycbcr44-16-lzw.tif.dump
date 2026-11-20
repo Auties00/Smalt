@@ -1,0 +1,19 @@
+# image dump of resources/tiff/ycbcr/ycbcr44-16-lzw.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=24, height=12, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 24x12 rgba8 alpha=false crc=13141327
+  format=TIFF orientation=NORMAL source=24x12
+  icc=none exif=none xmp=none
+  profile=none
+scaled 6x3
+picture 24x12 rgba8 alpha=false crc=13141327
+  format=TIFF orientation=NORMAL source=24x12
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=TIFF, width=24, height=12, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 24x12 rgba8 alpha=false crc=13141327
+  format=TIFF orientation=NORMAL source=24x12
+  icc=none exif=none xmp=none
+  profile=none

@@ -20,11 +20,10 @@ interface WaveletKernel {
     int LANES = 8;
 
     /**
-     * The kernels used by the codec: the vector ones when {@link Simd#ENABLED} and the platform's
-     * vectors hold at least 256 bits, the scalar ones otherwise, which are faster on narrower
-     * vectors.
+     * The kernels used by the codec: the vector ones, written for 256-bit vectors, when
+     * {@link Simd#WIDE}, the scalar ones otherwise, which are faster on narrower vectors.
      */
-    WaveletKernel INSTANCE = Simd.ENABLED && Simd.preferredBits() >= 256 ? new VectorWaveletKernel()
+    WaveletKernel INSTANCE = Simd.WIDE ? new VectorWaveletKernel()
             : new ScalarWaveletKernel();
 
     /**

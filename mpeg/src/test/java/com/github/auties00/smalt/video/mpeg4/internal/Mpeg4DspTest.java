@@ -259,6 +259,13 @@ class Mpeg4DspTest {
                 }
             }
             int[][] shapes = {{16, 16}, {8, 8}, {16, 8}};
+            // One scratch per kernel, reused across calls and starting dirty, as the motion compensator reuses its own.
+            var scalarScratch = new int[Mpeg4Dsp.SCRATCH_INTS];
+            var vectorScratch = new int[Mpeg4Dsp.SCRATCH_INTS];
+            for (var i = 0; i < scalarScratch.length; i++) {
+                scalarScratch[i] = random.nextInt();
+                vectorScratch[i] = random.nextInt();
+            }
             for (var shape : shapes) {
                 for (var fraction = 0; fraction < 32; fraction++) {
                     var expected = new byte[STRIDE * 20];
@@ -272,9 +279,9 @@ class Mpeg4DspTest {
                     ReferenceQuarterPel.quarterPel(src, offset, STRIDE, expected, STRIDE + 1, STRIDE, shape[0], shape[1],
                             quarterX, quarterY, rounding, new int[Mpeg4Dsp.SCRATCH_INTS]);
                     SCALAR.quarterPel(src, offset, STRIDE, scalar, STRIDE + 1, STRIDE, shape[0], shape[1], quarterX,
-                            quarterY, rounding, new int[Mpeg4Dsp.SCRATCH_INTS]);
+                            quarterY, rounding, scalarScratch);
                     VECTOR.quarterPel(src, offset, STRIDE, vector, STRIDE + 1, STRIDE, shape[0], shape[1], quarterX,
-                            quarterY, rounding, new int[Mpeg4Dsp.SCRATCH_INTS]);
+                            quarterY, rounding, vectorScratch);
                     var where = shape[0] + "x" + shape[1] + " fraction " + fraction;
                     assertArrayEquals(expected, scalar, "scalar " + where);
                     assertArrayEquals(expected, vector, "vector " + where);

@@ -68,6 +68,33 @@ public final class FrameDecoder {
      */
     public static DecodedFrame decode(Sections sections, ImageHeader image, FrameHeader frame, float[][] lfFrame,
                                       int lfWidth, int lfHeight, MediaLimits limits, boolean coefficientsOnly) {
+        return decode(sections, image, frame, lfFrame, lfWidth, lfHeight, limits, coefficientsOnly, frame.numPasses);
+    }
+
+    /**
+     * Decodes a frame, optionally stopping a VarDCT frame at its quantized coefficients and, for a progressive
+     * decode, after its first passes.
+     *
+     * <p>A frame decodes fewer than all of its passes only when every modular channel that is not the residual of
+     * a squeeze step is complete after {@code maxPasses} passes; otherwise every pass is decoded. The HF
+     * coefficients and squeeze residuals of the passes left out are zero.
+     *
+     * @param sections the frame's sections
+     * @param image the image header
+     * @param frame the frame header
+     * @param lfFrame the X, Y and B planes of the LF frame this frame uses, or {@code null}
+     * @param lfWidth the width of the LF frame planes
+     * @param lfHeight the height of the LF frame planes
+     * @param limits the resource bounds
+     * @param coefficientsOnly whether to stop before the dequantization
+     * @param maxPasses the number of leading passes wanted, 0 for the LF only
+     * @return the decoded frame, with the number of passes actually decoded
+     * @throws MediaException.Malformed if the frame is invalid
+     * @throws MediaException.LimitExceeded if it exceeds the limits
+     */
+    public static DecodedFrame decode(Sections sections, ImageHeader image, FrameHeader frame, float[][] lfFrame,
+                                      int lfWidth, int lfHeight, MediaLimits limits, boolean coefficientsOnly,
+                                      int maxPasses) {
         var lfGlobal = LfGlobal.read(sections.lfGlobal(), image, frame, limits);
         var tree = lfGlobal.globalTree();
         var bitDepth = image.bitDepth().bitsPerSample();
@@ -106,7 +133,11 @@ public final class FrameDecoder {
             vd.readHfGlobal(sections.hfGlobal(), tree);
         }
         var numGroups = frame.numGroups();
-        for (var p = 0; p < frame.numPasses; p++) {
+        var passes = frame.numPasses;
+        if (maxPasses < passes && (groups == null || groups.completeAfter(Math.max(maxPasses, 0)))) {
+            passes = Math.max(maxPasses, 0);
+        }
+        for (var p = 0; p < passes; p++) {
             var pass = p;
             run(single, numGroups, index -> {
                 var br = sections.passGroup(pass, index);
@@ -122,7 +153,7 @@ public final class FrameDecoder {
             run(single, numGroups, vd::reconstruct);
         }
         List<ModularChannel> modular = lfGlobal.finishModular();
-        return new DecodedFrame(frame, lfGlobal, varDct, modular);
+        return new DecodedFrame(frame, lfGlobal, varDct, modular, passes);
     }
 
     /**

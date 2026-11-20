@@ -52,7 +52,7 @@ public class ImageEffectsBenchmark {
     @Setup(Level.Trial)
     public void setup() {
         if (!Simd.ENABLED && !"false".equals(System.getProperty("smalt.simd"))) {
-            throw new IllegalStateException("the Vector API is not enabled in the benchmark JVM");
+            throw new IllegalStateException("the Vector API is not enabled in the benchmark JVM (on Windows pass -Dsmalt.simd=true)");
         }
         photo = photo(4032, 3024);
         mark = Pictures.patternRgba(800, 300, true);

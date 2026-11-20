@@ -36,6 +36,11 @@ final class CavlcReader {
     private static final int[] TOKEN_CHROMA_DC;
 
     /**
+     * The {@code coeff_token} table for 4:2:2 chroma DC.
+     */
+    private static final int[] TOKEN_CHROMA_DC_422;
+
+    /**
      * The {@code total_zeros} tables for 4x4 blocks, indexed by {@code totalCoeff - 1}.
      */
     private static final int[][] TOTAL_ZEROS = new int[15][];
@@ -44,6 +49,11 @@ final class CavlcReader {
      * The {@code total_zeros} tables for 4:2:0 chroma DC, indexed by {@code totalCoeff - 1}.
      */
     private static final int[][] TOTAL_ZEROS_CHROMA_DC = new int[3][];
+
+    /**
+     * The {@code total_zeros} tables for 4:2:2 chroma DC, indexed by {@code totalCoeff - 1}.
+     */
+    private static final int[][] TOTAL_ZEROS_CHROMA_DC_422 = new int[7][];
 
     /**
      * The {@code run_before} tables, indexed by {@code min(zerosLeft, 7) - 1}.
@@ -92,12 +102,24 @@ final class CavlcReader {
             }
         }
         TOKEN_CHROMA_DC = build(TOKEN_ROOT, CavlcTables.CHROMA_DC_TOKEN_LENGTH, CavlcTables.CHROMA_DC_TOKEN_CODE, chromaSymbols);
+        var chroma422Symbols = new int[4 * 9];
+        for (var ones = 0; ones < 4; ones++) {
+            for (var total = 0; total < 9; total++) {
+                chroma422Symbols[ones * 9 + total] = (total << 2) | ones;
+            }
+        }
+        TOKEN_CHROMA_DC_422 = build(TOKEN_ROOT, CavlcTables.CHROMA_DC_422_TOKEN_LENGTH,
+                CavlcTables.CHROMA_DC_422_TOKEN_CODE, chroma422Symbols);
         for (var i = 0; i < 15; i++) {
             TOTAL_ZEROS[i] = build(SMALL_ROOT, CavlcTables.TOTAL_ZEROS_LENGTH[i], CavlcTables.TOTAL_ZEROS_CODE[i], null);
         }
         for (var i = 0; i < 3; i++) {
             TOTAL_ZEROS_CHROMA_DC[i] = build(SMALL_ROOT, CavlcTables.CHROMA_DC_TOTAL_ZEROS_LENGTH[i],
                     CavlcTables.CHROMA_DC_TOTAL_ZEROS_CODE[i], null);
+        }
+        for (var i = 0; i < 7; i++) {
+            TOTAL_ZEROS_CHROMA_DC_422[i] = build(SMALL_ROOT, CavlcTables.CHROMA_DC_422_TOTAL_ZEROS_LENGTH[i],
+                    CavlcTables.CHROMA_DC_422_TOTAL_ZEROS_CODE[i], null);
         }
         for (var i = 0; i < 7; i++) {
             RUN_BEFORE[i] = build(SMALL_ROOT, CavlcTables.RUN_BEFORE_LENGTH[i], CavlcTables.RUN_BEFORE_CODE[i], null);
@@ -185,8 +207,8 @@ final class CavlcReader {
      * in {@link #LEVEL}.
      * @param reader the bit reader
      * @param nC the {@code nC} context: 0 and above for luma and chroma AC blocks,
-     * {@code -1} for 4:2:0 chroma DC
-     * @param maxCoeff the {@code maxNumCoeff}: 4, 15 or 16
+     * {@code -1} for 4:2:0 chroma DC, {@code -2} for 4:2:2 chroma DC
+     * @param maxCoeff the {@code maxNumCoeff}: 4 (4:2:0 chroma DC), 8 (4:2:2 chroma DC), 15 or 16
      * @param coeffs receives the coefficients
      * @param coeffOffset the index of the block in {@code coeffs}
      * @param scan maps coefficient index {@code startIdx + k} to its position within the
@@ -225,7 +247,7 @@ final class CavlcReader {
             count -= 6;
             symbol = code == 3 ? 0 : (((code >> 2) + 1) << 2) | (code & 3);
         } else {
-            var table = nC < 0 ? TOKEN_CHROMA_DC : TOKEN[TOKEN_TABLE_OF_NC[nC]];
+            var table = nC < 0 ? (nC == -1 ? TOKEN_CHROMA_DC : TOKEN_CHROMA_DC_422) : TOKEN[TOKEN_TABLE_OF_NC[nC]];
             var entry = table[(int) (cache >>> (64 - TOKEN_ROOT))];
             if (entry <= 0) {
                 if (entry == 0) {
@@ -336,7 +358,8 @@ final class CavlcReader {
         }
         int zerosLeft;
         if (totalCoeff < maxCoeff) {
-            var table = maxCoeff == 4 ? TOTAL_ZEROS_CHROMA_DC[totalCoeff - 1] : TOTAL_ZEROS[totalCoeff - 1];
+            var table = maxCoeff == 4 ? TOTAL_ZEROS_CHROMA_DC[totalCoeff - 1]
+                    : maxCoeff == 8 ? TOTAL_ZEROS_CHROMA_DC_422[totalCoeff - 1] : TOTAL_ZEROS[totalCoeff - 1];
             var entry = table[(int) (cache >>> (64 - SMALL_ROOT))];
             if (entry <= 0) {
                 if (entry == 0) {
@@ -409,5 +432,243 @@ final class CavlcReader {
         reader.count = count;
         reader.next = next;
         return totalCoeff;
+    }
+
+    /**
+     * Decodes one residual block of a slice that may restrict its scanning positions
+     * ({@code residual_block_cavlc()} with the alternative parsing of ITU-T H.264 F.9.2) and stores
+     * its levels at their coefficient list positions, {@code coeffLevel[startIdx + coeffNum]}.
+     *
+     * <p>{@code remapRange}, when not negative, is {@code scan_idx_end - scan_idx_start} of a
+     * slice coding fewer than sixteen scanning positions: the decoded {@code coeff_token} is then
+     * remapped as F.9.2.1 specifies for the block kinds it applies to.
+     *
+     * @param reader the bit reader
+     * @param nC the {@code nC} context: 0 and above, or -1 for 4:2:0 chroma DC
+     * @param startIdx the first coefficient list position of the block
+     * @param endIdx the last coefficient list position of the block
+     * @param maxCoeff the {@code maxCoeff} of F.9.2.2, which selects the {@code total_zeros}
+     * tables
+     * @param remapRange {@code scan_idx_end - scan_idx_start} when the block's {@code coeff_token}
+     * is remapped, -1 otherwise
+     * @param levels receives the levels; the positions {@code startIdx} to {@code endIdx} are
+     * written, the others are left unchanged
+     * @param offset the index of coefficient list position 0 in {@code levels}
+     * @return the {@code TotalCoeff} of the block
+     * @throws MediaException.Malformed if the block is not a valid CAVLC block
+     */
+    int scalableBlock(H264BitReader reader, int nC, int startIdx, int endIdx, int maxCoeff, int remapRange,
+                      int[] levels, int offset) {
+        for (var i = startIdx; i <= endIdx; i++) {
+            levels[offset + i] = 0;
+        }
+        int symbol;
+        if (nC >= 8) {
+            symbol = reader.readBits(6);
+            symbol = symbol == 3 ? 0 : (((symbol >> 2) + 1) << 2) | (symbol & 3);
+        } else {
+            symbol = lookup(reader, nC < 0 ? TOKEN_CHROMA_DC : TOKEN[TOKEN_TABLE_OF_NC[nC]], TOKEN_ROOT);
+        }
+        var totalCoeff = symbol >> 2;
+        var trailingOnes = symbol & 3;
+        if (remapRange >= 0) {
+            var column = TOKEN_TABLE_OF_NC[Math.min(7, nC)];
+            var dX = remapRange + 2;
+            var dY = Math.min(4, remapRange + 2);
+            int target = TOKEN_INDEX[column][totalCoeff * 4 + trailingOnes];
+            if (target < 0 || target > dX * dY - Math.min(7, 1 << (dY - 1))) {
+                throw new MediaException.Malformed("coeff_token out of the scanning range");
+            }
+            var totals = INVERSE_TOTAL[column];
+            var ones = INVERSE_ONES[column];
+            var index = 0;
+            for (var i = 0; i <= target; index++) {
+                if (index >= totals.length) {
+                    throw new MediaException.Malformed("coeff_token out of the scanning range");
+                }
+                if (totals[index] < dX && ones[index] < dY) {
+                    i++;
+                }
+            }
+            totalCoeff = totals[index - 1];
+            trailingOnes = ones[index - 1];
+        }
+        if (totalCoeff == 0) {
+            return 0;
+        }
+        if (totalCoeff > endIdx - startIdx + 1 || trailingOnes > totalCoeff) {
+            throw new MediaException.Malformed("invalid coeff_token");
+        }
+        var values = this.levels;
+        for (var i = 0; i < trailingOnes; i++) {
+            values[i] = 1 - 2 * reader.readBit();
+        }
+        var suffixLength = totalCoeff > 10 && trailingOnes < 3 ? 1 : 0;
+        for (var i = trailingOnes; i < totalCoeff; i++) {
+            var prefix = 0;
+            while (reader.readBit() == 0) {
+                if (++prefix > 25) {
+                    throw new MediaException.Malformed("invalid level_prefix");
+                }
+            }
+            var levelCode = Math.min(15, prefix) << suffixLength;
+            if (suffixLength > 0 || prefix >= 14) {
+                int suffixSize;
+                if (prefix == 14 && suffixLength == 0) {
+                    suffixSize = 4;
+                } else if (prefix >= 15) {
+                    suffixSize = prefix - 3;
+                } else {
+                    suffixSize = suffixLength;
+                }
+                if (suffixSize > 0) {
+                    levelCode += reader.readBits(suffixSize);
+                }
+            }
+            if (prefix >= 15 && suffixLength == 0) {
+                levelCode += 15;
+            }
+            if (prefix >= 16) {
+                levelCode += (1 << (prefix - 3)) - 4096;
+            }
+            if (i == trailingOnes && trailingOnes < 3) {
+                levelCode += 2;
+            }
+            var level = (levelCode & 1) == 0 ? (levelCode + 2) >> 1 : (-levelCode - 1) >> 1;
+            values[i] = level;
+            if (suffixLength == 0) {
+                suffixLength = 1;
+            }
+            if (Math.abs(level) > (3 << (suffixLength - 1)) && suffixLength < 6) {
+                suffixLength++;
+            }
+        }
+        var zerosLeft = 0;
+        if (totalCoeff < endIdx - startIdx + 1) {
+            int[] table;
+            if (maxCoeff <= 4) {
+                table = TOTAL_ZEROS_CHROMA_DC[totalCoeff + 4 - maxCoeff - 1];
+            } else if (maxCoeff <= 8) {
+                table = TOTAL_ZEROS_CHROMA_DC_422[totalCoeff + 8 - maxCoeff - 1];
+            } else if (maxCoeff < 15) {
+                table = TOTAL_ZEROS[totalCoeff + 16 - maxCoeff - 1];
+            } else {
+                table = TOTAL_ZEROS[totalCoeff - 1];
+            }
+            zerosLeft = lookup(reader, table, SMALL_ROOT);
+            if (zerosLeft + totalCoeff > endIdx - startIdx + 1) {
+                throw new MediaException.Malformed("invalid total_zeros");
+            }
+        }
+        var position = totalCoeff - 1 + zerosLeft;
+        for (var i = 0; i < totalCoeff; i++) {
+            levels[offset + startIdx + position] = values[i];
+            if (i < totalCoeff - 1) {
+                if (zerosLeft > 0) {
+                    var run = lookup(reader, RUN_BEFORE[Math.min(zerosLeft, 7) - 1], SMALL_ROOT);
+                    if (run > zerosLeft) {
+                        throw new MediaException.Malformed("invalid run_before");
+                    }
+                    zerosLeft -= run;
+                    position -= run + 1;
+                } else {
+                    position--;
+                }
+            }
+        }
+        return totalCoeff;
+    }
+
+    /**
+     * Decodes one code of a two-level lookup table built by {@link #build}.
+     *
+     * @param reader the bit reader
+     * @param table the lookup table
+     * @param rootBits the root bits of the table
+     * @return the symbol of the code
+     * @throws MediaException.Malformed if the next bits start no code of the table
+     */
+    private static int lookup(H264BitReader reader, int[] table, int rootBits) {
+        var data = reader.data;
+        var next = reader.next;
+        var cache = reader.cache;
+        var count = reader.count;
+        if (count < 32) {
+            var bytes = (63 - count) >>> 3;
+            if (next <= reader.loadLimit) {
+                cache |= ((long) H264BitReader.LONG_BE.get(data, next)) >>> count;
+            }
+            next += bytes;
+            count += bytes << 3;
+        }
+        var entry = table[(int) (cache >>> (64 - rootBits))];
+        if (entry <= 0) {
+            if (entry == 0) {
+                throw new MediaException.Malformed("invalid CAVLC code");
+            }
+            cache <<= rootBits;
+            count -= rootBits;
+            entry = table[((entry >>> 8) & 0x7FFFFF) + (int) (cache >>> (64 - (entry & 0xFF)))];
+            if (entry == 0) {
+                throw new MediaException.Malformed("invalid CAVLC code");
+            }
+        }
+        cache <<= entry & 0xFF;
+        count -= entry & 0xFF;
+        reader.cache = cache;
+        reader.count = count;
+        reader.next = next;
+        return entry >>> 8;
+    }
+
+    /**
+     * The {@code TotalCoeff( coeff_token )} of each {@code coeffTokenIdx} of ITU-T H.264 Table
+     * F-10, for {@code nC} in 0..1, 2..3 and 4..7.
+     */
+    private static final byte[][] INVERSE_TOTAL = {
+            {0, 1, 2, 3, 1, 2, 4, 3, 5, 2, 3, 4, 6, 3, 4, 5, 7, 4, 5, 6, 8, 5, 6, 7, 9, 6, 7, 8, 10, 7, 8, 9, 8, 9, 9,
+                    10, 11, 10, 10, 11, 12, 11, 11, 12, 13, 12, 12, 13, 14, 13, 13, 14, 14, 15, 14, 15, 15, 16, 15,
+                    16, 16, 16},
+            {0, 1, 2, 3, 4, 2, 5, 1, 3, 3, 6, 2, 4, 4, 7, 3, 5, 5, 8, 4, 6, 6, 5, 6, 7, 7, 9, 7, 8, 8, 10, 8, 9, 9,
+                    11, 9, 10, 10, 12, 10, 11, 11, 11, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 15, 14, 15, 15, 15,
+                    16, 16, 16, 16},
+            {0, 1, 2, 3, 4, 5, 6, 7, 2, 3, 8, 3, 4, 4, 5, 5, 1, 6, 6, 9, 2, 7, 7, 3, 4, 8, 8, 10, 5, 9, 6, 7, 8, 9,
+                    10, 11, 9, 10, 11, 12, 10, 11, 12, 13, 11, 12, 13, 12, 13, 13, 14, 14, 14, 14, 15, 15, 15, 15,
+                    16, 16, 16, 16}
+    };
+
+    /**
+     * The {@code TrailingOnes( coeff_token )} of each {@code coeffTokenIdx} of ITU-T H.264 Table
+     * F-10, laid out as {@link #INVERSE_TOTAL}.
+     */
+    private static final byte[][] INVERSE_ONES = {
+            {0, 1, 2, 3, 0, 1, 3, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 0, 0, 1,
+                    2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 1, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 0},
+            {0, 1, 2, 3, 3, 1, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 0, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3,
+                    0, 1, 2, 3, 0, 1, 2, 0, 0, 1, 2, 3, 0, 1, 2, 3, 0, 2, 3, 1, 0, 1, 2, 3, 0, 1, 2},
+            {0, 1, 2, 3, 3, 3, 3, 3, 1, 2, 3, 1, 2, 1, 2, 1, 0, 1, 2, 3, 0, 1, 2, 0, 0, 1, 2, 3, 0, 2, 0, 0, 0, 1, 2,
+                    3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 0, 1, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0}
+    };
+
+    /**
+     * The {@code coeffTokenIdx} of ITU-T H.264 Table F-10, indexed
+     * {@code [column][totalCoeff * 4 + trailingOnes]}, -1 for pairs that do not exist.
+     */
+    private static final byte[][] TOKEN_INDEX = buildTokenIndex();
+
+    /**
+     * Inverts {@link #INVERSE_TOTAL} and {@link #INVERSE_ONES}.
+     *
+     * @return the forward mapping of Table F-10
+     */
+    private static byte[][] buildTokenIndex() {
+        var result = new byte[3][17 * 4];
+        for (var column = 0; column < 3; column++) {
+            java.util.Arrays.fill(result[column], (byte) -1);
+            for (var index = 0; index < INVERSE_TOTAL[column].length; index++) {
+                result[column][INVERSE_TOTAL[column][index] * 4 + INVERSE_ONES[column][index]] = (byte) index;
+            }
+        }
+        return result;
     }
 }

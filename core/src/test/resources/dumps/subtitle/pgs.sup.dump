@@ -1,0 +1,18 @@
+# demux dump of subtitle/pgs.sup; regenerate with -Dsmalt.test.updateDumps=true
+format SUP
+duration 3000000
+seekable true
+track 1 DATA PGS timebase=1/90000 duration=270000 config=none
+packets 6
+0 t1 pts=45000 dts=45000 dur=? flags=KEY size=1930 crc=3f7ac0c6
+1 t1 pts=90000 dts=90000 dur=? flags=- size=48 crc=4e6b0e6f
+2 t1 pts=135000 dts=135000 dur=? flags=- size=30 crc=9e9b19c5
+3 t1 pts=180000 dts=180000 dur=? flags=KEY size=1090 crc=b2b73f8b
+4 t1 pts=225000 dts=225000 dur=? flags=KEY size=1082 crc=65453add
+5 t1 pts=270000 dts=270000 dur=? flags=- size=30 crc=b0f47302
+seek 0: t1@0
+seek 1000000: t1@0
+seek 2000000: t1@3
+seek 3500000: end
+seek 3000000: t1@4
+seek -1000000: t1@0

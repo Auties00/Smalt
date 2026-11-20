@@ -49,14 +49,18 @@ class OpusOptionsTest {
         }
 
         @Test
-        @DisplayName("Builder.format(rate, layout) keeps the layout's channel count and rejects other counts")
+        @DisplayName("Builder.format(rate, layout) keeps the layout and rejects more than 255 channels")
         void formatLayout() {
             assertEquals(OpusEncoderOptions.builder().format(16_000, 1).build(),
                     OpusEncoderOptions.builder().format(16_000, ChannelLayout.MONO).build());
             assertEquals(OpusEncoderOptions.forRealtime().toBuilder().format(24_000, 2).build(),
                     OpusEncoderOptions.forRealtime().toBuilder().format(24_000, ChannelLayout.STEREO).build());
+            assertEquals(ChannelLayout.SURROUND_5_1,
+                    OpusEncoderOptions.builder().format(48_000, ChannelLayout.SURROUND_5_1).build().layout());
             assertThrows(IllegalArgumentException.class,
-                    () -> OpusEncoderOptions.builder().format(48_000, ChannelLayout.SURROUND_5_1).build());
+                    () -> OpusEncoderOptions.builder().format(48_000, ChannelLayout.defaultFor(256)).build());
+            assertThrows(IllegalArgumentException.class,
+                    () -> OpusEncoderOptions.builder().format(48_000, 0).build());
             assertThrows(IllegalArgumentException.class,
                     () -> OpusEncoderOptions.builder().format(44_100, ChannelLayout.STEREO).build());
             assertThrows(NullPointerException.class,

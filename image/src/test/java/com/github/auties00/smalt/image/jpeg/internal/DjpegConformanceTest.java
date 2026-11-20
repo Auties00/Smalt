@@ -87,6 +87,7 @@ class DjpegConformanceTest {
         var expected = switch (layout) {
             case "YUV420" -> ChromaFormat.YUV420;
             case "YUV422" -> ChromaFormat.YUV422;
+            case "YUV440" -> ChromaFormat.YUV440;
             case "MONOCHROME" -> ChromaFormat.MONOCHROME;
             default -> ChromaFormat.YUV444;
         };
@@ -118,5 +119,17 @@ class DjpegConformanceTest {
             }
         }
         assertEquals(md5, md5(out.toByteArray()));
+        if (expected.hasChroma()) {
+            // ImageOps reconstructs the chroma as libjpeg does, the 4:4:0 rows with its h1v2 fancy upsampling
+            var rgba = com.github.auties00.smalt.image.ops.ImageOps.toRgba(picture);
+            var rgb = new ByteArrayOutputStream();
+            rgb.writeBytes(("P6\n" + width + " " + height + "\n255\n").getBytes(StandardCharsets.US_ASCII));
+            for (var y = 0; y < height; y++) {
+                for (var x = 0; x < width; x++) {
+                    rgb.write(rgba.pixels(), y * rgba.stride() + 4 * x, 3);
+                }
+            }
+            assertEquals(md5, md5(rgb.toByteArray()), "ImageOps.toRgba against djpeg");
+        }
     }
 }

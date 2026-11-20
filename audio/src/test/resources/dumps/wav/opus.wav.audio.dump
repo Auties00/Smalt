@@ -1,0 +1,23 @@
+# audio decode dump of wav/opus.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 1033500
+seekable true
+track 0 OPUS rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=e8413dde
+1 frames=4096 crc16=72dc164a
+2 frames=4096 crc16=f1c45f1f
+3 frames=4096 crc16=1df580cd
+4 frames=4096 crc16=c20ebb1e
+5 frames=4096 crc16=52eed4f7
+6 frames=4096 crc16=e4c880a4
+7 frames=4096 crc16=2abb494b
+8 frames=4096 crc16=60e76698
+9 frames=4096 crc16=6e5084e7
+10 frames=4096 crc16=76db25ba
+11 frames=4096 crc16=7cc9703a
+12 frames=456 crc16=038c3851
+seek 0: @sample 0
+seek 344500: @sample 16536
+seek 689000: @sample 33072
+seek 1033500: end
+seek -1000000: @sample 0

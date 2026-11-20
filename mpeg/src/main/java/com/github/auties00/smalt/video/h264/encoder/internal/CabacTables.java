@@ -36,9 +36,9 @@ final class CabacTables {
             NEXT_STATE[(packed << 1) | 1] = (packed & 1) == 1 ? NEXT_STATE_MPS[packed] : NEXT_STATE_LPS[packed];
         }
         for (var state = 0; state < 64; state++) {
-            var lps = 0.5 * Math.pow(0.01875 / 0.5, state / 63.0);
-            COST[state << 1] = (int) Math.round(-Math.log(1 - lps) / Math.log(2) * 256);
-            COST[(state << 1) | 1] = (int) Math.round(-Math.log(lps) / Math.log(2) * 256);
+            var lps = 0.5 * StrictMath.pow(0.01875 / 0.5, state / 63.0);
+            COST[state << 1] = (int) Math.round(-StrictMath.log(1 - lps) / StrictMath.log(2) * 256);
+            COST[(state << 1) | 1] = (int) Math.round(-StrictMath.log(lps) / StrictMath.log(2) * 256);
         }
     }
 

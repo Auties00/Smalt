@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
+import com.github.auties00.smalt.image.PageReader;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.io.MediaSink;
@@ -15,6 +16,8 @@ import com.github.auties00.smalt.spi.ImageCodecProvider;
 import com.github.auties00.smalt.image.avif.AvifDecoder;
 import com.github.auties00.smalt.image.avif.AvifEncoder;
 import com.github.auties00.smalt.image.avif.AvifEncoderOptions;
+import com.github.auties00.smalt.internal.check.LosslessDepth;
+import com.github.auties00.smalt.internal.codec.EncodeMetadata;
 
 import java.util.Optional;
 
@@ -48,8 +51,18 @@ public final class AvifCodecProvider implements ImageCodecProvider {
     }
 
     @Override
+    public boolean decodesRegions(ImageFormat format) {
+        return true;
+    }
+
+    @Override
     public Optional<AnimationReader> openAnimation(MediaSource source, ImageDecoderOptions options) {
         return Optional.of(AvifDecoder.openAnimation(source, options));
+    }
+
+    @Override
+    public Optional<PageReader> openPages(MediaSource source, ImageDecoderOptions options) {
+        return Optional.of(AvifDecoder.openPages(source, options));
     }
 
     @Override
@@ -59,7 +72,16 @@ public final class AvifCodecProvider implements ImageCodecProvider {
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
-        AvifEncoder.encode(picture, settings(options), sink);
+        var prepared = EncodeMetadata.color(picture, options, EncodeMetadata::rgbOnly);
+        picture = prepared.picture();
+        if (options.isLossless()) {
+            picture = LosslessDepth.fit(picture, 12, "avif");
+        }
+        var builder = metadata(settings(options).toBuilder(), options);
+        if (prepared.profile() != null) {
+            builder.colorProfile(prepared.profile());
+        }
+        AvifEncoder.encode(picture, builder.build(), sink);
     }
 
     @Override
@@ -70,8 +92,28 @@ public final class AvifCodecProvider implements ImageCodecProvider {
     @Override
     public AnimationWriter openAnimationWriter(ImageFormat format, int width, int height, ImageEncoderOptions options,
                                                MediaSink sink) {
-        return AvifEncoder.openAnimationWriter(width, height,
-                settings(options).toBuilder().loopCount(options.loopCount()).build(), sink);
+        var color = EncodeMetadata.animationColor(options, true);
+        var builder = metadata(settings(options).toBuilder().loopCount(options.loopCount()), options);
+        if (color.profile() != null) {
+            builder.colorProfile(color.profile());
+        }
+        return color.wrap(AvifEncoder.openAnimationWriter(width, height, builder.build(), sink));
+    }
+
+    /**
+     * Adds the EXIF block, XMP packet and orientation of the generic options to the AVIF options: the
+     * orientation as the {@code irot} and {@code imir} properties and in the EXIF block.
+     *
+     * @param builder the AVIF options
+     * @param options the generic options
+     * @return {@code builder}
+     */
+    private static AvifEncoderOptions.Builder metadata(AvifEncoderOptions.Builder builder,
+                                                       ImageEncoderOptions options) {
+        builder.orientation(EncodeMetadata.displayOrientation(options));
+        EncodeMetadata.exif(options).ifPresent(builder::exif);
+        EncodeMetadata.xmp(options).ifPresent(builder::xmp);
+        return builder;
     }
 
     /**

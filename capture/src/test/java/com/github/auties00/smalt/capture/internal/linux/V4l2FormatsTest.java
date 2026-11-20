@@ -13,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -77,11 +78,17 @@ class V4l2FormatsTest {
         }
 
         @Test
-        @DisplayName("multi-planar-only and read-only nodes are rejected")
+        @DisplayName("multi-planar nodes capture with the multi-planar buffer type, read-only nodes are rejected")
         void unsupportedNodes() {
             var multiPlanar = new FakeCamera();
             multiPlanar.deviceCaps = V4l2.CAP_VIDEO_CAPTURE_MPLANE | V4l2.CAP_STREAMING;
-            assertFalse(V4l2Formats.query(multiPlanar).canCapture());
+            var capability = V4l2Formats.query(multiPlanar);
+            assertTrue(capability.canCapture());
+            assertEquals(V4l2.BUF_TYPE_VIDEO_CAPTURE_MPLANE, capability.bufferType());
+            assertTrue(capability.device(multiPlanar).multiPlanar());
+            var both = new FakeCamera();
+            both.deviceCaps = V4l2.CAP_VIDEO_CAPTURE | V4l2.CAP_VIDEO_CAPTURE_MPLANE | V4l2.CAP_STREAMING;
+            assertEquals(V4l2.BUF_TYPE_VIDEO_CAPTURE, V4l2Formats.query(both).bufferType());
             var readOnly = new FakeCamera();
             readOnly.deviceCaps = V4l2.CAP_VIDEO_CAPTURE;
             assertFalse(V4l2Formats.query(readOnly).canCapture());
@@ -317,7 +324,7 @@ class V4l2FormatsTest {
             var camera = webcam();
             camera.bytesPerLine = 1344;
             var converter = V4l2Formats.negotiate(camera, new V4l2Formats.Offer(V4l2PixelFormat.YUYV, 640, 480, new Rational(30, 1)),
-                    new ScalarConversionKernel());
+                    new ScalarConversionKernel()).converter();
             assertEquals(640, converter.outputWidth());
             assertEquals(480, converter.outputHeight());
             assertEquals(1344 * 479 + 1280, converter.requiredBytes());
@@ -334,15 +341,105 @@ class V4l2FormatsTest {
         }
 
         @Test
-        @DisplayName("separate fields raise Unsupported, interleaved ones are accepted")
+        @DisplayName("every field order is accepted, with the field height of the orders of one field per buffer")
         void fields() {
             var offer = new V4l2Formats.Offer(V4l2PixelFormat.YUYV, 640, 480, new Rational(30, 1));
-            var alternate = webcam();
-            alternate.field = 7;
-            assertThrows(MediaException.Unsupported.class, () -> V4l2Formats.negotiate(alternate, offer, new ScalarConversionKernel()));
-            var interlaced = webcam();
-            interlaced.field = V4l2.FIELD_INTERLACED;
-            assertEquals(480, V4l2Formats.negotiate(interlaced, offer, new ScalarConversionKernel()).outputHeight());
+            int[][] orders = {{V4l2.FIELD_NONE, 480}, {V4l2.FIELD_INTERLACED, 480}, {V4l2.FIELD_INTERLACED_TB, 480},
+                    {V4l2.FIELD_INTERLACED_BT, 480}, {V4l2.FIELD_SEQ_TB, 480}, {V4l2.FIELD_SEQ_BT, 480},
+                    {V4l2.FIELD_TOP, 240}, {V4l2.FIELD_BOTTOM, 240}, {V4l2.FIELD_ALTERNATE, 240}};
+            for (var order : orders) {
+                var camera = webcam();
+                camera.field = order[0];
+                camera.substitute = new int[]{640, order[1], V4l2PixelFormat.YUYV.fourcc()};
+                var negotiated = V4l2Formats.negotiate(camera, offer, new ScalarConversionKernel());
+                assertEquals(480, negotiated.converter().outputHeight(), "field " + order[0]);
+                assertEquals(480, negotiated.layout().height(), "field " + order[0]);
+                assertEquals(order[0] == V4l2.FIELD_ALTERNATE, negotiated.layout().alternate());
+            }
+            var unknown = webcam();
+            unknown.field = 10;
+            assertThrows(MediaException.Unsupported.class, () -> V4l2Formats.negotiate(unknown, offer, new ScalarConversionKernel()));
+            var halved = webcam();
+            halved.substitute = new int[]{640, 240, V4l2PixelFormat.YUYV.fourcc()};
+            assertThrows(MediaException.Unsupported.class, () -> V4l2Formats.negotiate(halved, offer, new ScalarConversionKernel()),
+                    "a progressive frame of half the height is a substitution");
+        }
+
+        @Test
+        @DisplayName("a requested field order is sent with the field height of a one-field order")
+        void requestedField() {
+            var offer = new V4l2Formats.Offer(V4l2PixelFormat.YUYV, 640, 480, new Rational(30, 1));
+            var camera = webcam();
+            camera.echoField = true;
+            var negotiated = V4l2Formats.negotiate(camera, offer, new ScalarConversionKernel(), V4l2.FIELD_ALTERNATE);
+            assertEquals(V4l2.FIELD_ALTERNATE, camera.requestedField);
+            assertEquals(240, camera.current[1]);
+            assertTrue(negotiated.layout().alternate());
+            assertEquals(480, negotiated.converter().outputHeight());
+        }
+
+        @Test
+        @DisplayName("a multi-planar device describes each memory plane and its color in the multi-planar format")
+        void multiPlanar() {
+            var camera = new FakeCamera().format(V4l2PixelFormat.NV12M, new int[]{640, 480});
+            camera.bufferType = V4l2.BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+            camera.deviceCaps = V4l2.CAP_VIDEO_CAPTURE_MPLANE | V4l2.CAP_STREAMING;
+            camera.planeStrides = new int[]{704, 768};
+            camera.color = new int[]{V4l2Colors.COLORSPACE_REC709, 0, V4l2Colors.QUANTIZATION_FULL, 0};
+            assertEquals(List.of(V4l2PixelFormat.NV12M), V4l2Formats.pixelFormats(camera));
+            var offer = new V4l2Formats.Offer(V4l2PixelFormat.NV12M, 640, 480, new Rational(30, 1));
+            var negotiated = V4l2Formats.negotiate(camera, offer, new ScalarConversionKernel());
+            assertEquals(704, negotiated.layout().stride(0));
+            assertEquals(768, negotiated.layout().stride(1));
+            assertEquals(704L * 479 + 640, negotiated.layout().requiredBytes(0));
+            assertEquals(768L * 239 + 640, negotiated.layout().requiredBytes(1));
+            var frame = new byte[negotiated.layout().frameBytes()];
+            assertEquals(new ColorInfo(MatrixCoefficients.BT709, ColorRange.FULL, ColorPrimaries.BT709, TransferCharacteristics.BT709),
+                    negotiated.converter().convert(frame, frame.length).color());
+            camera.reportedPlanes = 1;
+            assertThrows(MediaException.Unsupported.class, () -> V4l2Formats.negotiate(camera, offer, new ScalarConversionKernel()));
+        }
+
+        @Test
+        @DisplayName("a single-planar device skips the formats of several memory planes")
+        void singlePlanarSkipsMultiPlaneFormats() {
+            var camera = new FakeCamera().format(V4l2PixelFormat.NV12M).format(V4l2PixelFormat.YUYV);
+            assertEquals(List.of(V4l2PixelFormat.YUYV), V4l2Formats.pixelFormats(camera));
+        }
+
+        @Test
+        @DisplayName("R'G'B' frames are full range unless the driver reports limited quantization")
+        void rgbRange() {
+            var offer = new V4l2Formats.Offer(V4l2PixelFormat.RGB24, 16, 16, new Rational(30, 1));
+            var camera = new FakeCamera().format(V4l2PixelFormat.RGB24, new int[]{16, 16});
+            var white = new byte[16 * 16 * 3];
+            Arrays.fill(white, (byte) 235);
+            var full = V4l2Formats.negotiate(camera, offer, new ScalarConversionKernel()).converter().convert(white, white.length);
+            assertEquals(MatrixCoefficients.BT709, full.color().matrix());
+            assertEquals(ColorRange.LIMITED, full.color().range());
+            var fullLuma = full.y()[0] & 0xFF;
+            camera.color = new int[]{V4l2Colors.COLORSPACE_SRGB, 0, V4l2Colors.QUANTIZATION_LIMITED, 0};
+            var limited = V4l2Formats.negotiate(camera, offer, new ScalarConversionKernel()).converter().convert(white, white.length);
+            assertEquals(235, limited.y()[0] & 0xFF, "limited-range white is expanded to full-range white");
+            assertTrue(fullLuma < 235, "full-range 235 is darker than white: " + fullLuma);
+        }
+
+        @Test
+        @DisplayName("luma-only frames are full range unless the driver reports limited quantization")
+        void lumaRange() {
+            var offer = new V4l2Formats.Offer(V4l2PixelFormat.GREY, 16, 16, new Rational(30, 1));
+            var camera = new FakeCamera().format(V4l2PixelFormat.GREY, new int[]{16, 16});
+            var frame = new byte[16 * 16];
+            var full = V4l2Formats.negotiate(camera, offer, new ScalarConversionKernel()).converter().convert(frame, frame.length);
+            assertEquals(ColorRange.FULL, full.color().range());
+            camera.color = new int[]{V4l2Colors.COLORSPACE_SRGB, 0, V4l2Colors.QUANTIZATION_LIMITED, 0};
+            var limited = V4l2Formats.negotiate(camera, offer, new ScalarConversionKernel()).converter().convert(frame, frame.length);
+            assertEquals(ColorRange.LIMITED, limited.color().range());
+            var yuv = new V4l2Formats.Offer(V4l2PixelFormat.NV12, 16, 16, new Rational(30, 1));
+            var nv12 = new FakeCamera().format(V4l2PixelFormat.NV12, new int[]{16, 16});
+            var picture = V4l2Formats.negotiate(nv12, yuv, new ScalarConversionKernel()).converter()
+                    .convert(new byte[16 * 24], 16 * 24);
+            assertEquals(ColorRange.LIMITED, picture.color().range(), "Y'CbCr stays limited by default");
         }
 
         @Test

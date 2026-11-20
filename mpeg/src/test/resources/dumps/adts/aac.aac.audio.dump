@@ -1,0 +1,37 @@
+# audio decode dump of adts/aac.aac; regenerate with -Dsmalt.test.updateDumps=true
+format ADTS
+duration 2043356
+seekable true
+track 0 AAC rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=a6b42a60
+1 frames=4096 crc16=6cc30f97
+2 frames=4096 crc16=fda44b29
+3 frames=4096 crc16=7aed3563
+4 frames=4096 crc16=22382abb
+5 frames=4096 crc16=acdc79c6
+6 frames=4096 crc16=4a0ea4fe
+7 frames=4096 crc16=af4bf372
+8 frames=4096 crc16=b7f05f93
+9 frames=4096 crc16=29304502
+10 frames=4096 crc16=74e3bc66
+11 frames=4096 crc16=ef645d0b
+12 frames=4096 crc16=8c0ab3be
+13 frames=4096 crc16=8043de39
+14 frames=4096 crc16=6316b416
+15 frames=4096 crc16=0a45c85d
+16 frames=4096 crc16=f0ac9387
+17 frames=4096 crc16=39887338
+18 frames=4096 crc16=d1fc3e8e
+19 frames=4096 crc16=c2224c7d
+20 frames=4096 crc16=060d2e2a
+21 frames=4096 crc16=d4c2a1ec
+seek 0: @sample 0
+seek 681118: @sample 30037
+seek 1362237: @sample 60075
+seek 2043356: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format ADTS
+  duration -1
+  seekable false
+  track 0 AAC rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]

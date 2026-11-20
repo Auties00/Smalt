@@ -154,6 +154,37 @@ class DnxhdEncoderTest {
         assertTrue(smaltPsnr >= minimumPsnr, label + " Smalt PSNR " + smaltPsnr);
     }
 
+    @Test
+    @DisplayName("signals a matrix the header cannot name as an out-of-band color volume that ffmpeg decodes as it decodes BT.709")
+    void outOfBandVolume(@TempDir Path directory) {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var source = IntraTesting.sourceFrames(320, 240, "yuv422p10le", 1).stream()
+                .map(picture -> (Picture) ((com.github.auties00.smalt.image.Yuv16Picture) picture).toBuilder()
+                        .color(ColorInfo.BT709_LIMITED.withMatrix(com.github.auties00.smalt.image.MatrixCoefficients.BT601))
+                        .build())
+                .toList();
+        var options = DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_HQX).toBuilder().frameRate(FRAME_RATE).build();
+        var encoder = new DnxhdEncoder(320, 240, options);
+        var packets = encode(source, encoder);
+        var data = packets.getFirst().data();
+        assertEquals(3, (data[0x2C] >>> 1) & 3, "CLV 11b: out of band");
+        var file = mux(packets, encoder, directory.resolve("bt601.mov"));
+        Oracle.assertDecodesCleanly(file);
+        // the same frame labeled BT.709 (CLV 00b) decodes to the same samples
+        var relabeled = data.clone();
+        relabeled[0x2C] = (byte) (relabeled[0x2C] & ~0x06);
+        var bt709 = mux(List.of(packets.getFirst().withData(relabeled)), encoder, directory.resolve("bt709.mov"));
+        assertTrue(java.util.Arrays.equals(IntraTesting.ffmpegDecode(bt709, "yuv422p10le", 0),
+                IntraTesting.ffmpegDecode(file, "yuv422p10le", 0)));
+        var ours = new ByteArrayOutputStream();
+        new DnxhdDecoder().decode(packets.getFirst(), frame -> {
+            assertEquals(com.github.auties00.smalt.image.MatrixCoefficients.UNSPECIFIED,
+                    ((com.github.auties00.smalt.image.Yuv16Picture) frame.picture()).color().matrix());
+            ours.writeBytes(IntraTesting.raw(frame.picture(), false));
+        });
+        assertTrue(IntraTesting.psnr(raw(source), ours.toByteArray(), true, 1023) > 35);
+    }
+
     /**
      * Returns the alternate color space flag of the first macroblock of every scan line of a
      * single-unit frame.

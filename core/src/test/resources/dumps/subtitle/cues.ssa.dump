@@ -1,0 +1,14 @@
+# demux dump of subtitle/cues.ssa; regenerate with -Dsmalt.test.updateDumps=true
+format ASS
+duration 2000000
+seekable true
+track 1 DATA ASS timebase=1/1000 duration=2000 config=399:b55f594c
+packets 3
+0 t1 pts=0 dts=0 dur=400 flags=KEY size=34 crc=6b5fea56
+1 t1 pts=500 dts=500 dur=400 flags=KEY size=39 crc=09af3a32
+2 t1 pts=1250 dts=1250 dur=750 flags=KEY size=39 crc=68d3a4a1
+seek 0: t1@0
+seek 666666: t1@1
+seek 1333333: t1@2
+seek 2000000: end
+seek -1000000: t1@0

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.internal.task;
 
+import com.github.auties00.smalt.testkit.Skip;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks the task shapes of the shared worker pool beyond bands: results in submission order,
@@ -449,7 +449,7 @@ class ParallelTasksTest {
         @Test
         @DisplayName("brings every helper into a batch after a narrow batch, however the wake-ups are chained")
         void fullWidth() {
-            assumeTrue(ParallelBands.THREADS >= 4, "needs at least four threads");
+            Skip.unless(ParallelBands.THREADS >= 4, "env:threads", "needs at least four threads");
             ParallelBands.run(2, band -> spin(ConcurrentHashMap.newKeySet()));
             for (var round = 0; round < 50; round++) {
                 var width = ParallelBands.THREADS;

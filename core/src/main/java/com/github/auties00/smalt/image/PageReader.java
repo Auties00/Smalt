@@ -2,9 +2,11 @@ package com.github.auties00.smalt.image;
 
 import com.github.auties00.smalt.MediaException;
 
+import java.util.List;
+
 /**
- * Reads the pages of a multi-image file, such as the directories of a multi-page TIFF or the
- * entries of an icon, in any order.
+ * Reads the pages of a multi-image file, such as the directories of a multi-page TIFF, the
+ * entries of an icon or the master images of a HEIF file, in any order.
  *
  * <p>Pages are independent images: unlike the frames of an {@link AnimationReader}, they have no
  * timing, are not composited onto a shared canvas, and may differ in size, depth and color type.
@@ -50,6 +52,20 @@ public interface PageReader extends AutoCloseable {
      * @throws MediaException.Io            if reading the source fails
      */
     DecodedImage read(int index);
+
+    /**
+     * Returns the groups of related pages the file declares, such as the left and right views of a stereo pair.
+     *
+     * <p>A page may belong to several groups or to none. The groups are known when the reader opens and do not
+     * change.
+     *
+     * @implSpec The default implementation returns an empty list.
+     *
+     * @return the groups in the order the file declares them, unmodifiable, empty when the file declares none
+     */
+    default List<PageGroup> groups() {
+        return List.of();
+    }
 
     /**
      * Releases the resources of the reader; the source it reads is not closed.

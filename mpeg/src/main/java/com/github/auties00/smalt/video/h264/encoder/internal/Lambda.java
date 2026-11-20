@@ -26,7 +26,7 @@ final class Lambda {
 
     static {
         for (var qp = 0; qp < 52; qp++) {
-            var ssd = 0.85 * Math.pow(2, (qp - 12) / 3.0);
+            var ssd = 0.85 * StrictMath.pow(2, (qp - 12) / 3.0);
             SSD[qp] = (int) Math.round(256 * ssd);
             SAD[qp] = Math.max(1, (int) Math.round(256 * Math.sqrt(ssd)));
         }

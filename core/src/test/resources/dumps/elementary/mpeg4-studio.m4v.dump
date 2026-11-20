@@ -1,0 +1,16 @@
+# demux dump of elementary/mpeg4-studio.m4v; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG4_VIDEO
+duration -1
+seekable true
+track 1 VIDEO MPEG4_PART2 timebase=1/30 duration=? config=60:4e5999b6
+  video 0x0 orientation=NORMAL sar=1/1
+packets 4
+0 t1 pts=0 dts=0 dur=1 flags=KEY size=9596 crc=b92acdb5
+1 t1 pts=1 dts=1 dur=1 flags=KEY size=15 crc=82bc4a18
+2 t1 pts=2 dts=2 dur=1 flags=KEY size=4225 crc=b4e635ca
+3 t1 pts=? dts=? dur=1 flags=- size=4 crc=84396d47
+seek 0: t1@0
+seek 33333: t1@0
+seek 66666: t1@1
+seek 100000: end
+seek -1000000: t1@0

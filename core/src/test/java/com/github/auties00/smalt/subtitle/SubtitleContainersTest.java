@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -63,7 +64,9 @@ class SubtitleContainersTest {
             }
             muxer.finish();
         }
-        return sink.toByteArray();
+        var data = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("subtitles-" + codec.name().toLowerCase(java.util.Locale.ROOT) + ".bin", data);
+        return data;
     }
 
     private static List<SubtitleCue> read(byte[] file, SubtitleMarkup markup) {
@@ -257,6 +260,51 @@ class SubtitleContainersTest {
                     assertTrue(srt.contains("<i>Hello</i> world"), srt);
                     assertTrue(srt.contains("Overlap \u00E9\nsecond line"), srt);
                 }
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(value = Brand.class)
+        @DisplayName("keeps the size of a 3GPP track and the anchored positions measured in it")
+        void sizedTrack(Brand brand) {
+            var track = SubtitleEncoder.track(Codec.MOV_TEXT, 1).toBuilder().size(640, 360).build();
+            var cue = SubtitleCue.of(0, 1_000_000, "{\\an7\\pos(96,72)}Top left");
+            var packet = new SubtitleEncoder(track).encode(cue, SubtitleMarkup.ASS);
+            assertTrue(new String(packet.data(), StandardCharsets.ISO_8859_1).contains("tbox"), "a tbox in the region");
+            var unsized = new SubtitleEncoder(SubtitleEncoder.track(Codec.MOV_TEXT, 1)).encode(cue, SubtitleMarkup.ASS);
+            assertTrue(!new String(unsized.data(), StandardCharsets.ISO_8859_1).contains("tbox"), "no region, no tbox");
+            var expected = new SubtitleDecoder(track).decode(packet, SubtitleMarkup.ASS);
+            assertTrue(expected.text().contains("pos("), expected.text());
+            var sink = MediaSink.memory();
+            try (var muxer = brand.muxer(sink)) {
+                muxer.addTrack(track);
+                muxer.writePacket(packet);
+                muxer.finish();
+            }
+            var file = sink.toByteArray();
+            com.github.auties00.smalt.testkit.validate.Validators.assertValid("subtitles-sized.bin", file);
+            var tkhd = new String(file, StandardCharsets.ISO_8859_1).indexOf("tkhd");
+            var version = file[tkhd + 4] & 0xFF;
+            var size = java.nio.ByteBuffer.wrap(file, tkhd + 4 + (version == 1 ? 88 : 76), 8);
+            assertEquals(640 << 16, size.getInt(), "tkhd width");
+            assertEquals(360 << 16, size.getInt(), "tkhd height");
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
+                var read = assertInstanceOf(DataTrack.class, demuxer.tracks().getFirst());
+                assertEquals(640, read.width());
+                assertEquals(360, read.height());
+                var first = demuxer.read();
+                assertArrayEquals(packet.data(), first.data());
+                assertEquals(expected, new SubtitleDecoder(read).decode(first, SubtitleMarkup.ASS));
+            }
+        }
+
+        /** The MP4 muxers a 3GPP track is written with. */
+        enum Brand {
+            PROGRESSIVE, FRAGMENTED;
+
+            Muxer muxer(MediaSink sink) {
+                return this == PROGRESSIVE ? new Mp4Muxer(sink)
+                        : new com.github.auties00.smalt.container.mp4.FragmentedMp4Muxer(sink);
             }
         }
 

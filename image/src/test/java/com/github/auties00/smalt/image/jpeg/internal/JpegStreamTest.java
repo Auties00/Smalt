@@ -6,6 +6,7 @@ import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jpeg.MjpegDecoder;
@@ -186,7 +187,8 @@ class JpegStreamTest {
                     .sequential(new int[]{0, 1, 2}));
             var expected = lh == ch && lv == cv ? ChromaFormat.YUV444
                     : lh == 2 * ch && lv == cv && lh == hMax ? ChromaFormat.YUV422
-                    : lh == 2 * ch && lv == 2 * cv ? ChromaFormat.YUV420 : ChromaFormat.YUV444;
+                    : lh == 2 * ch && lv == 2 * cv ? ChromaFormat.YUV420
+                    : lh == ch && lv == 2 * cv && lv == vMax ? ChromaFormat.YUV440 : ChromaFormat.YUV444;
             assertEquals(expected, picture.chromaFormat());
             assertEquals(WIDTH, picture.width());
             assertEquals(HEIGHT, picture.height());
@@ -259,10 +261,10 @@ class JpegStreamTest {
             assertTrue(stripped.length < jpeg.length);
             var expected = JpegTestSupportInternal.planar((YuvPicture) decode(jpeg));
             assertArrayEquals(expected, JpegTestSupportInternal.planar((YuvPicture) decode(stripped)));
-            assertArrayEquals(expected, JpegTestSupportInternal.planar(new MjpegDecoder().decodeFrame(stripped, 0, stripped.length)));
+            assertArrayEquals(expected, JpegTestSupportInternal.planar((YuvPicture) new MjpegDecoder().decodeFrame(stripped, 0, stripped.length)));
             var padded = new byte[stripped.length + 10];
             System.arraycopy(stripped, 0, padded, 5, stripped.length);
-            assertArrayEquals(expected, JpegTestSupportInternal.planar(new MjpegDecoder().decodeFrame(padded, 5, stripped.length)));
+            assertArrayEquals(expected, JpegTestSupportInternal.planar((YuvPicture) new MjpegDecoder().decodeFrame(padded, 5, stripped.length)));
         }
 
         @Test
@@ -391,56 +393,71 @@ class JpegStreamTest {
     @DisplayName("unsupported and invalid")
     class Unsupported {
         @ParameterizedTest(name = "SOF 0x{0}")
-        @CsvSource({"C7, jpeg lossless", "CB, jpeg lossless", "CF, jpeg lossless",
-                "C5, jpeg hierarchical", "C6, jpeg hierarchical", "CD, jpeg hierarchical", "CE, jpeg hierarchical",
-                "F7, jpeg-ls"})
-        @DisplayName("names the unsupported coding process")
-        void codingProcess(String marker, String name) {
+        @ValueSource(strings = {"C5", "C6", "C7", "CD", "CE", "CF"})
+        @DisplayName("rejects a differential frame without a DHP segment as malformed, and still probes it")
+        void codingProcess(String marker) {
             var writer = TestJpegWriter.fromPlanes(8, 8, new int[]{1}, new int[]{1}, new int[]{1}, new byte[][]{plane(8, 8, 0)}, 90);
             writer.sofMarker = Integer.parseInt(marker, 16);
             var jpeg = writer.sequential(new int[]{0});
-            var exception = assertThrows(MediaException.Unsupported.class, () -> decode(jpeg));
-            assertEquals(name, exception.format());
+            var exception = assertThrows(MediaException.Malformed.class, () -> decode(jpeg));
+            assertTrue(exception.getMessage().contains("without the DHP segment"), exception.getMessage());
             assertEquals(8, JpegDecoder.probe(MediaSource.of(jpeg)).width());
         }
 
-        @ParameterizedTest(name = "precision {0}")
-        @CsvSource({"12, jpeg 12-bit precision", "16, jpeg 16-bit precision"})
-        @DisplayName("names the unsupported precision")
-        void precision(int precision, String name) {
+        @Test
+        @DisplayName("names the unsupported 16-bit DCT precision")
+        void precision() {
             var writer = TestJpegWriter.fromPlanes(8, 8, new int[]{1}, new int[]{1}, new int[]{1}, new byte[][]{plane(8, 8, 0)}, 90);
-            writer.precision = precision;
+            writer.precision = 16;
             writer.sofMarker = 0xC1;
-            assertEquals(name, assertThrows(MediaException.Unsupported.class, () -> decode(writer.sequential(new int[]{0}))).format());
+            assertEquals("jpeg 16-bit precision",
+                    assertThrows(MediaException.Unsupported.class, () -> decode(writer.sequential(new int[]{0}))).format());
         }
 
-        @ParameterizedTest(name = "{0} components")
-        @ValueSource(ints = {2, 5})
-        @DisplayName("names frames without a color space")
-        void componentCount(int count) {
-            var ids = new int[count];
-            var ones = new int[count];
-            var planes = new byte[count][];
-            for (var c = 0; c < count; c++) {
-                ids[c] = c + 1;
-                ones[c] = 1;
-                planes[c] = plane(8, 8, c);
+        @ParameterizedTest(name = "precision {0}")
+        @ValueSource(ints = {0, 1, 7, 9, 10, 11, 13, 15, 255})
+        @DisplayName("rejects a DCT precision other than 8, 12 and 16 as malformed")
+        void invalidPrecision(int precision) {
+            var writer = TestJpegWriter.fromPlanes(8, 8, new int[]{1}, new int[]{1}, new int[]{1}, new byte[][]{plane(8, 8, 0)}, 90);
+            writer.precision = precision;
+            writer.sofMarker = 0xC2;
+            assertThrows(MediaException.Malformed.class, () -> decode(writer.sequential(new int[]{0})));
+        }
+
+        @ParameterizedTest(name = "SOF 0x{0}")
+        @ValueSource(strings = {"C0", "C1"})
+        @DisplayName("decodes a 12-bit Huffman sequential frame, baseline or extended, its transform centered at 2048")
+        void twelveBit(String marker) {
+            var writer = TestJpegWriter.fromPlanes(8, 8, new int[]{1}, new int[]{1}, new int[]{1}, new byte[][]{plane(8, 8, 0)}, 90);
+            writer.precision = 12;
+            writer.sofMarker = Integer.parseInt(marker, 16);
+            var jpeg = writer.sequential(new int[]{0});
+            var wide = (Yuv16Picture) JpegDecoder.decode(MediaSource.of(jpeg),
+                    ImageDecoderOptions.builder().highBitDepth(true).build()).picture();
+            assertEquals(12, wide.bitDepth());
+            var reader = new JpegReader(jpeg, 0, jpeg.length, MediaLimits.DEFAULT);
+            var coefficients = reader.decodeCoefficients();
+            var block = new int[64];
+            var expected = new short[64];
+            Idct12.transformBlock(coefficients.coefficients(0), 0, coefficients.quantization(0), block, expected, 0, 8, 0);
+            for (var y = 0; y < 8; y++) {
+                for (var x = 0; x < 8; x++) {
+                    assertEquals(expected[y * 8 + x], wide.y()[y * wide.yStride() + x]);
+                }
             }
-            var writer = TestJpegWriter.fromPlanes(8, 8, ids, ones, ones, planes, 90);
-            var scan = new int[Math.min(count, 4)];
-            for (var i = 0; i < scan.length; i++) {
-                scan[i] = i;
-            }
-            var jpeg = count > 4 ? writer.sequential(scan, new int[]{4}) : writer.sequential(scan);
-            assertEquals("jpeg with " + count + " components", assertThrows(MediaException.Unsupported.class, () -> decode(jpeg)).format());
+            // the 8-bit-coded content sits near 2048 + (v - 128) at 12 bits
+            assertTrue(Math.abs(wide.y()[0] - 2048 - (plane(8, 8, 0)[0] & 0xFF) + 128) < 32);
         }
 
         @Test
-        @DisplayName("names hierarchical markers and the JPG extension marker, rejects non-JPEG input")
+        @DisplayName("rejects an empty DHP segment and a 3-byte restart interval, names the JPG extension marker, rejects"
+                + " non-JPEG input")
         void markers() {
             var jpeg = JpegEncoder.encode(RgbaPicture.allocate(8, 8, false), JpegEncoderOptions.ofQuality(90));
             var dhp = insertBefore(jpeg, 0xDB, new byte[]{(byte) 0xFF, (byte) 0xDE, 0, 2});
-            assertEquals("jpeg hierarchical", assertThrows(MediaException.Unsupported.class, () -> decode(dhp)).format());
+            assertThrows(MediaException.Malformed.class, () -> decode(dhp));
+            var wideRestart = insertBefore(jpeg, 0xDB, new byte[]{(byte) 0xFF, (byte) 0xDD, 0, 5, 0, 0, 1});
+            assertThrows(MediaException.Malformed.class, () -> decode(wideRestart));
             var jpg = insertBefore(jpeg, 0xDB, new byte[]{(byte) 0xFF, (byte) 0xC8, 0, 2});
             assertEquals("jpeg extensions", assertThrows(MediaException.Unsupported.class, () -> decode(jpg)).format());
             assertThrows(MediaException.Malformed.class, () -> decode(new byte[0]));

@@ -21,6 +21,9 @@ final class BmpFiles {
     byte[] pixelData;
     Long dataOffset;
     byte[] profile;
+    Integer colorSpace;
+    int[] endpoints;
+    int[] gammas;
 
     static BmpFiles of(int width, int height, int bitCount) {
         var files = new BmpFiles();
@@ -66,6 +69,14 @@ final class BmpFiles {
         return this;
     }
 
+    /** Sets the V4 color space type, its nine 2.30 endpoint values and three 16.16 gammas. */
+    BmpFiles colorSpace(int type, int[] endpointValues, int[] gammaValues) {
+        colorSpace = type;
+        endpoints = endpointValues;
+        gammas = gammaValues;
+        return this;
+    }
+
     byte[] bytes() {
         var info = ByteBuffer.allocate(Math.max(headerSize, 124)).order(ByteOrder.LITTLE_ENDIAN);
         info.putInt(0, headerSize);
@@ -102,6 +113,15 @@ final class BmpFiles {
         var offset = dataOffset != null && dataOffset != 0 ? dataOffset : headerEnd + paletteBytes;
         var offsetField = dataOffset != null ? dataOffset : offset;
         var profileOffset = offset + (pixelData == null ? 0 : pixelData.length);
+        if (colorSpace != null && headerSize >= 108) {
+            info.putInt(56, colorSpace);
+            for (var i = 0; i < 9; i++) {
+                info.putInt(60 + i * 4, endpoints[i]);
+            }
+            for (var i = 0; i < 3; i++) {
+                info.putInt(96 + i * 4, gammas[i]);
+            }
+        }
         if (profile != null && headerSize >= 124) {
             info.putInt(56, 0x4D424544);
             info.putInt(112, (int) (profileOffset - 14));

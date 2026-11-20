@@ -1,0 +1,21 @@
+# video decode dump of ogg/theora.ogv; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 600000
+seekable true
+track 0 THEORA 96x64 timebase=1/10
+0 pts=0 dur=1 key=true 96x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=7281b309 u=b72339d7 v=cfa0a9f8
+1 pts=1 dur=1 key=false 96x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=8b197d26 u=4ba985eb v=e58629ae
+2 pts=2 dur=1 key=false 96x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=ff201505 u=f0cd1d63 v=db3dfee2
+3 pts=3 dur=1 key=false 96x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=e680ccdc u=6d02c423 v=69f1ab92
+4 pts=4 dur=1 key=true 96x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=9ca2a7e0 u=4a14f594 v=8ad7c955
+5 pts=5 dur=1 key=false 96x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=e260be15 u=f3f2332f v=1326084f
+seek 0: @0
+seek 200000: @2
+seek 400000: @4
+seek 600000: end
+seek -1000000: @0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  track 0 THEORA 96x64 timebase=1/10

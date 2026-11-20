@@ -5,7 +5,7 @@ package com.github.auties00.smalt.audio.amr.internal.nb;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.abs;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.add;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.divS;
-import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.fxpMac;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.extractH;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lAdd;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lComp;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lExtractHi;
@@ -284,7 +284,7 @@ final class GainQuantizer {
         var expGcode0 = pred[0];
         var fracGcode0 = pred[1];
         if (mode == Mode.MR122) {
-            gains[GAIN_COD] = gCode(xn2, y2);
+            gains[GAIN_COD] = gCode(xn2, y2, overflow);
             ana[anaOffset++] = qGainCode(mode, expGcode0, fracGcode0, gains, overflow);
         } else {
             calcFiltEnergies(mode, xn, xn2, y1, y2, gCoeff, fracCoeff, expCoeff, overflow);
@@ -479,48 +479,34 @@ final class GainQuantizer {
     /**
      * Computes the optimal codebook gain of the 12.2 kbit/s mode ({@code G_code}).
      *
+     * @implNote This implementation saturates the correlations as the TS 26.073 reference does, where
+     * opencore's version wraps them on loud input.
      * @param xn2 the target updated by the adaptive codebook
      * @param y2 the filtered codevector
+     * @param overflow the saturation flag
      * @return the gain, Q1
      */
-    static short gCode(short[] xn2, short[] y2) {
-        var s = 0;
+    static short gCode(short[] xn2, short[] y2, Flag overflow) {
+        var s = 1;
         for (var i = 0; i < L_SUBFR; i++) {
-            s = fxpMac(xn2[i], y2[i] >> 1, s);
+            s = lMac(s, xn2[i], (short) (y2[i] >> 1), overflow);
         }
-        s <<= 1;
-        var expXy = normL(s + 1);
-        short xy;
-        if (expXy < 17) {
-            xy = (short) (s >> (17 - expXy));
-        } else {
-            xy = (short) (s << (expXy - 17));
-        }
+        var expXy = normL(s);
+        var xy = extractH(lShl(s, expXy));
         if (xy <= 0) {
             return 0;
         }
         s = 0;
         for (var i = 0; i < L_SUBFR; i++) {
-            var temp = (short) (y2[i] >> 1);
-            s += (temp * temp) >> 2;
+            var scaled = (short) (y2[i] >> 1);
+            s = lMac(s, scaled, scaled, overflow);
         }
-        s <<= 3;
         var expYy = normL(s);
-        short yy;
-        if (expYy < 16) {
-            yy = (short) (s >> (16 - expYy));
-        } else {
-            yy = (short) (s << (expYy - 16));
-        }
+        var yy = extractH(lShl(s, expYy));
+        xy = shr(xy, (short) 1, overflow);
         var gain = divS(xy, yy);
-        var i = expXy + 5;
-        i -= expYy;
-        if (i > 1) {
-            gain = (short) (gain >> (i - 1));
-        } else {
-            gain = (short) (gain << (1 - i));
-        }
-        return gain;
+        var shift = sub(add(expXy, (short) 5, overflow), expYy, overflow);
+        return shl(shr(gain, shift, overflow), (short) 1);
     }
 
     /**
@@ -567,9 +553,8 @@ final class GainQuantizer {
         if (both) {
             s1 = 0;
             for (var i = 0; i < L_SUBFR; i++) {
-                s1 = fxpMac(xn2[i], scaledY2[i], s1);
+                s1 = lMac(s1, xn2[i], scaledY2[i], overflow);
             }
-            s1 = s1 << 1;
             exp = normL(s1);
             var frac = (short) (lShl(s1, exp) >> 16);
             exp = (short) (6 - exp);
@@ -590,17 +575,29 @@ final class GainQuantizer {
      * @param overflow the saturation flag
      */
     private void calcTargetEnergy(short[] xn, Flag overflow) {
-        var s = 0;
+        var energy = 0L;
         for (var i = 0; i < L_SUBFR; i++) {
-            s = fxpMac(xn[i], xn[i], s);
+            energy += xn[i] * xn[i];
         }
-        if (s < 0) {
-            overflow.value = true;
-            s = Integer.MAX_VALUE;
-        }
+        var s = saturatedEnergy(energy, overflow);
         var exp = normL(s);
         targetEn[1] = (short) (lShl(s, exp) >> 16);
         targetEn[0] = (short) (16 - exp);
+    }
+
+    /**
+     * Returns the saturating sum of the doubled squares the reference accumulates for an energy.
+     *
+     * @param energy the plain sum of the squares
+     * @param overflow the flag raised on saturation
+     * @return {@code 2 * energy}, saturated to 32 bits
+     */
+    static int saturatedEnergy(long energy, Flag overflow) {
+        if (energy << 1 > Integer.MAX_VALUE) {
+            overflow.value = true;
+            return Integer.MAX_VALUE;
+        }
+        return (int) (energy << 1);
     }
 
     /**
@@ -619,27 +616,34 @@ final class GainQuantizer {
      */
     static short calcUnfiltEnergies(short[] res, short[] exc, int excOffset, short[] code, short gainPit, short[] fracEn,
                                     short[] expEn, Flag overflow) {
-        var s1 = 0;
-        var s2 = 0;
-        var s3 = 0;
+        var energyRes = 0L;
+        var energyExc = 0L;
+        var cross = 0L;
+        var crossMagnitude = 0L;
         var s4 = 0;
         for (var i = 0; i < L_SUBFR; i++) {
             var tmp1 = res[i];
             var tmp2 = exc[excOffset + i];
-            s1 = fxpMac(tmp1, tmp1, s1);
-            s2 = fxpMac(tmp2, tmp2, s2);
-            s3 = fxpMac(tmp2, code[i], s3);
+            energyRes += tmp1 * tmp1;
+            energyExc += tmp2 * tmp2;
+            var product = tmp2 * code[i];
+            cross += product;
+            crossMagnitude += Math.abs(product);
             var lTemp = lMult(tmp2, gainPit, overflow);
             lTemp = lShl(lTemp, (short) 1);
             tmp2 = sub(tmp1, round(lTemp, overflow), overflow);
             s4 = lMac(s4, tmp2, tmp2, overflow);
         }
-        s1 = s1 << 1;
-        s2 = s2 << 1;
-        s3 = s3 << 1;
-        if ((s1 & 0x80000000) != 0) {
-            s1 = Integer.MAX_VALUE;
-            overflow.value = true;
+        var s1 = saturatedEnergy(energyRes, overflow);
+        var s2 = saturatedEnergy(energyExc, overflow);
+        int s3;
+        if (crossMagnitude <= 0x3FFFFFFFL) {
+            s3 = (int) cross << 1;
+        } else {
+            s3 = 0;
+            for (var i = 0; i < L_SUBFR; i++) {
+                s3 = lMac(s3, exc[excOffset + i], code[i], overflow);
+            }
         }
         if (s1 < 400) {
             fracEn[0] = 0;
@@ -648,10 +652,6 @@ final class GainQuantizer {
             var exp = normL(s1);
             fracEn[0] = (short) (lShl(s1, exp) >> 16);
             expEn[0] = (short) (15 - exp);
-        }
-        if ((s2 & 0x80000000) != 0) {
-            s2 = Integer.MAX_VALUE;
-            overflow.value = true;
         }
         var exp = normL(s2);
         fracEn[1] = (short) (lShl(s2, exp) >> 16);

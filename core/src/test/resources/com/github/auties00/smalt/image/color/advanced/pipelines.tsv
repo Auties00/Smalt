@@ -1,0 +1,13 @@
+mpe-rgb	D2B0	0:1,0:1,0:1
+mpe-rgb	D2B3	0:1,0:1,0:1
+mpe-rgb	B2D0	0:0.9642,0:1,0:0.8249
+mpe-cmyk	D2B0	0:1,0:1,0:1,0:1
+mpe-cmyk	B2D0	0:100,-128:127,-128:127
+mpe-gray	D2B0	0:1
+mpe-gray	B2D0	0:0.9642,0:1,0:0.8249
+mpe-2clr	D2B0	0:1,0:1
+mpe-6clr	D2B0	0:1,0:1,0:1,0:1,0:1,0:1
+link-mpe-rgb	D2B0	0:1,0:1,0:1
+link-mpe-lab-rgb	D2B0	0:100,-128:127,-128:127
+abstract-mpe-xyz	D2B0	0:1,0:1,0:1
+abstract-mpe-lab	D2B0	0:100,-128:127,-128:127

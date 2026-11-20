@@ -1,0 +1,37 @@
+# audio decode dump of dts/dts.dts; regenerate with -Dsmalt.test.updateDumps=true
+format DTS
+duration 2008526
+seekable true
+track 0 DTS rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=31c5d213
+1 frames=4096 crc16=95afc703
+2 frames=4096 crc16=94649742
+3 frames=4096 crc16=a29188e2
+4 frames=4096 crc16=c397d840
+5 frames=4096 crc16=a9d43517
+6 frames=4096 crc16=6b1afd63
+7 frames=4096 crc16=cb580b30
+8 frames=4096 crc16=cfdcf758
+9 frames=4096 crc16=2cb44ded
+10 frames=4096 crc16=57ef9b3f
+11 frames=4096 crc16=e4043c49
+12 frames=4096 crc16=dab962ca
+13 frames=4096 crc16=f55deab9
+14 frames=4096 crc16=c260edb2
+15 frames=4096 crc16=de37d850
+16 frames=4096 crc16=9ff519c3
+17 frames=4096 crc16=4f0664a1
+18 frames=4096 crc16=1bb21c93
+19 frames=4096 crc16=0efa2a4a
+20 frames=4096 crc16=e84713d8
+21 frames=2560 crc16=a8d9a3f0
+seek 0: @sample 0
+seek 669508: @sample 29525
+seek 1339017: @sample 59051
+seek 2008526: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format DTS
+  duration -1
+  seekable false
+  track 0 DTS rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]

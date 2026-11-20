@@ -60,7 +60,7 @@ import java.util.function.Consumer;
  * <p>Every fork runs exactly one operation, so the score is the first-use latency, compiler
  * warm-up included; read the percentiles over the forks. The {@code mode} parameter selects how
  * the kernels are dispatched, set before any kernel class initializes: {@code VECTOR} (the
- * Vector API kernels, the default) and {@code SCALAR} ({@code smalt.simd=false}). Inputs come from ffmpeg and a cached LibriVox
+ * Vector API kernels, {@code smalt.simd=true}) and {@code SCALAR} ({@code smalt.simd=false}). Inputs come from ffmpeg and a cached LibriVox
  * recording and are prepared outside the measured operation, without running any codec of the
  * module. Run with {@code -bm ss} defaults as annotated; more forks narrow the percentiles.
  */
@@ -84,9 +84,7 @@ public class ColdStartBenchmark {
 
     @Setup
     public void setup() {
-        if (mode.equals("SCALAR")) {
-            System.setProperty("smalt.simd", "false");
-        }
+        System.setProperty("smalt.simd", mode.equals("SCALAR") ? "false" : "true");
         var recording = Conformance.fetch("librivox-art_of_war_03-04_64kb.mp3",
                 "https://archive.org/download/art_of_war_librivox/art_of_war_03-04_sun_tzu_64kb.mp3",
                 "57e879fe7822578fd22010f1280185799a119a3482e025d9a71f49878ff45ba7");

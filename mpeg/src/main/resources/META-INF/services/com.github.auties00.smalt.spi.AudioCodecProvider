@@ -1,3 +1,7 @@
 com.github.auties00.smalt.internal.provider.mpeg.AacCodecProvider
 com.github.auties00.smalt.internal.provider.mpeg.AmrCodecProvider
+com.github.auties00.smalt.internal.provider.mpeg.CelpCodecProvider
+com.github.auties00.smalt.internal.provider.mpeg.TwinVqCodecProvider
+com.github.auties00.smalt.internal.provider.mpeg.HvxcCodecProvider
 com.github.auties00.smalt.internal.provider.mpeg.Ac3CodecProvider
+com.github.auties00.smalt.internal.provider.mpeg.DtsCodecProvider
