@@ -57,7 +57,7 @@ Cobalt's `cobalt-media` module and is consumed by Cobalt (`../Cobalt1`), which b
   missing oracle fail (`SMALT_TEST_REQUIRE_ORACLES`, `-Dsmalt.test.requireOracles=true` locally) and gates the
   skips of every job with `tools/testdata/skip-baseline.tsv` (`skips.py`); see `tools/testdata/README.md`.
 
-The README's Install table is the single source of these descriptions; the pom `<description>`s copy it.
+The root README's "Which artifact do I need" list (under Install) is the single source of these descriptions; the pom `<description>`s copy it.
 
 | Artifact | JPMS module | Contents |
 |---|---|---|
@@ -207,7 +207,7 @@ is a house rule, it says so.
   documented ranges give unspecified results."
 - **Shared concepts** are defined in one place and linked: the threading model and `smalt.threads` in the core
   module doc and `MediaRuntime`; the Vector API kernel rules in `internal.simd.Simd`; 8-bit narrowing in
-  `ImageOps.toEightBit`; the codec-to-artifact table in the README. A class writes one sentence and a link.
+  `ImageOps.toEightBit`; the format lists in the module READMEs (`<module>/README.md`, Format coverage). A class writes one sentence and a link.
   Long matrices and conversion tables go in `package-info` or `doc-files/`.
 
 ### 5. Tags
