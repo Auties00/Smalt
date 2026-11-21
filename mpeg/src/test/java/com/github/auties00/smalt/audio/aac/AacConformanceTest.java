@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
@@ -19,13 +20,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decodes the AAC Low Complexity conformance streams of ISO/IEC 14496-26 (the {@code al*}
  * suite: every sampling rate, 1024- and 960-sample frames, mono to 48 channels, program
- * configurations, coupling channels, PNS) and compares them with the reference waveforms. The
+ * configurations, coupling channels, PNS; every family at every sampling rate the suite covers) and compares
+ * them with the reference waveforms. The
  * HE-AAC streams of the suite are covered by {@link HeAacConformanceTest}.
  *
  * <p>The accuracy criterion is that of the standard for 16-bit output: an RMS error of at most
  * {@code 2^-15 / sqrt(12)} and a peak error of at most {@code 2^-14} of full scale. Reference
  * waveforms start either at the first decoded sample or after the priming frames, so every
- * comparison tries offsets of zero to two frames.
+ * comparison tries offsets of zero to two frames. The reference waveforms are integer PCM, so decoded
+ * samples beyond full scale are clipped before the comparison, as a conforming PCM output clips them
+ * (the {@code al14} streams at 64 to 96 kHz exceed full scale). The {@code al18} and {@code al19} streams
+ * code their content with perceptual noise substitution, whose random noise no two decoders reproduce
+ * sample by sample, so they are compared by short-term energy.
  */
 class AacConformanceTest {
     static final String BASE = "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/";
@@ -33,6 +39,9 @@ class AacConformanceTest {
     static final double RMS_LIMIT = Math.pow(2, -15) / Math.sqrt(12);
 
     static final double PEAK_LIMIT = Math.pow(2, -14);
+
+    /** The largest sample of the 24-bit reference waveforms. */
+    static final double FULL_SCALE = 1 - Math.pow(2, -23);
 
     private static final Map<String, String> VECTORS = Map.ofEntries(
             Map.entry("al00_08.mp4", "DVD1:6560ade6914c8daa492d9fb2836c889b568471124f658c312e1cd14ec1cd319d"),
@@ -67,7 +76,6 @@ class AacConformanceTest {
             Map.entry("al16_48.mp4", "DVD1:1204b5c5edb68390558ac236683fe90f4906050ed77aee243fe3555ae6d49b47"),
             Map.entry("al17_48.mp4", "DVD1:7a4f3632dbe36f041c6f5e52bc11563e6c5b1560ab143cba613be82ee8af74d7"),
             Map.entry("al17sf_48.mp4", "DVD1:bda0da82acc4afdf64431af6d998cf03d7d23e6753cf5137fc13a94637635137"),
-            Map.entry("al18_48.mp4", "DVD1:0da5097781873c0946c9daacfc712f23b249319354368f0245be5594bb02daef"),
             Map.entry("al00_08.wav", "DVD2:6a089479aefa80b4da891eef6d5bba7204c485a42b987ab97a8dedca8bd26370"),
             Map.entry("al00_11.wav", "DVD2:88a905b73ac478ace04612eda3375bc3dca789d41b2e831fa9f98580add434ec"),
             Map.entry("al00_12.wav", "DVD2:ec8d635f8fb398044753ca334c584e9b1d219623f6358782f8d1f89453df714f"),
@@ -117,11 +125,13 @@ class AacConformanceTest {
             Map.entry("al16_48_f01.wav", "DVD2:2f739c8745ae1e5dfc7b192d3d14e58274d0b24d8a7b924ec03078400007cac8"),
             Map.entry("al16_48_f02.wav", "DVD2:a5108a0cbfff5d7a5508b711f04fd46242ee4ee5f86654af045bd35f5bd9bd3e"),
             Map.entry("al17_48.wav", "DVD2:62592ccaaa32ddd111c02bcd92b34100de3d84d438df93498a50f9f673667652"),
-            Map.entry("al17sf_48.wav", "DVD2:95bb6acb8b2b11994f9a60cfc22077ed644e51fe5c94e5c58a625c9c046a029d"),
-            Map.entry("al18_48.wav", "DVD2:48f57df0327aae65f021976bd23069060dec363e00d72b250e09c513e748355d"));
+            Map.entry("al17sf_48.wav", "DVD2:95bb6acb8b2b11994f9a60cfc22077ed644e51fe5c94e5c58a625c9c046a029d"));
 
     static Path fetch(String name) {
         var entry = VECTORS.get(name);
+        if (entry == null) {
+            return Conformance.fetchListed("mpeg4audio-" + name);
+        }
         var dvd = entry.substring(0, entry.indexOf(':'));
         var hash = entry.substring(entry.indexOf(':') + 1);
         var folder = name.endsWith(".mp4") ? "compressedMp4/" : "referencesWav/";
@@ -142,7 +152,8 @@ class AacConformanceTest {
             double squared = 0;
             double peak = 0;
             for (var i = 0; i < reference.length; i++) {
-                var difference = Math.abs((double) reference[i] - actual[i + offset]);
+                var clipped = Math.max(-1.0, Math.min(FULL_SCALE, actual[i + offset]));
+                var difference = Math.abs((double) reference[i] - clipped);
                 squared += difference * difference;
                 peak = Math.max(peak, difference);
             }
@@ -199,42 +210,25 @@ class AacConformanceTest {
         })
         @DisplayName("multichannel streams (3.0, 5.1 with a coupling channel) in WAVE order")
         void multichannel(String stream, int frameLength, String channels) {
-            var decoded = decode(stream);
-            for (var mapping : channels.split(" ")) {
-                var parts = mapping.split(":");
-                var index = decoded.layout().indexOf(Speaker.valueOf(parts[1]));
-                assertTrue(index >= 0, stream + " lacks " + parts[1]);
-                var reference = AacTestSupport.readWav(Fixtures.read(fetch(stream + "_" + parts[0] + ".wav")))[0];
-                assertConformant(reference, decoded.planes()[index], frameLength, stream + " " + parts[1]);
-            }
+            assertChannels(stream, frameLength, channels);
         }
 
         @Test
         @DisplayName("a 48-channel program configuration")
         void programConfiguration() {
-            var decoded = decode("al08_48");
-            assertEquals(48, decoded.planes().length);
-            assertEquals(Speaker.FRONT_CENTER, decoded.layout().speakers().get(2));
-            for (var name : new String[]{"f00", "b00", "s17"}) {
-                var reference = AacTestSupport.readWav(Fixtures.read(fetch("al08_48_" + name + ".wav")))[0];
-                var matched = false;
-                for (var plane : decoded.planes()) {
-                    var error = error(reference, plane, 1024);
-                    matched |= error[0] <= RMS_LIMIT && error[1] <= PEAK_LIMIT;
-                }
-                assertTrue(matched, "no channel reproduces " + name);
-            }
-            var front = AacTestSupport.readWav(Fixtures.read(fetch("al08_48_f00.wav")))[0];
-            assertConformant(front, decoded.planes()[decoded.layout().indexOf(Speaker.FRONT_CENTER)], 1024, "al08 center");
+            assertProgramConfiguration("al08_48");
         }
 
-        @Test
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacConformanceTest#noiseStreams")
         @DisplayName("perceptual noise substitution reproduces the reference's short-term energy")
-        void noiseSubstitution() {
-            var decoded = decode("al18_48").planes()[0];
-            var reference = AacTestSupport.readWav(Fixtures.read(fetch("al18_48.wav")))[0];
+        void noiseSubstitution(String stream) {
+            var frameLength = stream.contains("sf_") ? 960 : 1024;
+            var decoded = AacTestSupport.decodeAll(AacTestSupport.parseMp4(Fixtures.read(
+                    Conformance.fetchListed("mpeg4audio-" + stream + ".mp4")))).planes()[0];
+            var reference = AacTestSupport.readWav(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + stream + ".wav")))[0];
             var bestDeviation = Double.POSITIVE_INFINITY;
-            for (var offset = 0; offset <= 2048; offset += 1024) {
+            for (var offset = 0; offset <= 2 * frameLength; offset += frameLength) {
                 double deviation = 0;
                 var blocks = 0;
                 for (var start = 0; start + 2048 <= reference.length && start + offset + 2048 <= decoded.length; start += 2048) {
@@ -252,7 +246,144 @@ class AacConformanceTest {
                 }
                 bestDeviation = Math.min(bestDeviation, deviation / blocks);
             }
-            assertTrue(bestDeviation < 1.0, "mean short-term energy deviation " + bestDeviation + " dB");
+            assertTrue(bestDeviation < 1.0, stream + ": mean short-term energy deviation " + bestDeviation + " dB");
+        }
+    }
+
+    /** The other sampling rates of the mono and stereo streams, by stream family. */
+    private static final Map<String, String> RATES = Map.ofEntries(
+            Map.entry("al00sf", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al01", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al01sf", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al02", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al02sf", "08 11 12 16 22 24 32 44 48 64 88 96"),
+            Map.entry("al03", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al03sf", "08 11 12 16 22 24 32 44 48 64 88 96"),
+            Map.entry("al04", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al04sf", "08 11 12 16 22 24 32 44 48 64 88 96"),
+            Map.entry("al05", "11 12 16 24 32 44 64 88"),
+            Map.entry("al05sf", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al14", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al14sf", "08 11 12 16 22 24 32 44 48 64 88 96"),
+            Map.entry("al17", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al17sf", "08 11 12 16 22 24 32 44 64 88 96"));
+
+    /** The perceptual noise substitution streams at every sampling rate, by stream family. */
+    private static final Map<String, String> NOISE_RATES = Map.ofEntries(
+            Map.entry("al18", "08 11 12 16 22 24 32 44 48 64 88 96"),
+            Map.entry("al18sf", "08 11 12 16 22 24 32 44 48 64 88 96"),
+            Map.entry("al19", "08 11 12 16 22 24 32 44 48 64 88 96"),
+            Map.entry("al19sf", "08 11 12 16 22 24 32 44 48 64 88 96"));
+
+    /** The multichannel streams at the sampling rates the 48 kHz tests do not cover, by stream family. */
+    private static final Map<String, String> MULTICHANNEL_RATES = Map.ofEntries(
+            Map.entry("al06", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al06sf", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al07", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al07sf", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al16", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al16sf", "08 11 12 16 22 24 32 44 48 64 88 96"));
+
+    /** The reference waveforms of each multichannel family, with the speaker each one holds. */
+    private static final Map<String, String> MULTICHANNEL_CHANNELS = Map.of(
+            "al06", "f00:FRONT_CENTER f01:FRONT_LEFT f02:FRONT_RIGHT",
+            "al07", "f00:FRONT_CENTER f01:FRONT_LEFT f02:FRONT_RIGHT b00:BACK_LEFT b01:BACK_RIGHT l00:LOW_FREQUENCY",
+            "al16", "f00:FRONT_CENTER f01:FRONT_LEFT f02:FRONT_RIGHT");
+
+    /** The rates of the 48-channel program configuration streams that the 48 kHz test does not cover. */
+    private static final Map<String, String> PROGRAM_RATES = Map.ofEntries(
+            Map.entry("al08", "08 11 12 16 22 24 32 44 64 88 96"),
+            Map.entry("al08sf", "08 11 12 16 22 24 32 44 48 64 88 96"));
+
+    static java.util.stream.Stream<String> otherRates() {
+        return streams(RATES);
+    }
+
+    static java.util.stream.Stream<String> multichannelRates() {
+        return streams(MULTICHANNEL_RATES);
+    }
+
+    static java.util.stream.Stream<String> programRates() {
+        return streams(PROGRAM_RATES);
+    }
+
+    static java.util.stream.Stream<String> noiseStreams() {
+        return streams(NOISE_RATES);
+    }
+
+    private static java.util.stream.Stream<String> streams(Map<String, String> rates) {
+        return rates.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                .flatMap(entry -> java.util.Arrays.stream(entry.getValue().split(" "))
+                        .map(rate -> entry.getKey() + "_" + rate));
+    }
+
+    /** Asserts that each named reference waveform of a multichannel stream is reproduced by its speaker. */
+    static void assertChannels(String stream, int frameLength, String channels) {
+        var decoded = decode(stream);
+        assertEquals(0, decoded.frames() % frameLength, stream + " frames");
+        for (var mapping : channels.split(" ")) {
+            var parts = mapping.split(":");
+            var index = decoded.layout().indexOf(Speaker.valueOf(parts[1]));
+            assertTrue(index >= 0, stream + " lacks " + parts[1]);
+            var reference = AacTestSupport.readWav(Fixtures.read(fetch(stream + "_" + parts[0] + ".wav")))[0];
+            assertConformant(reference, decoded.planes()[index], frameLength, stream + " " + parts[1]);
+        }
+    }
+
+    /**
+     * Asserts that a stream of the 48-channel program configuration decodes 48 channels, the front center third, and
+     * that a front, a back and a side reference waveform are each reproduced by a channel.
+     */
+    static void assertProgramConfiguration(String stream) {
+        var frameLength = stream.contains("sf_") ? 960 : 1024;
+        var decoded = decode(stream);
+        assertEquals(48, decoded.planes().length);
+        assertEquals(Speaker.FRONT_CENTER, decoded.layout().speakers().get(2));
+        for (var name : new String[]{"f00", "b00", "s17"}) {
+            var reference = AacTestSupport.readWav(Fixtures.read(fetch(stream + "_" + name + ".wav")))[0];
+            var matched = false;
+            for (var plane : decoded.planes()) {
+                var error = error(reference, plane, frameLength);
+                matched |= error[0] <= RMS_LIMIT && error[1] <= PEAK_LIMIT;
+            }
+            assertTrue(matched, stream + ": no channel reproduces " + name);
+        }
+        var front = AacTestSupport.readWav(Fixtures.read(fetch(stream + "_f00.wav")))[0];
+        assertConformant(front, decoded.planes()[decoded.layout().indexOf(Speaker.FRONT_CENTER)], frameLength,
+                stream + " center");
+    }
+
+    @Nested
+    @DisplayName("Low Complexity at the other sampling rates against reference waveforms")
+    class OtherRates {
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.MethodSource("com.github.auties00.smalt.audio.aac.AacConformanceTest#otherRates")
+        @DisplayName("mono and stereo streams, 1024- and 960-sample frames, at 8 to 96 kHz")
+        void stream(String stream) {
+            var frameLength = stream.contains("sf_") ? 960 : 1024;
+            var decoded = AacTestSupport.decodeAll(AacTestSupport.parseMp4(Fixtures.read(
+                    Conformance.fetchListed("mpeg4audio-" + stream + ".mp4"))));
+            assertEquals(0, decoded.frames() % frameLength);
+            var reference = AacTestSupport.readWav(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + stream + ".wav")));
+            assertEquals(reference.length, decoded.planes().length);
+            for (var channel = 0; channel < reference.length; channel++) {
+                assertConformant(reference[channel], decoded.planes()[channel], frameLength, stream + " channel " + channel);
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacConformanceTest#multichannelRates")
+        @DisplayName("multichannel streams (3.0, 5.1 with a coupling channel), 1024- and 960-sample frames, at 8 to 96 kHz")
+        void multichannel(String stream) {
+            var family = stream.substring(0, stream.indexOf('_')).replace("sf", "");
+            assertChannels(stream, stream.contains("sf_") ? 960 : 1024, MULTICHANNEL_CHANNELS.get(family));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacConformanceTest#programRates")
+        @DisplayName("the 48-channel program configuration, 1024- and 960-sample frames, at 8 to 96 kHz")
+        void programConfiguration(String stream) {
+            assertProgramConfiguration(stream);
         }
     }
 }

@@ -80,6 +80,28 @@ public final class FrameDecoder {
     }
 
     /**
+     * Decodes the top rows of a lossy bitstream and of its {@code ALPH} payload, choosing the concurrency as
+     * {@link #decodeLossy(byte[], byte[], int, int, MediaLimits)} does for the rows decoded.
+     *
+     * @param vp8    the {@code VP8 } payload
+     * @param alph   the {@code ALPH} payload, or {@code null}
+     * @param width  the width declared by the container
+     * @param height the height declared by the container
+     * @param limits the resource bounds
+     * @param rows   the number of rows to decode, positive
+     * @return the 4:2:0 picture of the rows, as
+     * {@link #decodeLossy(byte[], byte[], int, int, MediaLimits, boolean, int)} returns it
+     * @throws MediaException.Malformed if the bitstream or the alpha data is corrupt, or the
+     *                                  decoded size differs from the declared size
+     */
+    public static YuvPicture decodeLossyRows(byte[] vp8, byte[] alph, int width, int height, MediaLimits limits,
+                                             int rows) {
+        var shown = Math.min(rows, height);
+        var parallel = alph != null && ParallelBands.enabled() && (long) width * shown >= STILL_PARALLEL_PIXELS;
+        return decodeLossy(vp8, alph, width, height, limits, parallel, rows);
+    }
+
+    /**
      * Decodes a lossy bitstream and attaches the alpha plane of its {@code ALPH} payload, decoding
      * the alpha plane concurrently with the color on the module's shared helpers when allowed.
      *
@@ -100,32 +122,58 @@ public final class FrameDecoder {
      */
     public static YuvPicture decodeLossy(byte[] vp8, byte[] alph, int width, int height, MediaLimits limits,
                                          boolean parallel) {
+        return decodeLossy(vp8, alph, width, height, limits, parallel, height);
+    }
+
+    /**
+     * Decodes the top rows of a lossy bitstream and of the alpha plane of its {@code ALPH} payload, as
+     * {@link #decodeLossy(byte[], byte[], int, int, MediaLimits, boolean)} decodes the whole image.
+     *
+     * <p>The picture is {@code width} by {@code min(rows, height)}; the data below those rows is not decoded, so
+     * damage there goes undetected. The color rows equal those of the whole decode except the last three of the
+     * last macroblock row decoded, when the image continues below it; the alpha rows equal them all.
+     *
+     * @param vp8 the {@code VP8 } payload
+     * @param alph the {@code ALPH} payload, or {@code null}
+     * @param width the width declared by the container
+     * @param height the height declared by the container
+     * @param limits the resource bounds, which bound the rows decoded
+     * @param parallel whether the color and alpha may be decoded concurrently, and the color as a pipeline
+     * @param rows the number of rows to decode, positive
+     * @return the 4:2:0 picture of the rows, with an alpha plane when {@code alph} is given
+     * @throws MediaException.Malformed if the bitstream or the alpha data is corrupt, or the decoded size differs
+     * from the declared size
+     */
+    public static YuvPicture decodeLossy(byte[] vp8, byte[] alph, int width, int height, MediaLimits limits,
+                                         boolean parallel, int rows) {
+        var shown = Math.min(rows, height);
+        var colorRows = rows >= height ? Integer.MAX_VALUE : rows;
         if (alph == null) {
-            return checkSize(decodeColor(vp8, limits, parallel), width, height);
+            return checkSize(decodeColor(vp8, limits, parallel, colorRows), width, shown);
         }
         YuvPicture picture;
         byte[] alpha;
-        if (parallel && (long) width * height >= PARALLEL_PIXELS && ParallelBands.available() > 0) {
+        if (parallel && (long) width * shown >= PARALLEL_PIXELS && ParallelBands.available() > 0) {
             var parts = ParallelBands.<Object>invokeAll(List.of(
-                    () -> decodeColor(vp8, limits, true),
+                    () -> decodeColor(vp8, limits, true, colorRows),
                     () -> {
                         try {
-                            return AlphaDecoder.decode(alph, 0, alph.length, width, height, limits);
+                            return AlphaDecoder.decode(alph, 0, alph.length, width, height, limits, shown);
                         } catch (RuntimeException | Error failure) {
                             return failure;
                         }
                     }));
-            picture = checkSize((YuvPicture) parts.get(0), width, height);
+            picture = checkSize((YuvPicture) parts.get(0), width, shown);
             switch (parts.get(1)) {
                 case RuntimeException failure -> throw failure;
                 case Error failure -> throw failure;
                 case Object plane -> alpha = (byte[]) plane;
             }
         } else {
-            picture = checkSize(decodeColor(vp8, limits, parallel), width, height);
-            alpha = AlphaDecoder.decode(alph, 0, alph.length, width, height, limits);
+            picture = checkSize(decodeColor(vp8, limits, parallel, colorRows), width, shown);
+            alpha = AlphaDecoder.decode(alph, 0, alph.length, width, height, limits, shown);
         }
-        return YuvPicture.builder().size(width, height).chromaFormat(picture.chromaFormat()).color(picture.color())
+        return YuvPicture.builder().size(width, shown).chromaFormat(picture.chromaFormat()).color(picture.color())
                 .luma(picture.y(), picture.yStride())
                 .chroma(picture.u(), picture.v(), picture.uvStride())
                 .alpha(alpha, width)
@@ -139,11 +187,15 @@ public final class FrameDecoder {
      * @param vp8      the {@code VP8 } payload
      * @param limits   the resource bounds
      * @param parallel whether the color may be decoded as a pipeline
+     * @param rows     the number of rows to decode, or {@link Integer#MAX_VALUE} for every row
      * @return the 4:2:0 picture
      */
-    private static YuvPicture decodeColor(byte[] vp8, MediaLimits limits, boolean parallel) {
-        return parallel ? Vp8FrameDecoder.decodeKeyFrame(vp8, 0, vp8.length, limits, true)
-                : Vp8.decodeKeyFrame(vp8, 0, vp8.length, limits);
+    private static YuvPicture decodeColor(byte[] vp8, MediaLimits limits, boolean parallel, int rows) {
+        if (rows == Integer.MAX_VALUE) {
+            return parallel ? Vp8FrameDecoder.decodeKeyFrame(vp8, 0, vp8.length, limits, true)
+                    : Vp8.decodeKeyFrame(vp8, 0, vp8.length, limits);
+        }
+        return Vp8FrameDecoder.decodeKeyFrame(vp8, 0, vp8.length, limits, parallel, rows);
     }
 
     /**

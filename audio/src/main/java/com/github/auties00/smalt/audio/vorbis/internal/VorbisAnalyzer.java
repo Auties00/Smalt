@@ -20,10 +20,14 @@ import java.util.List;
  *
  * <p>An instance is not thread-safe.
  *
- * @implNote This implementation covers only the unmanaged (quality) mode, which codes one packet blob.
- * It takes the window values from libvorbis's own tables (carried in the setup resource) rather than
- * recomputing them, so the coded packets match libvorbis's bit for bit when both round exact halves to
- * even.
+ * <p>An unmanaged setup codes each block once, as its middle packet blob. A bitrate managed setup
+ * ({@link CodecSetup#management} set) fits the floor three times, interpolates the fits between
+ * them, codes all {@link PsyGlobal#PACKET_BLOBS} blobs and lets a {@link BitrateManager} choose
+ * the packet.
+ *
+ * @implNote This implementation takes the window values from libvorbis's own tables (carried in the
+ * setup resource) rather than recomputing them, so the coded packets match libvorbis's bit for bit when
+ * both round exact halves to even.
  */
 public final class VorbisAnalyzer {
     /**
@@ -157,6 +161,37 @@ public final class VorbisAnalyzer {
     private final Psy.CouplingScratch[] couplingScratch = new Psy.CouplingScratch[4];
 
     /**
+     * The bitrate manager, or {@code null} for an unmanaged setup.
+     */
+    private final BitrateManager bitrateManager;
+
+    /**
+     * The writer of each packet blob; an unmanaged setup uses only the middle one.
+     */
+    private final LsbBitWriter[] blobWriters = new LsbBitWriter[PsyGlobal.PACKET_BLOBS];
+
+    /**
+     * The floor posts of the current block, indexed {@code [channel][blob]}, {@code null} for an
+     * unused floor.
+     */
+    private final int[][][] blobPosts;
+
+    /**
+     * The storage of the interpolated floor posts, indexed {@code [channel][blob][post]}.
+     */
+    private final int[][][] interpolated;
+
+    /**
+     * The size in bytes of each packet blob of the current block.
+     */
+    private final int[] blobBytes = new int[PsyGlobal.PACKET_BLOBS];
+
+    /**
+     * The chosen blob and packet size of the current block.
+     */
+    private final int[] choice = new int[2];
+
+    /**
      * Constructs an analyzer.
      *
      * @param setup the encoder configuration, from the setup templates
@@ -186,6 +221,13 @@ public final class VorbisAnalyzer {
         envelope = new Envelope(setup.psyGlobal, channels, blockSizes[1]);
         modeBits = Ilog.ilog(setup.modes - 1);
         pcm = new float[channels][blockSizes[1]];
+        bitrateManager = setup.management != null ? new BitrateManager(setup) : null;
+        for (var i = 0; i < blobWriters.length; i++) {
+            blobWriters[i] = new LsbBitWriter();
+        }
+        blobPosts = new int[channels][PsyGlobal.PACKET_BLOBS][];
+        // 65 posts at most: the 63 of VIF_POSIT and the two ends
+        interpolated = new int[channels][bitrateManager != null ? PsyGlobal.PACKET_BLOBS : 0][65];
         centerW = blockSizes[1] / 2;
         pcmCurrent = centerW;
     }
@@ -502,7 +544,6 @@ public final class VorbisAnalyzer {
         var gmdct = new float[channels][half];
         var iwork = new int[channels][half];
         var logFft = new float[channels][half];
-        var floorPosts = new int[channels][];
         var nonzero = new int[channels];
         for (var i = 0; i < channels; i++) {
             var scale = 4.f / n;
@@ -532,6 +573,8 @@ public final class VorbisAnalyzer {
         var tone = new float[half];
         var logMdct = new float[half];
         var logMask = new float[half];
+        var blobs = PsyGlobal.PACKET_BLOBS;
+        var middle = blobs / 2;
         for (var i = 0; i < channels; i++) {
             var submap = info.channelMux[i];
             var spectrum = gmdct[i];
@@ -541,43 +584,70 @@ public final class VorbisAnalyzer {
             look.noiseMask(logMdct, noise);
             look.toneMask(logFft[i], tone, globalMax, localMax[i]);
             look.offsetAndMix(noise, tone, 1, logMask, spectrum, logMdct);
-            floorPosts[i] = floors[info.floorSubmap[submap]].fit(logMdct, logMask);
+            var floor = floors[info.floorSubmap[submap]];
+            var posts = blobPosts[i];
+            Arrays.fill(posts, null);
+            posts[middle] = floor.fit(logMdct, logMask);
+            if (bitrateManager != null && posts[middle] != null) {
+                // the curve with the noise offsets of a higher rate, then of a lower rate
+                look.offsetAndMix(noise, tone, 2, logMask, spectrum, logMdct);
+                posts[blobs - 1] = floor.fit(logMdct, logMask);
+                look.offsetAndMix(noise, tone, 0, logMask, spectrum, logMdct);
+                posts[0] = floor.fit(logMdct, logMask);
+                for (var k = 1; k < middle; k++) {
+                    posts[k] = floor.interpolate(posts[0], posts[middle], k * 65536 / middle, interpolated[i][k]);
+                }
+                for (var k = middle + 1; k < blobs - 1; k++) {
+                    posts[k] = floor.interpolate(posts[middle], posts[blobs - 1], (k - middle) * 65536 / middle,
+                            interpolated[i][k]);
+                }
+            }
         }
         blockAmpmax = globalMax;
-        var out = new LsbBitWriter();
-        out.write(0, 1);
-        out.write(w, modeBits);
-        if (w != 0) {
-            out.write(lW, 1);
-            out.write(nW, 1);
-        }
-        for (var i = 0; i < channels; i++) {
-            var submap = info.channelMux[i];
-            nonzero[i] = floors[info.floorSubmap[submap]].encode(out, floorPosts[i], iwork[i], half) ? 1 : 0;
-        }
-        var blob = PsyGlobal.PACKET_BLOBS / 2;
         var partition = look.vi.normalP != 0 ? look.vi.normalPartition : 16;
         var scratchIndex = blockType + (w != 0 ? 2 : 0);
         var scratch = couplingScratch[scratchIndex];
         if (scratch == null) {
             scratch = couplingScratch[scratchIndex] = new Psy.CouplingScratch(channels, partition, info.couplingSteps);
         }
-        look.coupleQuantizeNormalize(blob, setup.psyGlobal, info, gmdct, iwork, nonzero,
-                setup.psyGlobal.slidingLowpass[w][blob], channels, scratch);
         var bundle = new int[channels][];
         var zero = new boolean[channels];
-        for (var i = 0; i < info.submaps; i++) {
-            var inBundle = 0;
-            var residueNumber = info.residueSubmap[i];
-            for (var j = 0; j < channels; j++) {
-                if (info.channelMux[j] == i) {
-                    zero[inBundle] = nonzero[j] != 0;
-                    bundle[inBundle++] = iwork[j];
-                }
+        var first = bitrateManager != null ? 0 : middle;
+        var last = bitrateManager != null ? blobs - 1 : middle;
+        for (var blob = first; blob <= last; blob++) {
+            var out = blobWriters[blob];
+            out.reset();
+            out.write(0, 1);
+            out.write(w, modeBits);
+            if (w != 0) {
+                out.write(lW, 1);
+                out.write(nW, 1);
             }
-            var classes = residues[residueNumber].classify(bundle, zero, inBundle);
-            residues[residueNumber].forward(out, bundle, zero, inBundle, classes, half);
+            for (var i = 0; i < channels; i++) {
+                var submap = info.channelMux[i];
+                nonzero[i] = floors[info.floorSubmap[submap]].encode(out, blobPosts[i][blob], iwork[i], half) ? 1 : 0;
+            }
+            look.coupleQuantizeNormalize(blob, setup.psyGlobal, info, gmdct, iwork, nonzero,
+                    setup.psyGlobal.slidingLowpass[w][blob], channels, scratch);
+            for (var i = 0; i < info.submaps; i++) {
+                var inBundle = 0;
+                var residueNumber = info.residueSubmap[i];
+                for (var j = 0; j < channels; j++) {
+                    if (info.channelMux[j] == i) {
+                        zero[inBundle] = nonzero[j] != 0;
+                        bundle[inBundle++] = iwork[j];
+                    }
+                }
+                var classes = residues[residueNumber].classify(bundle, zero, inBundle);
+                residues[residueNumber].forward(out, bundle, zero, inBundle, classes, half);
+            }
+            blobBytes[blob] = (int) ((out.bitCount() + 7) >> 3);
         }
-        return out.toByteArray();
+        if (bitrateManager == null) {
+            return blobWriters[middle].toByteArray();
+        }
+        bitrateManager.choose(blobBytes, w != 0, choice);
+        var data = blobWriters[choice[0]].toByteArray();
+        return data.length == choice[1] ? data : Arrays.copyOf(data, choice[1]);
     }
 }

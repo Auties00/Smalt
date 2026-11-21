@@ -18,15 +18,23 @@ final class VectorBitReverser implements BitReverser {
     private static final VectorSpecies<Byte> BYTES = ByteVector.SPECIES_PREFERRED;
 
     /**
-     * Reverses the tail shorter than one vector.
+     * The concrete class of the vectors of {@link #BYTES}.
      */
-    private final ScalarBitReverser tail;
+    @SuppressWarnings("unchecked")
+    private static final Class<ByteVector> BYTE_VECTOR = (Class<ByteVector>) BYTES.vectorType();
+
+    /**
+     * Reverses the tail shorter than one vector.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
+     */
+    private static final ScalarBitReverser TAIL = new ScalarBitReverser();
 
     /**
      * Constructs the kernel.
      */
     private VectorBitReverser() {
-        this.tail = new ScalarBitReverser();
     }
 
     /**
@@ -43,10 +51,10 @@ final class VectorBitReverser implements BitReverser {
         var bound = BYTES.loopBound(length);
         var index = 0;
         for (; index < bound; index += BYTES.length()) {
-            ByteVector.fromArray(BYTES, source, sourceOffset + index)
+            BYTE_VECTOR.cast(ByteVector.fromArray(BYTES, source, sourceOffset + index))
                     .lanewise(VectorOperators.REVERSE)
                     .intoArray(target, targetOffset + index);
         }
-        tail.reverse(source, sourceOffset + index, target, targetOffset + index, length - index);
+        TAIL.reverse(source, sourceOffset + index, target, targetOffset + index, length - index);
     }
 }

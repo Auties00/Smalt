@@ -23,9 +23,12 @@ public final class AmrEncoderOptions {
 
     private final boolean dtx;
 
+    private final AmrVad vad;
+
     private AmrEncoderOptions(Builder builder) {
         this.mode = builder.mode;
         this.dtx = builder.dtx;
+        this.vad = builder.vad;
     }
 
     /**
@@ -109,13 +112,24 @@ public final class AmrEncoderOptions {
     /**
      * {@return whether discontinuous transmission is on; {@code false} by default}
      *
-     * <p>With discontinuous transmission (DTX) the voice activity detector (VAD option 1 for AMR-NB,
-     * the TS 26.194 detector for AMR-WB) replaces the frames of background noise by comfort noise
+     * <p>With discontinuous transmission (DTX) the voice activity detector (the {@link #vad()} option
+     * for AMR-NB, the TS 26.194 detector for AMR-WB) replaces the frames of background noise by comfort noise
      * parameters (SID frames) every eighth frame and empty frames in between, which roughly halves
      * the bitrate of a conversation.
      */
     public boolean dtx() {
         return dtx;
+    }
+
+    /**
+     * {@return the voice activity detector of AMR-NB; {@link AmrVad#OPTION_1} by default}
+     *
+     * <p>The setting has no effect without {@link #dtx()} or with an AMR-WB mode, since AMR-WB has a
+     * single detector. With either option the output is bit-exact with the 3GPP reference encoder
+     * built with that option.
+     */
+    public AmrVad vad() {
+        return vad;
     }
 
     /**
@@ -134,17 +148,17 @@ public final class AmrEncoderOptions {
 
     @Override
     public boolean equals(Object object) {
-        return object instanceof AmrEncoderOptions that && mode == that.mode && dtx == that.dtx;
+        return object instanceof AmrEncoderOptions that && mode == that.mode && dtx == that.dtx && vad == that.vad;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(mode, dtx);
+        return Objects.hash(mode, dtx, vad);
     }
 
     @Override
     public String toString() {
-        return "AmrEncoderOptions[mode=" + mode + ", dtx=" + dtx + "]";
+        return "AmrEncoderOptions[mode=" + mode + ", dtx=" + dtx + ", vad=" + vad + "]";
     }
 
     /**
@@ -158,13 +172,17 @@ public final class AmrEncoderOptions {
 
         private boolean dtx;
 
+        private AmrVad vad;
+
         private Builder() {
             this.mode = AmrMode.NB_12_2;
+            this.vad = AmrVad.OPTION_1;
         }
 
         private Builder(AmrEncoderOptions options) {
             this.mode = options.mode;
             this.dtx = options.dtx;
+            this.vad = options.vad;
         }
 
         /**
@@ -186,6 +204,18 @@ public final class AmrEncoderOptions {
          */
         public Builder dtx(boolean dtx) {
             this.dtx = dtx;
+            return this;
+        }
+
+        /**
+         * Sets the voice activity detector of AMR-NB discontinuous transmission; see
+         * {@link AmrEncoderOptions#vad()}.
+         *
+         * @param vad the value
+         * @return this builder
+         */
+        public Builder vad(AmrVad vad) {
+            this.vad = Objects.requireNonNull(vad, "vad");
             return this;
         }
 

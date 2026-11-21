@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.video.av1.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 
@@ -12,7 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 class VectorIpredDspTest extends IpredDspTest {
     @BeforeEach
     void vectorKernels() {
-        Assumptions.assumeTrue(Simd.ENABLED, "the Vector API is unavailable");
+        Skip.unlessVector(Simd.ENABLED);
         dsp = new VectorIpredDsp();
     }
 }

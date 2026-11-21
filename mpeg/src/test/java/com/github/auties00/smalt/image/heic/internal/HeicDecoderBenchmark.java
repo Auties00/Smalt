@@ -60,13 +60,13 @@ public class HeicDecoderBenchmark {
     public int tiles() {
         var source = MediaSource.of(data);
         var file = HeifFile.parse(source, MediaLimits.DEFAULT, false);
-        var decoder = new ItemDecoder(MediaLimits.DEFAULT, 1);
+        var decoder = new HevcItemDecoder(MediaLimits.DEFAULT, 1);
         var sum = 0;
         for (var id : file.primaryItem().references("dimg")) {
             var tile = file.item(id);
             var config = tile.property(HeifProperty.HevcConfiguration.class).record();
             var frame = decoder.decodeItem(List.of(config), List.of(file.readItem(source, tile, MediaLimits.DEFAULT)));
-            sum += frame.y[0];
+            sum += frame.plane8(0)[0];
         }
         decoder.close();
         return sum;

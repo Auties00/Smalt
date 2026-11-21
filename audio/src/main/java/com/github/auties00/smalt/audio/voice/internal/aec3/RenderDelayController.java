@@ -48,11 +48,12 @@ final class RenderDelayController {
      * Creates a controller.
      *
      * @param kernel    the matched filter kernel of the delay estimator
+     * @param numCaptureChannels the number of capture channels
      * @param flushTiny whether the delay estimator's capture decimator zeroes tiny filter states
      *                  and samples; {@code false} reproduces the reference bit for bit
      */
-    RenderDelayController(MatchedFilterKernel kernel, boolean flushTiny) {
-        this.delayEstimator = new EchoPathDelayEstimator(kernel, flushTiny);
+    RenderDelayController(MatchedFilterKernel kernel, int numCaptureChannels, boolean flushTiny) {
+        this.delayEstimator = new EchoPathDelayEstimator(kernel, numCaptureChannels, flushTiny);
     }
 
     /**
@@ -74,12 +75,11 @@ final class RenderDelayController {
      *
      * @param renderBuffer the decimated render ring
      * @param renderRead   the read index of the decimated render ring
-     * @param capture      the capture block
-     * @param offset       the index of the first of the 64 capture samples
+     * @param capture      the capture block, the lowest band of every channel first
      * @return the block delay, or {@code -1} when none is known yet
      */
-    int getDelay(float[] renderBuffer, int renderRead, float[] capture, int offset) {
-        var estimate = delayEstimator.estimateDelay(renderBuffer, renderRead, capture, offset);
+    int getDelay(float[] renderBuffer, int renderRead, float[] capture) {
+        var estimate = delayEstimator.estimateDelay(renderBuffer, renderRead, capture);
         if (estimate >= 0) {
             delaySamples = estimate;
             delaySamplesQuality = delayEstimator.quality();

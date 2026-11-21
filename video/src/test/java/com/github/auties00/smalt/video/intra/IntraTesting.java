@@ -9,6 +9,7 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.VideoTrack;
 
@@ -146,6 +147,34 @@ public final class IntraTesting {
             return Double.POSITIVE_INFINITY;
         }
         return 10 * Math.log10((double) peak * peak / (sum / count));
+    }
+
+    /**
+     * Measures two raw buffers of 8-bit samples, or of little-endian 16-bit samples ({@code wide}), whose largest
+     * value is {@code peak}.
+     */
+    public static Tolerance.Difference difference(byte[] expected, byte[] actual, boolean wide, int peak) {
+        if (expected.length != actual.length) {
+            throw new AssertionError("sizes differ: " + expected.length + " vs " + actual.length);
+        }
+        var accumulator = new Tolerance.Accumulator(peak, peak);
+        if (wide) {
+            for (var i = 0; i + 1 < expected.length; i += 2) {
+                accumulator.add(i / 2, (expected[i] & 0xFF) | (expected[i + 1] & 0xFF) << 8,
+                        (actual[i] & 0xFF) | (actual[i + 1] & 0xFF) << 8);
+            }
+        } else {
+            for (var i = 0; i < expected.length; i++) {
+                accumulator.add(i, expected[i] & 0xFF, actual[i] & 0xFF);
+            }
+        }
+        return accumulator.result();
+    }
+
+    /** Asserts that two raw buffers, as {@link #difference} reads them, satisfy a tolerance. */
+    public static void assertWithin(Tolerance tolerance, String what, byte[] expected, byte[] actual, boolean wide,
+                                    int peak) {
+        tolerance.check(what, difference(expected, actual, wide, peak));
     }
 
     /** Returns the largest absolute sample difference of two raw buffers. */

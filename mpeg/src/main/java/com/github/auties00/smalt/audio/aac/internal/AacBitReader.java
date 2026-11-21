@@ -29,17 +29,17 @@ public final class AacBitReader {
     /**
      * The input array; the Huffman loops of this package read it directly.
      */
-    final byte[] data;
+    byte[] data;
 
     /**
      * The index of the first input byte.
      */
-    private final int start;
+    private int start;
 
     /**
      * The index one past the last input byte.
      */
-    final int end;
+    int end;
 
     /**
      * The index of the next byte not yet loaded into the cache; the Huffman loops of this
@@ -262,5 +262,52 @@ public final class AacBitReader {
      */
     public long bitPosition() {
         return (long) (next - start) * 8 - count;
+    }
+
+    /**
+     * Restarts the reader over {@code data[offset, offset + length)}.
+     *
+     * @param data the input array
+     * @param offset the index of the first byte
+     * @param length the number of bytes
+     * @throws IndexOutOfBoundsException if the range is outside {@code data}
+     */
+    public void reset(byte[] data, int offset, int length) {
+        Objects.checkFromIndexSize(offset, length, data.length);
+        this.data = data;
+        this.start = offset;
+        this.end = offset + length;
+        this.next = offset;
+        this.cache = 0;
+        this.count = 0;
+    }
+
+    /**
+     * Moves the reader to a bit position.
+     *
+     * @param position the number of bits from the start, at least 0; a position past the end makes
+     * the reader report an overrun
+     */
+    public void seek(long position) {
+        cache = 0;
+        count = 0;
+        var target = (long) start + (position >>> 3);
+        if (target > end) {
+            next = end + 8;
+            return;
+        }
+        next = (int) target;
+        read((int) (position & 7));
+    }
+
+    /**
+     * Returns the bit at a position without moving the reader.
+     *
+     * @param position the number of bits from the start, at least 0
+     * @return the bit, 0 past the end
+     */
+    public int bitAt(long position) {
+        var index = start + (position >>> 3);
+        return index < end ? data[(int) index] >>> (7 - (int) (position & 7)) & 1 : 0;
     }
 }

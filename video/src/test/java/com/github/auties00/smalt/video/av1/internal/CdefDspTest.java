@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.video.av1.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -192,7 +192,7 @@ class CdefDspTest {
     @MethodSource("groups")
     @DisplayName("the vector kernels produce dav1d's output hash")
     void vector(String name, String expected) {
-        Assumptions.assumeTrue(Simd.ENABLED, "the Vector API is unavailable");
+        Skip.unlessVector(Simd.ENABLED);
         assertEquals(expected, hash(VectorCdefDsp.create(), name));
     }
 

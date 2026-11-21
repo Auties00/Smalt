@@ -1,0 +1,22 @@
+# audio decode dump of wav/iec61937-aac.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 1024000
+seekable true
+track 0 AAC rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=553da98c
+1 frames=4096 crc16=28334867
+2 frames=4096 crc16=f408ca52
+3 frames=4096 crc16=8f8a7ccd
+4 frames=4096 crc16=b49985f3
+5 frames=4096 crc16=160b5293
+6 frames=4096 crc16=d1c81d7a
+7 frames=4096 crc16=68476a6b
+8 frames=4096 crc16=cf81f933
+9 frames=4096 crc16=58f8cd78
+10 frames=4096 crc16=98088afe
+11 frames=4096 crc16=97421fa1
+seek 0: @sample 0
+seek 341333: @sample 16384
+seek 682666: @sample 32768
+seek 1024000: end
+seek -1000000: @sample 0

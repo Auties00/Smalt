@@ -49,8 +49,11 @@ final class VectorMp3EncoderKernel implements Mp3EncoderKernel {
 
     /**
      * The scalar kernel that quantizes the values past the last whole vector.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarMp3EncoderKernel scalar = new ScalarMp3EncoderKernel();
+    private static final ScalarMp3EncoderKernel SCALAR = new ScalarMp3EncoderKernel();
 
     /**
      * Creates the kernel.
@@ -143,6 +146,6 @@ final class VectorMp3EncoderKernel implements Mp3EncoderKernel {
             top = INT_VECTOR.cast(top).lanewise(VectorOperators.MAX, q);
         }
         var max = INT_VECTOR.cast(top).reduceLanes(VectorOperators.MAX);
-        return Math.max(max, scalar.quantize(pow34, i, to, scale, output));
+        return Math.max(max, SCALAR.quantize(pow34, i, to, scale, output));
     }
 }

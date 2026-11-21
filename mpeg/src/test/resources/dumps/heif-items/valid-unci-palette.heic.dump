@@ -1,0 +1,19 @@
+# image dump of heif-items/valid-unci-palette.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=12, height=8, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 12x8 yuv8 YUV444 color=IDENTITY/FULL/BT709/SRGB y=ea5d404f u=45b5c031 v=fa2bb776 a=b8dd8eec
+  format=HEIC orientation=NORMAL source=12x8
+  icc=none exif=none xmp=none
+  profile=none
+scaled 3x2
+picture 12x8 yuv8 YUV444 color=IDENTITY/FULL/BT709/SRGB y=ea5d404f u=45b5c031 v=fa2bb776 a=b8dd8eec
+  format=HEIC orientation=NORMAL source=12x8
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=HEIC, width=12, height=8, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+picture 12x8 yuv8 YUV444 color=IDENTITY/FULL/BT709/SRGB y=ea5d404f u=45b5c031 v=fa2bb776 a=b8dd8eec
+  format=HEIC orientation=NORMAL source=12x8
+  icc=none exif=none xmp=none
+  profile=none

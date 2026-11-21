@@ -8,7 +8,7 @@ import java.util.Arrays;
  * Checks decoded pictures against the hashes of decoded picture hash SEI messages (ITU-T H.265
  * D.3.20): MD5, CRC and checksum, over the samples of each color component.
  */
-final class PictureHash {
+public final class PictureHash {
     /**
      * Prevents instantiation.
      */
@@ -61,6 +61,39 @@ final class PictureHash {
             }
         }
         return true;
+    }
+
+    /**
+     * Computes the decoded picture hash (D.3.20) of a picture, as a decoded picture hash SEI message carries it.
+     *
+     * @param frame the picture
+     * @param sps its sequence parameter set
+     * @param type the hash type, {@link HevcSei#HASH_MD5}, {@link HevcSei#HASH_CRC} or {@link HevcSei#HASH_CHECKSUM}
+     * @return the hash of each color component: 16 bytes of MD5 digest, a 2-byte CRC or a 4-byte checksum,
+     * big-endian, one array for monochrome pictures and three otherwise
+     */
+    public static byte[][] compute(HevcFrame frame, HevcSps sps, int type) {
+        var components = sps.chromaFormatIdc == 0 ? 1 : 3;
+        var hashes = new byte[components][];
+        for (var c = 0; c < components; c++) {
+            var plane = c == 0 ? frame.y : c == 1 ? frame.cb : frame.cr;
+            var plane8 = c == 0 ? frame.y8 : c == 1 ? frame.cb8 : frame.cr8;
+            var width = c == 0 ? frame.width : frame.chromaWidth;
+            var height = c == 0 ? frame.height : frame.chromaHeight;
+            var depth = c == 0 ? sps.bitDepthLuma : sps.bitDepthChroma;
+            hashes[c] = switch (type) {
+                case HevcSei.HASH_MD5 -> plane8 != null ? md5(plane8, width, height) : md5(plane, width, height, depth);
+                case HevcSei.HASH_CRC -> {
+                    var crc = plane8 != null ? crc(plane8, width, height) : crc(plane, width, height, depth);
+                    yield new byte[]{(byte) (crc >> 8), (byte) crc};
+                }
+                default -> {
+                    var sum = plane8 != null ? checksum(plane8, width, height) : checksum(plane, width, height, depth);
+                    yield new byte[]{(byte) (sum >> 24), (byte) (sum >> 16), (byte) (sum >> 8), (byte) sum};
+                }
+            };
+        }
+        return hashes;
     }
 
     /**

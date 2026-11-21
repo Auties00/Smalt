@@ -1,10 +1,15 @@
 package com.github.auties00.smalt.image.jpeg.internal;
 
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.ops.ImageOps;
 
 /**
  * Supplies the rows of a picture as full-resolution, full-range BT.601 Y'CbCr samples, the input
@@ -18,6 +23,51 @@ abstract sealed class YccRows permits YccRows.FromRgba, YccRows.FromYuv, YccRows
      * Constructs a row source.
      */
     YccRows() {
+    }
+
+    /**
+     * Returns the rows of any picture: a full-range BT.601 planar picture as it is, a planar
+     * picture of another range or of a matrix these rows convert through R'G'B', and any other picture
+     * through {@link ImageOps#toRgba(Picture)} (16-bit RGBA reduced with
+     * {@link ImageOps#toEightBit(Rgba16Picture)}, 16-bit planar pictures reduced with
+     * {@link ImageOps#toEightBit(Yuv16Picture)} when their matrix is converted here).
+     *
+     * @param picture the picture to read
+     * @return the rows
+     */
+    static YccRows of(Picture picture) {
+        return switch (picture) {
+            case RgbaPicture rgba -> new FromRgba(rgba, ColorKernel.INSTANCE);
+            case YuvPicture yuv when isJpegYcc(yuv) -> new FromYuv(yuv);
+            case YuvPicture yuv when !FromOtherYuv.converts(yuv.color().matrix()) ->
+                    new FromRgba(ImageOps.toRgba(yuv), ColorKernel.INSTANCE);
+            case YuvPicture yuv -> new FromOtherYuv(yuv, ColorKernel.INSTANCE);
+            case Rgba16Picture high -> new FromRgba(ImageOps.toEightBit(high), ColorKernel.INSTANCE);
+            case Yuv16Picture high when !FromOtherYuv.converts(high.color().matrix()) ->
+                    new FromRgba(ImageOps.toRgba(high), ColorKernel.INSTANCE);
+            case Yuv16Picture high -> new FromOtherYuv(ImageOps.toEightBit(high), ColorKernel.INSTANCE);
+            case ChannelPicture channels -> new FromRgba(ImageOps.toRgba(channels), ColorKernel.INSTANCE);
+        };
+    }
+
+    /**
+     * Returns whether a planar picture holds JPEG's own samples: full range with a BT.601 matrix.
+     *
+     * @param picture the planar picture to check
+     * @return {@code true} when its samples need no conversion
+     */
+    static boolean isJpegYcc(YuvPicture picture) {
+        return picture.color().range() == ColorRange.FULL && FromOtherYuv.isBt601(picture.color().matrix());
+    }
+
+    /**
+     * Returns whether a 16-bit planar picture holds JPEG's own samples: full range with a BT.601 matrix.
+     *
+     * @param picture the 16-bit planar picture to check
+     * @return {@code true} when its samples need no matrix conversion
+     */
+    static boolean isJpegYcc(Yuv16Picture picture) {
+        return picture.color().range() == ColorRange.FULL && FromOtherYuv.isBt601(picture.color().matrix());
     }
 
     /**
@@ -226,6 +276,19 @@ abstract sealed class YccRows permits YccRows.FromRgba, YccRows.FromYuv, YccRows
         @Override
         YccRows copy() {
             return new FromOtherYuv(picture, kernel);
+        }
+
+        /**
+         * Returns whether these rows convert a matrix.
+         *
+         * @param matrix the matrix coefficients of a picture
+         * @return {@code true} for the matrices of two fixed luma weights (unspecified included), identity and YCgCo
+         */
+        static boolean converts(MatrixCoefficients matrix) {
+            return switch (matrix) {
+                case BT601, BT470BG, UNSPECIFIED, BT709, FCC, SMPTE240M, BT2020_NCL, IDENTITY, YCGCO -> true;
+                default -> false;
+            };
         }
 
         /**

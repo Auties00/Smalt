@@ -33,6 +33,9 @@ class TiffConformanceTest {
             Map.entry("flower-rgb-planar-16.tif", 1),
             Map.entry("flower-separated-contig-16.tif", 1),
             Map.entry("flower-separated-planar-16.tif", 1),
+            // libtiff truncates the naive CMYK conversion, Smalt rounds it
+            Map.entry("flower-separated-contig-08.tif", 1),
+            Map.entry("flower-separated-planar-08.tif", 1),
             Map.entry("flower-palette-02.tif", 1),
             Map.entry("flower-palette-04.tif", 1),
             Map.entry("flower-palette-08.tif", 1),
@@ -42,8 +45,7 @@ class TiffConformanceTest {
             Map.entry("palette-1c-8b.tiff", 1),
             Map.entry("strike.tif", 1));
 
-    private static final Map<String, String> UNSUPPORTED = Map.of(
-            "webp_lossless_rgba_alpha_fully_opaque.tif", "tiff webp compression");
+    private static final Map<String, String> UNSUPPORTED = Map.of();
 
     // libtiff fails the last strip of this ThunderScan file ("Not enough data at scanline 320") and
     // leaves stale buffer contents in its rows, where Smalt leaves the missing pixels zero

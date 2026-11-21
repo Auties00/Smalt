@@ -458,7 +458,7 @@ final class RtRateControl {
         var best = bestQuality;
         var bestError = Double.MAX_VALUE;
         for (var i = bestQuality; i <= worstQuality; i++) {
-            var error = Math.abs(Math.log(RtTables.BITS_PER_MB[128 + i] / target));
+            var error = Math.abs(StrictMath.log(RtTables.BITS_PER_MB[128 + i] / target));
             if (error < bestError) {
                 bestError = error;
                 best = i;

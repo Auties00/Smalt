@@ -157,7 +157,7 @@ public final class AudioStreamOptions {
      *
      * <p>The device's own rate needs no conversion. Another rate is converted in
      * {@link AudioShareMode#SHARED} mode, by the operating system (Windows, Linux) or by the
-     * session (macOS input).
+     * session (macOS input and loopback).
      */
     public OptionalInt sampleRate() {
         return sampleRate == 0 ? OptionalInt.empty() : OptionalInt.of(sampleRate);

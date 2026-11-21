@@ -1,11 +1,15 @@
+/* Ports libxaac (decoder/ixheaacd_aac_rom.c: the scalefactor band offsets and TNS limits of 512- and 480-sample
+   frames). Copyright (C) 2018 The Android Open Source Project, Ittiam Systems; Apache License 2.0. Modified for
+   Smalt. */
 package com.github.auties00.smalt.audio.aac.internal;
 
 import java.util.Arrays;
 
 /**
  * Holds the per-sampling-rate tables of AAC: the scalefactor band offsets of long and short windows
- * for 1024- and 960-sample frames, and the TNS band limits; the rate of each sampling frequency index
- * is {@link com.github.auties00.smalt.internal.header.AacRates}'s.
+ * for 1024- and 960-sample frames and of the 512- and 480-sample frames of the low delay object types,
+ * the TNS band limits and the AAC Main prediction limit; the rate of
+ * each sampling frequency index is {@link com.github.auties00.smalt.internal.header.AacRates}'s.
  *
  * <p>Tables are selected by a table index from 0 to 12, the sampling frequency index of
  * ISO/IEC 14496-3 Table 1.18 (96000 Hz down to 7350 Hz). Streams that code an explicit
@@ -140,6 +144,63 @@ public final class SamplingTables {
     private static final int[][] SHORT_120 = truncateAll(SHORT_128, 120);
 
     /**
+     * The scalefactor band offsets of 512-sample low delay frames at 44.1 and 48 kHz (ISO/IEC 14496-3
+     * subclause 4.5.4).
+     */
+    private static final int[] LONG_512_48 = offsetsOf(4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 8, 8,
+            8, 12, 12, 12, 12, 16, 20, 24, 28, 32, 32, 32, 32, 32, 32, 32, 52);
+
+    /**
+     * The scalefactor band offsets of 512-sample low delay frames at 32 kHz.
+     */
+    private static final int[] LONG_512_32 = offsetsOf(4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 8, 8, 8,
+            12, 12, 12, 12, 16, 16, 16, 20, 24, 24, 28, 32, 32, 32, 32, 32, 32, 32);
+
+    /**
+     * The scalefactor band offsets of 512-sample low delay frames at 22.05 and 24 kHz.
+     */
+    private static final int[] LONG_512_24 = offsetsOf(4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 8, 12, 12, 12, 16,
+            20, 24, 28, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32);
+
+    /**
+     * The scalefactor band offsets of 480-sample low delay frames at 44.1 and 48 kHz.
+     */
+    private static final int[] LONG_480_48 = offsetsOf(4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 8, 8, 8,
+            12, 12, 12, 12, 12, 16, 16, 24, 28, 32, 32, 32, 32, 32, 32, 48);
+
+    /**
+     * The scalefactor band offsets of 480-sample low delay frames at 32 kHz.
+     */
+    private static final int[] LONG_480_32 = offsetsOf(4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 8,
+            8, 8, 8, 12, 12, 12, 16, 16, 20, 24, 32, 32, 32, 32, 32, 32, 32, 32);
+
+    /**
+     * The scalefactor band offsets of 480-sample low delay frames at 22.05 and 24 kHz.
+     */
+    private static final int[] LONG_480_24 = offsetsOf(4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 8, 12, 12, 12, 16,
+            20, 24, 28, 32, 32, 32, 32, 32, 32, 32, 32, 32);
+
+    /**
+     * The 512-sample low delay table of each table index.
+     */
+    private static final int[][] LONG_512 = lowDelay(LONG_512_48, LONG_512_32, LONG_512_24);
+
+    /**
+     * The 480-sample low delay table of each table index.
+     */
+    private static final int[][] LONG_480 = lowDelay(LONG_480_48, LONG_480_32, LONG_480_24);
+
+    /**
+     * The highest scalefactor band TNS may filter in 512-sample low delay frames, per table index.
+     */
+    private static final int[] TNS_MAX_BANDS_512 = {31, 31, 31, 31, 32, 37, 31, 31, 31, 31, 31, 31, 31};
+
+    /**
+     * The highest scalefactor band TNS may filter in 480-sample low delay frames, per table index.
+     */
+    private static final int[] TNS_MAX_BANDS_480 = {31, 31, 31, 31, 32, 37, 30, 30, 30, 30, 30, 30, 30};
+
+    /**
      * The highest scalefactor band TNS may filter in long windows, per table index, for the Low
      * Complexity profile (ISO/IEC 14496-3 subclause 4.6.9).
      */
@@ -150,6 +211,24 @@ public final class SamplingTables {
      * Complexity profile (ISO/IEC 14496-3 subclause 4.6.9).
      */
     private static final int[] TNS_MAX_BANDS_SHORT = {9, 9, 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14};
+
+    /**
+     * The highest scalefactor band TNS may filter in long windows, per table index, for the object
+     * types with the PQF filterbank (AAC SSR), from ISO/IEC 14496-3 Table 4.157.
+     */
+    private static final int[] TNS_MAX_BANDS_PQF_LONG = {28, 28, 27, 26, 26, 26, 29, 29, 23, 23, 23, 19, 19};
+
+    /**
+     * The highest scalefactor band TNS may filter in short windows, per table index, for the object
+     * types with the PQF filterbank (AAC SSR), from ISO/IEC 14496-3 Table 4.157.
+     */
+    private static final int[] TNS_MAX_BANDS_PQF_SHORT = {7, 7, 7, 6, 6, 6, 7, 7, 8, 8, 8, 7, 7};
+
+    /**
+     * The number of long-window scalefactor bands AAC Main prediction covers, per table index
+     * ({@code PRED_SFB_MAX}, ISO/IEC 13818-7 Table 62).
+     */
+    private static final int[] PREDICTION_MAX_BANDS = {33, 33, 38, 40, 40, 40, 41, 41, 37, 37, 37, 34, 34};
 
     /**
      * Prevents instantiation.
@@ -208,11 +287,16 @@ public final class SamplingTables {
      * Returns the long-window scalefactor band offsets, including the end offset.
      *
      * @param tableIndex the table index
-     * @param frameLength the frame length, 1024 or 960
+     * @param frameLength the frame length: 1024 or 960, or 512 or 480 for the low delay object types
      * @return the offsets; the array is shared and must not be modified
      */
     public static int[] longOffsets(int tableIndex, int frameLength) {
-        return frameLength == 960 ? LONG_960[tableIndex] : LONG_1024[tableIndex];
+        return switch (frameLength) {
+            case 960 -> LONG_960[tableIndex];
+            case 512 -> LONG_512[tableIndex];
+            case 480 -> LONG_480[tableIndex];
+            default -> LONG_1024[tableIndex];
+        };
     }
 
     /**
@@ -235,6 +319,68 @@ public final class SamplingTables {
      */
     public static int tnsMaxBands(int tableIndex, boolean shortWindow) {
         return shortWindow ? TNS_MAX_BANDS_SHORT[tableIndex] : TNS_MAX_BANDS_LONG[tableIndex];
+    }
+
+    /**
+     * Returns the highest band TNS may filter in a low delay frame.
+     *
+     * @param tableIndex the table index
+     * @param frameLength the frame length, 512 or 480
+     * @return the band limit
+     */
+    public static int tnsMaxBandsLowDelay(int tableIndex, int frameLength) {
+        return frameLength == 480 ? TNS_MAX_BANDS_480[tableIndex] : TNS_MAX_BANDS_512[tableIndex];
+    }
+
+    /**
+     * Returns the highest band TNS may filter in a stream coded with the PQF filterbank (AAC SSR).
+     *
+     * @param tableIndex the table index
+     * @param shortWindow whether the window is short
+     * @return the band limit
+     */
+    public static int tnsMaxBandsPqf(int tableIndex, boolean shortWindow) {
+        return shortWindow ? TNS_MAX_BANDS_PQF_SHORT[tableIndex] : TNS_MAX_BANDS_PQF_LONG[tableIndex];
+    }
+
+    /**
+     * Returns the number of long-window scalefactor bands AAC Main prediction covers.
+     *
+     * @param tableIndex the table index
+     * @return {@code PRED_SFB_MAX}
+     */
+    public static int predictionMaxBands(int tableIndex) {
+        return PREDICTION_MAX_BANDS[tableIndex];
+    }
+
+    /**
+     * Builds band offsets, closed by the frame length, from band widths.
+     *
+     * @param widths the width of each band
+     * @return the offsets, one more than the widths
+     */
+    private static int[] offsetsOf(int... widths) {
+        var offsets = new int[widths.length + 1];
+        for (var i = 0; i < widths.length; i++) {
+            offsets[i + 1] = offsets[i] + widths[i];
+        }
+        return offsets;
+    }
+
+    /**
+     * Assigns the three low delay tables of a frame length to the table indices.
+     *
+     * @implNote This implementation serves the rates above 48 kHz with the 48 kHz table and the rates
+     * below 22.05 kHz with the 24 kHz table, as the Android libxaac decoder does; ISO/IEC 14496-3
+     * defines the low delay tables from 22.05 to 48 kHz only.
+     *
+     * @param high the table of 44.1 and 48 kHz
+     * @param middle the table of 32 kHz
+     * @param low the table of 22.05 and 24 kHz
+     * @return the table of each table index
+     */
+    private static int[][] lowDelay(int[] high, int[] middle, int[] low) {
+        return new int[][]{high, high, high, high, high, middle, low, low, low, low, low, low, low};
     }
 
     /**

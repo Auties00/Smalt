@@ -1,0 +1,15 @@
+# video decode dump of avi/png.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 500000
+seekable true
+track 1 PNG 64x48 timebase=1/10
+0 pts=0 dur=1 key=true 64x48 rgba8 alpha=false crc=21a1f87e
+1 pts=1 dur=1 key=true 64x48 rgba8 alpha=false crc=f7f3e90b
+2 pts=2 dur=1 key=true 64x48 rgba8 alpha=false crc=552cf115
+3 pts=3 dur=1 key=true 64x48 rgba8 alpha=false crc=0ab95142
+4 pts=4 dur=1 key=true 64x48 rgba8 alpha=false crc=47f43e96
+seek 0: @0
+seek 166666: @1
+seek 333333: @3
+seek 500000: end
+seek -1000000: @0

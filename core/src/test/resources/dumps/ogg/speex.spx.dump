@@ -1,0 +1,54 @@
+# demux dump of ogg/speex.spx; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 591063
+seekable true
+metadata encoder="Lavc61.19.100 libspeex"
+track 0 AUDIO SPEEX timebase=1/16000 duration=9457 config=80:6e56c138
+  audio rate=16000 bits=0 skip=0 layout=[FRONT_CENTER]
+  metadata encoder="Lavc61.19.100 libspeex"
+packets 30
+0 t0 pts=0 dts=0 dur=320 flags=KEY size=70 crc=45bd7937
+1 t0 pts=320 dts=320 dur=320 flags=KEY size=70 crc=338ce778
+2 t0 pts=640 dts=640 dur=320 flags=KEY size=70 crc=972c0198
+3 t0 pts=960 dts=960 dur=320 flags=KEY size=70 crc=d31dfb21
+4 t0 pts=1280 dts=1280 dur=320 flags=KEY size=70 crc=d6cccdea
+5 t0 pts=1600 dts=1600 dur=320 flags=KEY size=70 crc=0d9352c2
+6 t0 pts=1920 dts=1920 dur=320 flags=KEY size=70 crc=829267a3
+7 t0 pts=2240 dts=2240 dur=320 flags=KEY size=70 crc=1121e1e8
+8 t0 pts=2560 dts=2560 dur=320 flags=KEY size=70 crc=c22e02b8
+9 t0 pts=2880 dts=2880 dur=320 flags=KEY size=70 crc=4545d782
+10 t0 pts=3200 dts=3200 dur=320 flags=KEY size=70 crc=7ad82207
+11 t0 pts=3520 dts=3520 dur=320 flags=KEY size=70 crc=b15b511a
+12 t0 pts=3840 dts=3840 dur=320 flags=KEY size=70 crc=c61d9746
+13 t0 pts=4160 dts=4160 dur=320 flags=KEY size=70 crc=ca0322c4
+14 t0 pts=4480 dts=4480 dur=320 flags=KEY size=70 crc=65c9559e
+15 t0 pts=4800 dts=4800 dur=320 flags=KEY size=70 crc=b03cb6eb
+16 t0 pts=5120 dts=5120 dur=320 flags=KEY size=70 crc=b138ac32
+17 t0 pts=5440 dts=5440 dur=320 flags=KEY size=70 crc=6b20ae27
+18 t0 pts=5760 dts=5760 dur=320 flags=KEY size=70 crc=dd4585cf
+19 t0 pts=6080 dts=6080 dur=320 flags=KEY size=70 crc=9df61a26
+20 t0 pts=6400 dts=6400 dur=320 flags=KEY size=70 crc=2873546f
+21 t0 pts=6720 dts=6720 dur=320 flags=KEY size=70 crc=47540061
+22 t0 pts=7040 dts=7040 dur=320 flags=KEY size=70 crc=f27104c6
+23 t0 pts=7360 dts=7360 dur=320 flags=KEY size=70 crc=cda58e57
+24 t0 pts=7680 dts=7680 dur=320 flags=KEY size=70 crc=54ab700c
+25 t0 pts=8000 dts=8000 dur=320 flags=KEY size=70 crc=0f8e664e
+26 t0 pts=8320 dts=8320 dur=320 flags=KEY size=70 crc=bf72799f
+27 t0 pts=8640 dts=8640 dur=320 flags=KEY size=70 crc=523c013e
+28 t0 pts=8960 dts=8960 dur=320 flags=KEY size=70 crc=eab5f6c4
+29 t0 pts=9280 dts=9280 dur=177 flags=KEY size=70 crc=657bfb9a side=[discard=0/143]
+seek 0: t0@0
+seek 197021: t0@9
+seek 394042: t0@19
+seek 591063: end
+seek -1000000: t0@0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  metadata encoder="Lavc61.19.100 libspeex"
+  track 0 AUDIO SPEEX timebase=1/16000 duration=? config=80:6e56c138
+    audio rate=16000 bits=0 skip=0 layout=[FRONT_CENTER]
+    metadata encoder="Lavc61.19.100 libspeex"
+not seekable over READ_ONCE_UNKNOWN_LENGTH
+seeks forward only over READ_ONCE_UNKNOWN_LENGTH

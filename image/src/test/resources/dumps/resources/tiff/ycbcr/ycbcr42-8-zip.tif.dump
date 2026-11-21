@@ -1,0 +1,19 @@
+# image dump of resources/tiff/ycbcr/ycbcr42-8-zip.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=24, height=10, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 24x10 rgba8 alpha=false crc=9bd77982
+  format=TIFF orientation=NORMAL source=24x10
+  icc=none exif=none xmp=none
+  profile=none
+scaled 6x2
+picture 24x10 rgba8 alpha=false crc=9bd77982
+  format=TIFF orientation=NORMAL source=24x10
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=TIFF, width=24, height=10, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 24x10 rgba8 alpha=false crc=9bd77982
+  format=TIFF orientation=NORMAL source=24x10
+  icc=none exif=none xmp=none
+  profile=none

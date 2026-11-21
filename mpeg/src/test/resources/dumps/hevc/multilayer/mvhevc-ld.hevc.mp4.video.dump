@@ -1,0 +1,16 @@
+# video decode dump of hevc/multilayer/mvhevc-ld.hevc.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 240000
+seekable true
+track 1 HEVC 128x96 timebase=1/90000
+0 pts=0 dur=3600 key=true 128x96 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=a29ecf2d u=aa334c14 v=f1c4e516
+1 pts=3600 dur=3600 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=07619301 u=1d565197 v=5bf4a1b1
+2 pts=7200 dur=3600 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=15785303 u=b6a51ea7 v=234d5c3a
+3 pts=10800 dur=3600 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=588b1a33 u=b9c1fd42 v=2893952f
+4 pts=14400 dur=3600 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=0fc89527 u=9ec40331 v=6466d5b6
+5 pts=18000 dur=3600 key=false 128x96 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=10d501ab u=bee6cbe8 v=9e4c378f
+seek 0: @0
+seek 80000: @2
+seek 160000: @4
+seek 240000: end
+seek -1000000: @0

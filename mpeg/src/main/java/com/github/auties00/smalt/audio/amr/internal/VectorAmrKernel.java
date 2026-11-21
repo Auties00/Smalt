@@ -44,8 +44,11 @@ final class VectorAmrKernel implements AmrKernel {
 
     /**
      * The scalar reference used for loop remainders.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarAmrKernel scalar = new ScalarAmrKernel();
+    private static final ScalarAmrKernel SCALAR = new ScalarAmrKernel();
 
     /**
      * Creates the kernel.
@@ -76,7 +79,7 @@ final class VectorAmrKernel implements AmrKernel {
             forward1(x, xOffset + n, c, taps, out, outOffset + n);
         }
         if (n < count) {
-            scalar.fir(x, xOffset + n, c, taps, count - n, out, outOffset + n);
+            SCALAR.fir(x, xOffset + n, c, taps, count - n, out, outOffset + n);
         }
     }
 
@@ -183,7 +186,7 @@ final class VectorAmrKernel implements AmrKernel {
             backward1(x, xOffset + n, c, taps, out, outOffset + n);
         }
         if (n < count) {
-            scalar.firReverse(x, xOffset + n, c, taps, count - n, out, outOffset + n);
+            SCALAR.firReverse(x, xOffset + n, c, taps, count - n, out, outOffset + n);
         }
     }
 
@@ -320,7 +323,7 @@ final class VectorAmrKernel implements AmrKernel {
             var raw = INT_VECTOR.cast(INT_VECTOR.cast(base.lanewise(VectorOperators.ADD, rr)).lanewise(VectorOperators.ASHR, 2)
                     .lanewise(VectorOperators.ADD, tbV)).lanewise(VectorOperators.ASHR, 1);
             var low = INT_VECTOR.cast(raw.lanewise(VectorOperators.SUB, IntVector.broadcast(INTS, 1))).lanewise(VectorOperators.LSHR, 31);
-            var high = INT_VECTOR.cast(IntVector.broadcast(INTS, 32767).lanewise(VectorOperators.SUB, raw)).lanewise(VectorOperators.LSHR, 31);
+            var high = INT_VECTOR.cast(INT_VECTOR.cast(IntVector.broadcast(INTS, 32767)).lanewise(VectorOperators.SUB, raw)).lanewise(VectorOperators.LSHR, 31);
             bad = INT_VECTOR.cast(bad).lanewise(VectorOperators.OR, low.lanewise(VectorOperators.OR, high));
             var left = sq.lanewise(VectorOperators.MUL, INT_VECTOR.cast(alpk));
             var right = INT_VECTOR.cast(sqk).lanewise(VectorOperators.MUL, raw);

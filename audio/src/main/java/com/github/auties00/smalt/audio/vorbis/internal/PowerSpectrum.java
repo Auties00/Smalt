@@ -118,8 +118,8 @@ public final class PowerSpectrum {
                 for (var ii = 2; ii < ido; ii += 2) {
                     fi += 1.f;
                     var arg = fi * argld;
-                    wa[i++] = (float) Math.cos(arg);
-                    wa[i++] = (float) Math.sin(arg);
+                    wa[i++] = (float) StrictMath.cos(arg);
+                    wa[i++] = (float) StrictMath.sin(arg);
                 }
                 is += ido;
             }

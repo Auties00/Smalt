@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 762" width="960" height="762" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-label="Audio: time relative to the native reference">
+<title>Audio: Smalt's time relative to the native reference (lower is better)</title>
+<rect x="8" y="10" width="12" height="12" rx="3" fill="#3987e5"/>
+<text x="26" y="20.5" font-size="12" fill="#9198a1">faster than the reference</text>
+<rect x="188" y="10" width="12" height="12" rx="3" fill="#d95926"/>
+<text x="206" y="20.5" font-size="12" fill="#9198a1">slower than the reference</text>
+<path d="M370,12v8M370,16h22M392,12v8" stroke="#f0f6fc" stroke-width="1.5" fill="none"/>
+<text x="400" y="20.5" font-size="12" fill="#9198a1">measured range</text>
+<line x1="520.0" y1="56" x2="520.0" y2="748" stroke="#3d444d" stroke-width="1"/>
+<text x="520.0" y="50" font-size="11" text-anchor="middle" fill="#9198a1">0.1x</text>
+<line x1="604.5" y1="56" x2="604.5" y2="748" stroke="#3d444d" stroke-width="1"/>
+<text x="604.5" y="50" font-size="11" text-anchor="middle" fill="#9198a1">0.25x</text>
+<line x1="668.3" y1="56" x2="668.3" y2="748" stroke="#3d444d" stroke-width="1"/>
+<text x="668.3" y="50" font-size="11" text-anchor="middle" fill="#9198a1">0.5x</text>
+<line x1="732.2" y1="56" x2="732.2" y2="748" stroke="#7d8590" stroke-width="1.5"/>
+<text x="732.2" y="50" font-size="11" text-anchor="middle" fill="#f0f6fc" font-weight="600">1x</text>
+<line x1="796.1" y1="56" x2="796.1" y2="748" stroke="#3d444d" stroke-width="1"/>
+<text x="796.1" y="50" font-size="11" text-anchor="middle" fill="#9198a1">2x</text>
+<line x1="860.0" y1="56" x2="860.0" y2="748" stroke="#3d444d" stroke-width="1"/>
+<text x="860.0" y="50" font-size="11" text-anchor="middle" fill="#9198a1">4x</text>
+<text x="732.2" y="36" font-size="11" text-anchor="middle" fill="#9198a1">parity</text>
+<text x="8" y="81.0" font-size="13" fill="#f0f6fc">Opus decode</text>
+<text x="8" y="95.0" font-size="11" fill="#9198a1">vs libopus</text>
+<path d="M732.2,76.0H721.2a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H732.2z" fill="#3987e5"/>
+<text x="709.2" y="87.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">about 0.85x</text>
+<text x="8" y="119.0" font-size="13" fill="#f0f6fc">Opus encode, 60 ms frames</text>
+<text x="8" y="133.0" font-size="11" fill="#9198a1">vs libopus</text>
+<line x1="8" y1="102" x2="952" y2="102" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M726.3,114.0h5.9v14h-5.9z" fill="#3987e5"/>
+<path d="M711.7,116.0v10M711.7,121.0H741.0M741.0,116.0v10" stroke="#f0f6fc" stroke-width="1.5" fill="none"/>
+<text x="703.7" y="125.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.8-1.1x</text>
+<text x="8" y="157.0" font-size="13" fill="#f0f6fc">HE-AAC decode (SBR)</text>
+<text x="8" y="171.0" font-size="11" fill="#9198a1">vs FFmpeg</text>
+<line x1="8" y1="140" x2="952" y2="140" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<circle cx="732.2" cy="159.0" r="4.5" fill="#7d8590"/>
+<text x="740.2" y="163.5" font-size="12" font-weight="600" fill="#f0f6fc">about 1.0x</text>
+<text x="8" y="195.0" font-size="13" fill="#f0f6fc">AMR-WB decode</text>
+<text x="8" y="209.0" font-size="11" fill="#9198a1">vs FFmpeg</text>
+<line x1="8" y1="178" x2="952" y2="178" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,190.0H752.4a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="764.4" y="201.5" font-size="12" font-weight="600" fill="#f0f6fc">about 1.3x</text>
+<text x="8" y="233.0" font-size="13" fill="#f0f6fc">AC-3 decode, 5.1</text>
+<text x="8" y="247.0" font-size="11" fill="#9198a1">vs FFmpeg</text>
+<line x1="8" y1="216" x2="952" y2="216" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,228.0H752.4a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="764.4" y="239.5" font-size="12" font-weight="600" fill="#f0f6fc">1.3x</text>
+<text x="8" y="271.0" font-size="13" fill="#f0f6fc">E-AC-3 decode, 5.1</text>
+<text x="8" y="285.0" font-size="11" fill="#9198a1">vs FFmpeg</text>
+<line x1="8" y1="254" x2="952" y2="254" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,266.0H752.4a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="764.4" y="277.5" font-size="12" font-weight="600" fill="#f0f6fc">1.3x</text>
+<text x="8" y="309.0" font-size="13" fill="#f0f6fc">E-AC-3 decode, 7.1 Atmos bed</text>
+<text x="8" y="323.0" font-size="11" fill="#9198a1">vs FFmpeg</text>
+<line x1="8" y1="292" x2="952" y2="292" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,304.0H765.6a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="777.6" y="315.5" font-size="12" font-weight="600" fill="#f0f6fc">1.5x</text>
+<text x="8" y="347.0" font-size="13" fill="#f0f6fc">AC-3 encode, 5.1 at 448 kbit/s</text>
+<text x="8" y="361.0" font-size="11" fill="#9198a1">vs FFmpeg</text>
+<line x1="8" y1="330" x2="952" y2="330" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,342.0H816.3a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="828.3" y="353.5" font-size="12" font-weight="600" fill="#f0f6fc">2.6x</text>
+<text x="8" y="385.0" font-size="13" fill="#f0f6fc">E-AC-3 encode, 5.1 at 384 kbit/s</text>
+<text x="8" y="399.0" font-size="11" fill="#9198a1">vs FFmpeg</text>
+<line x1="8" y1="368" x2="952" y2="368" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,380.0H812.7a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="824.7" y="391.5" font-size="12" font-weight="600" fill="#f0f6fc">2.5x</text>
+<text x="8" y="423.0" font-size="13" fill="#f0f6fc">MP3 decode</text>
+<text x="8" y="437.0" font-size="11" fill="#9198a1">vs FFmpeg (mp3float)</text>
+<line x1="8" y1="406" x2="952" y2="406" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,418.0H737.0a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="749.0" y="429.5" font-size="12" font-weight="600" fill="#f0f6fc">about 1.1x</text>
+<text x="8" y="461.0" font-size="13" fill="#f0f6fc">MP3 encode at 128 kbit/s</text>
+<text x="8" y="475.0" font-size="11" fill="#9198a1">vs LAME</text>
+<line x1="8" y1="444" x2="952" y2="444" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,456.0H719.1a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H732.2z" fill="#3987e5"/>
+<text x="707.1" y="467.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.83x</text>
+<text x="8" y="499.0" font-size="13" fill="#f0f6fc">MP3 encode at V2</text>
+<text x="8" y="513.0" font-size="11" fill="#9198a1">vs LAME</text>
+<line x1="8" y1="482" x2="952" y2="482" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,494.0H689.1a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H732.2z" fill="#3987e5"/>
+<text x="677.1" y="505.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.6x</text>
+<text x="8" y="537.0" font-size="13" fill="#f0f6fc">Vorbis encode</text>
+<text x="8" y="551.0" font-size="11" fill="#9198a1">vs libvorbis</text>
+<line x1="8" y1="520" x2="952" y2="520" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,532.0H737.0a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="749.0" y="543.5" font-size="12" font-weight="600" fill="#f0f6fc">about 1.1x</text>
+<text x="8" y="575.0" font-size="13" fill="#f0f6fc">FLAC encode, level 5</text>
+<text x="8" y="589.0" font-size="11" fill="#9198a1">vs libFLAC (flac)</text>
+<line x1="8" y1="558" x2="952" y2="558" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,570.0H721.2a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H732.2z" fill="#3987e5"/>
+<text x="709.2" y="581.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">about 0.85x</text>
+<text x="8" y="613.0" font-size="13" fill="#f0f6fc">FLAC encode, level 8</text>
+<text x="8" y="627.0" font-size="11" fill="#9198a1">vs libFLAC (flac)</text>
+<line x1="8" y1="596" x2="952" y2="596" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,608.0H752.4a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="764.4" y="619.5" font-size="12" font-weight="600" fill="#f0f6fc">1.3x</text>
+<text x="8" y="651.0" font-size="13" fill="#f0f6fc">ALAC decode</text>
+<text x="8" y="665.0" font-size="11" fill="#9198a1">vs FFmpeg</text>
+<line x1="8" y1="634" x2="952" y2="634" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,646.0H737.0a4,4 0 0 1 4,4v6a4,4 0 0 1 -4,4H732.2z" fill="#d95926"/>
+<text x="749.0" y="657.5" font-size="12" font-weight="600" fill="#f0f6fc">about 1.1x</text>
+<text x="8" y="689.0" font-size="13" fill="#f0f6fc">Voice processing (AEC3 + noise suppression), 10 ms frames</text>
+<text x="8" y="703.0" font-size="11" fill="#9198a1">vs WebRTC APM</text>
+<line x1="8" y1="672" x2="952" y2="672" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<circle cx="732.2" cy="691.0" r="4.5" fill="#7d8590"/>
+<text x="740.2" y="695.5" font-size="12" font-weight="600" fill="#f0f6fc">about 1.0x</text>
+<text x="8" y="727.0" font-size="13" fill="#f0f6fc">Loudness measurement (EBU R128, true peak)</text>
+<text x="8" y="741.0" font-size="11" fill="#9198a1">vs FFmpeg (ebur128)</text>
+<line x1="8" y1="710" x2="952" y2="710" stroke="#3d444d" stroke-width="1" stroke-dasharray="1 5"/>
+<path d="M732.2,722.0H606.6a4,4 0 0 0 -4,4v6a4,4 0 0 0 4,4H732.2z" fill="#3987e5"/>
+<path d="M583.9,724.0v10M583.9,729.0H621.3M621.3,724.0v10" stroke="#f0f6fc" stroke-width="1.5" fill="none"/>
+<text x="575.9" y="733.5" font-size="12" font-weight="600" text-anchor="end" fill="#f0f6fc">0.2-0.3x</text>
+</svg>

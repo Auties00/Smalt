@@ -129,7 +129,7 @@ public final class EncoderReport {
 
     private static void runX264(Path input, int width, int height, int frames, int fps, String preset,
                                 String profile, int kbps, int threads, boolean cq) {
-        var out = Path.of("target", "h264enc-work", "x264-" + preset + "-" + kbps + ".264");
+        var out = EncoderHarness.workFile("x264-" + preset + "-" + kbps + ".264");
         var arguments = new ArrayList<>(List.of("-v", "error", "-y", "-benchmark", "-threads", Integer.toString(threads),
                 "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", width + "x" + height, "-r", Integer.toString(fps),
                 "-i", input.toString(), "-frames:v", Integer.toString(frames), "-c:v", "libx264", "-preset", preset,

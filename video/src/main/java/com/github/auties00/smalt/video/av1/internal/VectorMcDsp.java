@@ -122,14 +122,16 @@ public final class VectorMcDsp extends McDsp {
 
     /**
      * The kernels used for the cases this class does not vectorize.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarMcDsp scalar;
+    private static final ScalarMcDsp SCALAR = new ScalarMcDsp();
 
     /**
      * Constructs the kernels.
      */
     private VectorMcDsp() {
-        this.scalar = new ScalarMcDsp();
     }
 
     /**
@@ -242,7 +244,7 @@ public final class VectorMcDsp extends McDsp {
     public void mc(int filter2d, short[] dst, int dstOff, int dstStride, short[] src, int srcOff, int srcStride,
                    int w, int h, int mx, int my, short[] scratch, int bitdepthMax) {
         if (filter2d == FILTER_2D_BILINEAR || w < 8) {
-            scalar.mc(filter2d, dst, dstOff, dstStride, src, srcOff, srcStride, w, h, mx, my, scratch, bitdepthMax);
+            SCALAR.mc(filter2d, dst, dstOff, dstStride, src, srcOff, srcStride, w, h, mx, my, scratch, bitdepthMax);
             return;
         }
         var type = ScalarMcDsp.filterType(filter2d);
@@ -276,7 +278,7 @@ public final class VectorMcDsp extends McDsp {
     public void mcScaled(int filter2d, short[] dst, int dstOff, int dstStride, short[] src, int srcOff,
                          int srcStride, int w, int h, int mx, int my, int dx, int dy, short[] scratch,
                          int bitdepthMax) {
-        scalar.mcScaled(filter2d, dst, dstOff, dstStride, src, srcOff, srcStride, w, h, mx, my, dx, dy, scratch,
+        SCALAR.mcScaled(filter2d, dst, dstOff, dstStride, src, srcOff, srcStride, w, h, mx, my, dx, dy, scratch,
                 bitdepthMax);
     }
 
@@ -284,7 +286,7 @@ public final class VectorMcDsp extends McDsp {
     public void mct(int filter2d, short[] tmp, int tmpOff, short[] src, int srcOff, int srcStride, int w, int h,
                     int mx, int my, short[] scratch, int bitdepthMax) {
         if (filter2d == FILTER_2D_BILINEAR || w < 8) {
-            scalar.mct(filter2d, tmp, tmpOff, src, srcOff, srcStride, w, h, mx, my, scratch, bitdepthMax);
+            SCALAR.mct(filter2d, tmp, tmpOff, src, srcOff, srcStride, w, h, mx, my, scratch, bitdepthMax);
             return;
         }
         var type = ScalarMcDsp.filterType(filter2d);
@@ -316,7 +318,7 @@ public final class VectorMcDsp extends McDsp {
     @Override
     public void mctScaled(int filter2d, short[] tmp, int tmpOff, short[] src, int srcOff, int srcStride, int w,
                           int h, int mx, int my, int dx, int dy, short[] scratch, int bitdepthMax) {
-        scalar.mctScaled(filter2d, tmp, tmpOff, src, srcOff, srcStride, w, h, mx, my, dx, dy, scratch, bitdepthMax);
+        SCALAR.mctScaled(filter2d, tmp, tmpOff, src, srcOff, srcStride, w, h, mx, my, dx, dy, scratch, bitdepthMax);
     }
 
     /**
@@ -1679,7 +1681,7 @@ public final class VectorMcDsp extends McDsp {
     public void avg(short[] dst, int dstOff, int dstStride, short[] tmp1, int tmp1Off, short[] tmp2, int tmp2Off,
                     int w, int h, int bitdepthMax) {
         if (w < 8) {
-            scalar.avg(dst, dstOff, dstStride, tmp1, tmp1Off, tmp2, tmp2Off, w, h, bitdepthMax);
+            SCALAR.avg(dst, dstOff, dstStride, tmp1, tmp1Off, tmp2, tmp2Off, w, h, bitdepthMax);
             return;
         }
         if (bitdepthMax == 255) {
@@ -1766,7 +1768,7 @@ public final class VectorMcDsp extends McDsp {
     public void wAvg(short[] dst, int dstOff, int dstStride, short[] tmp1, int tmp1Off, short[] tmp2, int tmp2Off,
                      int w, int h, int weight, int bitdepthMax) {
         if (w < 8) {
-            scalar.wAvg(dst, dstOff, dstStride, tmp1, tmp1Off, tmp2, tmp2Off, w, h, weight, bitdepthMax);
+            SCALAR.wAvg(dst, dstOff, dstStride, tmp1, tmp1Off, tmp2, tmp2Off, w, h, weight, bitdepthMax);
             return;
         }
         var ib = ScalarMcDsp.intermediateBits(bitdepthMax);
@@ -1824,7 +1826,7 @@ public final class VectorMcDsp extends McDsp {
     public void mask(short[] dst, int dstOff, int dstStride, short[] tmp1, int tmp1Off, short[] tmp2, int tmp2Off,
                      int w, int h, byte[] mask, int maskOff, int bitdepthMax) {
         if (w < 8) {
-            scalar.mask(dst, dstOff, dstStride, tmp1, tmp1Off, tmp2, tmp2Off, w, h, mask, maskOff, bitdepthMax);
+            SCALAR.mask(dst, dstOff, dstStride, tmp1, tmp1Off, tmp2, tmp2Off, w, h, mask, maskOff, bitdepthMax);
             return;
         }
         var ib = ScalarMcDsp.intermediateBits(bitdepthMax);
@@ -1860,7 +1862,7 @@ public final class VectorMcDsp extends McDsp {
     @Override
     public void wMask(int layoutIndex, short[] dst, int dstOff, int dstStride, short[] tmp1, int tmp1Off,
                       short[] tmp2, int tmp2Off, int w, int h, byte[] mask, int maskOff, int sign, int bitdepthMax) {
-        scalar.wMask(layoutIndex, dst, dstOff, dstStride, tmp1, tmp1Off, tmp2, tmp2Off, w, h, mask, maskOff, sign,
+        SCALAR.wMask(layoutIndex, dst, dstOff, dstStride, tmp1, tmp1Off, tmp2, tmp2Off, w, h, mask, maskOff, sign,
                 bitdepthMax);
     }
 
@@ -1868,7 +1870,7 @@ public final class VectorMcDsp extends McDsp {
     public void blend(short[] dst, int dstOff, int dstStride, short[] tmp, int tmpOff, int w, int h, byte[] mask,
                       int maskOff) {
         if (w < 8) {
-            scalar.blend(dst, dstOff, dstStride, tmp, tmpOff, w, h, mask, maskOff);
+            SCALAR.blend(dst, dstOff, dstStride, tmp, tmpOff, w, h, mask, maskOff);
             return;
         }
         var full = IntVector.broadcast(I256, 64);
@@ -1896,13 +1898,13 @@ public final class VectorMcDsp extends McDsp {
 
     @Override
     public void blendV(short[] dst, int dstOff, int dstStride, short[] tmp, int tmpOff, int w, int h) {
-        scalar.blendV(dst, dstOff, dstStride, tmp, tmpOff, w, h);
+        SCALAR.blendV(dst, dstOff, dstStride, tmp, tmpOff, w, h);
     }
 
     @Override
     public void blendH(short[] dst, int dstOff, int dstStride, short[] tmp, int tmpOff, int w, int h) {
         if (w < 8) {
-            scalar.blendH(dst, dstOff, dstStride, tmp, tmpOff, w, h);
+            SCALAR.blendH(dst, dstOff, dstStride, tmp, tmpOff, w, h);
             return;
         }
         var masks = McTables.OBMC_MASKS;
@@ -2315,12 +2317,12 @@ public final class VectorMcDsp extends McDsp {
     @Override
     public void emuEdge(int bw, int bh, int iw, int ih, int x, int y, short[] dst, int dstOff, int dstStride,
                         short[] ref, int refOff, int refStride) {
-        scalar.emuEdge(bw, bh, iw, ih, x, y, dst, dstOff, dstStride, ref, refOff, refStride);
+        SCALAR.emuEdge(bw, bh, iw, ih, x, y, dst, dstOff, dstStride, ref, refOff, refStride);
     }
 
     @Override
     public void resize(short[] dst, int dstOff, int dstStride, short[] src, int srcOff, int srcStride, int dstW,
                        int h, int srcW, int dx, int mx0, int bitdepthMax) {
-        scalar.resize(dst, dstOff, dstStride, src, srcOff, srcStride, dstW, h, srcW, dx, mx0, bitdepthMax);
+        SCALAR.resize(dst, dstOff, dstStride, src, srcOff, srcStride, dstW, h, srcW, dx, mx0, bitdepthMax);
     }
 }

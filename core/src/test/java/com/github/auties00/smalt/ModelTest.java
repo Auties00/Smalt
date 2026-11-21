@@ -130,6 +130,9 @@ class ModelTest {
             assertEquals(ImageFormat.GIF, detect("GIF89a".getBytes(StandardCharsets.US_ASCII)));
             assertEquals(ImageFormat.GIF, detect("GIF87a".getBytes(StandardCharsets.US_ASCII)));
             assertEquals(ImageFormat.WEBP, detect("RIFF\0\0\0\0WEBPVP8 ".getBytes(StandardCharsets.US_ASCII)));
+            assertEquals(ImageFormat.ANI, detect("RIFF\0\0\0\0ACONanih".getBytes(StandardCharsets.US_ASCII)));
+            assertNull(detect("RIFF\0\0\0\0WAVEfmt ".getBytes(StandardCharsets.US_ASCII)), "a WAVE file is not an image");
+            assertNull(detect("RIFF\0\0\0\0AVI LIST".getBytes(StandardCharsets.US_ASCII)), "an AVI file is not an image");
             assertEquals(ImageFormat.BMP, detect("BM\0\0\0\0\0\0\0\0\0\0\0\0".getBytes(StandardCharsets.US_ASCII)));
             assertEquals(ImageFormat.TIFF, detect(new byte[]{'I', 'I', 42, 0}));
             assertEquals(ImageFormat.TIFF, detect(new byte[]{'M', 'M', 0, 42}));

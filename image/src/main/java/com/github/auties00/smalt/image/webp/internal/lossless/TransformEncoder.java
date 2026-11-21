@@ -11,11 +11,14 @@ import java.util.Arrays;
  * lowest wins. The cross-color search picks, per tile, the multipliers that minimize the entropy
  * of the transformed red and blue channels.
  *
- * @implNote This implementation follows libwebp's {@code src/enc/predictor_enc.c} (BSD-3)
- * without its near-lossless path: tiles are visited in Z order within the largest tiles so that
- * every coarser tile is scored as soon as it is complete, and when pixels are not required to be
- * exact, the color of fully transparent pixels is replaced by the prediction so that their
- * residual color is zero.
+ * <p>With a near-lossless step, residuals of pixels off the image border are quantized
+ * ({@link NearLossless#residual}) unless pixels must be exact, and the quantized pixel replaces
+ * the source pixel for the predictions that follow.
+ *
+ * @implNote This implementation follows libwebp's {@code src/enc/predictor_enc.c} (BSD-3):
+ * tiles are visited in Z order within the largest tiles so that every coarser tile is scored as
+ * soon as it is complete, and when pixels are not required to be exact, the color of fully
+ * transparent pixels is replaced by the prediction so that their residual color is zero.
  */
 final class TransformEncoder {
     /**
@@ -186,19 +189,29 @@ final class TransformEncoder {
      * prediction's color so its residual color is zero; the change is written back to
      * {@code current} (and, for column 0, to the wrap-around entry of {@code upper}).
      *
-     * @param width    the image width
-     * @param upper    the row above, {@code width + 1} entries
-     * @param current  the current row, {@code width + 1} entries
-     * @param mode     the predictor mode
-     * @param xStart   the first column
-     * @param xEnd     the column after the last
-     * @param y        the row
-     * @param exact    whether transparent pixels keep their color
-     * @param out      the destination residuals
-     * @param outPos   the index of the first residual
+     * <p>When not exact and {@code maxQuantization} exceeds 1, the residual of a pixel off the
+     * image border under a mode other than 0 is quantized and the pixel it reconstructs is
+     * written back to {@code current}.
+     *
+     * @param width the image width
+     * @param height the image height
+     * @param upper the row above, {@code width + 1} entries
+     * @param current the current row, {@code width + 1} entries
+     * @param maxDiffs the largest neighbor difference of every pixel of the row
+     * @param mode the predictor mode
+     * @param xStart the first column
+     * @param xEnd the column after the last
+     * @param y the row
+     * @param maxQuantization the near-lossless step, 1 for lossless residuals
+     * @param exact whether transparent pixels keep their color
+     * @param usedSubtractGreen whether subtract-green was applied before
+     * @param out the destination residuals
+     * @param outPos the index of the first residual
      */
-    private static void residuals(int width, int[] upper, int[] current, int mode, int xStart, int xEnd, int y,
-                                  boolean exact, int[] out, int outPos) {
+    private static void residuals(int width, int height, int[] upper, int[] current, byte[] maxDiffs, int mode,
+                                  int xStart, int xEnd, int y, int maxQuantization, boolean exact,
+                                  boolean usedSubtractGreen, int[] out, int outPos) {
+        var nearLossless = !exact && maxQuantization > 1 && mode != 0 && y != 0 && y != height - 1;
         for (var x = xStart; x < xEnd; x++) {
             int predict;
             if (y == 0) {
@@ -208,7 +221,14 @@ final class TransformEncoder {
             } else {
                 predict = ScalarLosslessDsp.predict(mode, current[x - 1], upper, x);
             }
-            var residual = ScalarLosslessDsp.subPixels(current[x], predict);
+            int residual;
+            if (nearLossless && x != 0 && x != width - 1) {
+                residual = NearLossless.residual(current[x], predict, maxQuantization, maxDiffs[x] & 0xFF,
+                        usedSubtractGreen);
+                current[x] = ScalarLosslessDsp.addPixels(predict, residual);
+            } else {
+                residual = ScalarLosslessDsp.subPixels(current[x], predict);
+            }
             if (!exact && (current[x] & 0xFF000000) == 0) {
                 residual &= 0xFF000000;
                 current[x] = predict & 0x00FFFFFF;
@@ -353,24 +373,33 @@ final class TransformEncoder {
      * @param allArgb       the histograms of every level and mode
      * @param rows          the two scratch rows, the row above first; swapped as rows advance
      * @param argb          the image
+     * @param maxDiffs      scratch space for the neighbor differences of one row
+     * @param maxQuantization the near-lossless step, 1 for lossless residuals
      * @param exact         whether transparent pixels keep their color
+     * @param usedSubtractGreen whether subtract-green was applied before
      * @param residuals     scratch space for one tile row of residuals
      */
     private static void computeResidualsForTile(int width, int height, int tileX, int tileY, int minBits, int updateUpTo,
-                                                int[] allArgb, int[][] rows, int[] argb, boolean exact, int[] residuals) {
+                                                int[] allArgb, int[][] rows, int[] argb, byte[] maxDiffs,
+                                                int maxQuantization, boolean exact, boolean usedSubtractGreen,
+                                                int[] residuals) {
         var startX = tileX << minBits;
         var startY = tileY << minBits;
         var tileSize = 1 << minBits;
         var maxY = Math.min(tileSize, height - startY);
         var maxX = Math.min(tileSize, width - startX);
         var value = argb[startY * width + startX];
-        if ((exact || (value & 0xFF000000) != 0 || value == 0)
+        if (!exact && maxQuantization > 1) {
+            serialTileHistograms(width, height, startX, startY, maxX, maxY, 0, allArgb, rows, argb, maxDiffs,
+                    maxQuantization, false, usedSubtractGreen, residuals);
+        } else if ((exact || (value & 0xFF000000) != 0 || value == 0)
                 && isUniformTile(argb, width, startX, startY, maxX, maxY, value)) {
             uniformTileHistograms(startX, startY, maxX, maxY, 0, allArgb, value);
         } else if (exact || !hasTransparentPixel(argb, width, startX, startY, maxX, maxY)) {
             independentTileHistograms(width, startX, startY, maxX, maxY, 0, allArgb, argb, residuals);
         } else {
-            serialTileHistograms(width, height, startX, startY, maxX, maxY, 0, allArgb, rows, argb, exact, residuals);
+            serialTileHistograms(width, height, startX, startY, maxX, maxY, 0, allArgb, rows, argb, maxDiffs, 1, exact,
+                    usedSubtractGreen, residuals);
         }
         var size = NUM_PRED_MODES * HISTO_SIZE;
         for (var level = 1; level <= updateUpTo; level++) {
@@ -472,14 +501,19 @@ final class TransformEncoder {
      * @param allArgb    the histograms of every level and mode
      * @param rows       the two scratch rows, the row above first; swapped as rows advance
      * @param argb       the image
+     * @param maxDiffs   scratch space for the neighbor differences of one row
+     * @param maxQuantization the near-lossless step, 1 for lossless residuals
      * @param exact      whether transparent pixels keep their color
+     * @param usedSubtractGreen whether subtract-green was applied before
      * @param residuals  scratch space for one tile row of residuals
      */
     private static void serialTileHistograms(int width, int height, int startX, int startY, int maxX, int maxY,
-                                             int updateUpTo, int[] allArgb, int[][] rows, int[] argb, boolean exact,
+                                             int updateUpTo, int[] allArgb, int[][] rows, int[] argb, byte[] maxDiffs,
+                                             int maxQuantization, boolean exact, boolean usedSubtractGreen,
                                              int[] residuals) {
         var haveLeft = startX > 0 ? 1 : 0;
         var contextStartX = startX - haveLeft;
+        var contextWidth = maxX + haveLeft + (maxX < width - startX ? 1 : 0);
         for (var mode = 0; mode < NUM_PRED_MODES; mode++) {
             var histoOff = mode * HISTO_SIZE;
             if (startY > 0) {
@@ -494,7 +528,12 @@ final class TransformEncoder {
                 var current = rows[1];
                 System.arraycopy(argb, y * width + contextStartX, current, contextStartX,
                         maxX + haveLeft + (y + 1 < height ? 1 : 0));
-                residuals(width, upper, current, mode, startX, startX + maxX, y, exact, residuals, 0);
+                if (maxQuantization > 1 && y >= 1 && y + 1 < height) {
+                    NearLossless.maxDiffsForRow(contextWidth, width, argb, y * width + contextStartX, maxDiffs,
+                            contextStartX, usedSubtractGreen);
+                }
+                residuals(width, height, upper, current, maxDiffs, mode, startX, startX + maxX, y, maxQuantization,
+                        exact, usedSubtractGreen, residuals, 0);
                 for (var relativeX = 0; relativeX < maxX; relativeX++) {
                     updateHisto(allArgb, histoOff, residuals[relativeX]);
                 }
@@ -569,12 +608,15 @@ final class TransformEncoder {
      * @param minBits  the finest tile size in bits
      * @param maxBits  the coarsest tile size in bits
      * @param argb     the image
+     * @param maxQuantization the near-lossless step, 1 for lossless residuals
      * @param exact    whether transparent pixels keep their color
+     * @param usedSubtractGreen whether subtract-green was applied before
      * @param bestBits the destination of the chosen tile size in bits
      * @return the modes of the chosen size, one pixel per tile
      */
     private static int[] bestPredictorsAndSubSampling(int width, int height, int minBits, int maxBits, int[] argb,
-                                                       boolean exact, int[] bestBits) {
+                                                       int maxQuantization, boolean exact, boolean usedSubtractGreen,
+                                                       int[] bestBits) {
         var tilesPerRow = Vp8lDecoder.subSampleSize(width, minBits);
         var tilesPerCol = Vp8lDecoder.subSampleSize(height, minBits);
         var maxSubsamplingIndex = maxBits - minBits;
@@ -589,6 +631,7 @@ final class TransformEncoder {
         var updateUpTo = Math.max(Math.min(4, maxBits), minBits) - minBits;
         var rows = new int[][]{new int[width + 1], new int[width + 1]};
         var residuals = new int[1 << MAX_TRANSFORM_BITS];
+        var maxDiffs = new byte[width];
         var localTileX = 0;
         var localTileY = 0;
         var maxTileX = 0;
@@ -596,7 +639,8 @@ final class TransformEncoder {
         var tileX = 0;
         var tileY = 0;
         while (tileY < tilesPerCol) {
-            computeResidualsForTile(width, height, tileX, tileY, minBits, updateUpTo, allArgb, rows, argb, exact, residuals);
+            computeResidualsForTile(width, height, tileX, tileY, minBits, updateUpTo, allArgb, rows, argb, maxDiffs,
+                    maxQuantization, exact, usedSubtractGreen, residuals);
             var level = 0;
             while (true) {
                 var superTileX = tileX >> level;
@@ -742,11 +786,15 @@ final class TransformEncoder {
      * @param lowEffort whether to use mode 11 everywhere at the coarsest size
      * @param argb      the image, replaced by the residuals
      * @param image     the destination of the mode image, one pixel per tile
+     * @param nearLossless the near-lossless level, from 0 to 100, where 100 keeps the residuals
+     * lossless
      * @param exact     whether transparent pixels keep their color
+     * @param usedSubtractGreen whether subtract-green was applied before
      * @return the chosen tile size in bits
      */
     static int residualImage(int width, int height, int minBits, int maxBits, boolean lowEffort, int[] argb,
-                             int[] image, boolean exact) {
+                             int[] image, int nearLossless, boolean exact, boolean usedSubtractGreen) {
+        var maxQuantization = 1 << NearLossless.bits(nearLossless);
         int bits;
         if (lowEffort) {
             var count = Vp8lDecoder.subSampleSize(width, maxBits) * Vp8lDecoder.subSampleSize(height, maxBits);
@@ -756,12 +804,13 @@ final class TransformEncoder {
             bits = maxBits;
         } else {
             var bestBits = new int[1];
-            var modes = bestPredictorsAndSubSampling(width, height, minBits, maxBits, argb, exact, bestBits);
+            var modes = bestPredictorsAndSubSampling(width, height, minBits, maxBits, argb, maxQuantization, exact,
+                    usedSubtractGreen, bestBits);
             bits = bestBits[0];
             var count = Vp8lDecoder.subSampleSize(width, bits) * Vp8lDecoder.subSampleSize(height, bits);
             System.arraycopy(modes, 0, image, 0, count);
         }
-        copyImageWithPrediction(width, height, bits, image, argb, lowEffort, exact);
+        copyImageWithPrediction(width, height, bits, image, argb, lowEffort, maxQuantization, exact, usedSubtractGreen);
         return bits;
     }
 
@@ -774,13 +823,18 @@ final class TransformEncoder {
      * @param modes     the mode image
      * @param argb      the image, replaced by the residuals
      * @param lowEffort whether every tile uses mode 11 with exact residuals
+     * @param maxQuantization the near-lossless step, 1 for lossless residuals
      * @param exact     whether transparent pixels keep their color
+     * @param usedSubtractGreen whether subtract-green was applied before
      */
     private static void copyImageWithPrediction(int width, int height, int bits, int[] modes, int[] argb,
-                                                boolean lowEffort, boolean exact) {
+                                                boolean lowEffort, int maxQuantization, boolean exact,
+                                                boolean usedSubtractGreen) {
         var tilesPerRow = Vp8lDecoder.subSampleSize(width, bits);
         var upper = new int[width + 1];
         var current = new int[width + 1];
+        var currentMaxDiffs = new byte[width];
+        var lowerMaxDiffs = maxQuantization > 1 ? new byte[width] : null;
         for (var y = 0; y < height; y++) {
             var tmp = upper;
             upper = current;
@@ -789,10 +843,20 @@ final class TransformEncoder {
             if (lowEffort) {
                 predictBatch(PRED_LOW_EFFORT, 0, y, width, current, upper, argb, y * width);
             } else {
+                if (maxQuantization > 1) {
+                    var swap = currentMaxDiffs;
+                    currentMaxDiffs = lowerMaxDiffs;
+                    lowerMaxDiffs = swap;
+                    if (y + 2 < height) {
+                        NearLossless.maxDiffsForRow(width, width, argb, (y + 1) * width, lowerMaxDiffs, 0,
+                                usedSubtractGreen);
+                    }
+                }
                 for (var x = 0; x < width; ) {
                     var mode = (modes[(y >> bits) * tilesPerRow + (x >> bits)] >>> 8) & 0xFF;
                     var xEnd = Math.min(x + (1 << bits), width);
-                    residuals(width, upper, current, mode, x, xEnd, y, exact, argb, y * width + x);
+                    residuals(width, height, upper, current, currentMaxDiffs, mode, x, xEnd, y, maxQuantization, exact,
+                            usedSubtractGreen, argb, y * width + x);
                     x = xEnd;
                 }
             }
@@ -849,12 +913,13 @@ final class TransformEncoder {
      * @param greenToRed  the multiplier
      * @param accumulated the accumulated red histogram
      * @param histo       scratch histogram
+     * @param scratch     the kernel's lane scratch
      * @return the cost
      */
     private static long costCrossColorRed(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int prevX, int prevY,
-                                          int greenToRed, int[] accumulated, int[] histo) {
+                                          int greenToRed, int[] accumulated, int[] histo, int[] scratch) {
         Arrays.fill(histo, 0);
-        DSP.collectColorRedTransforms(argb, pos, stride, tileWidth, tileHeight, greenToRed, histo);
+        DSP.collectColorRedTransforms(argb, pos, stride, tileWidth, tileHeight, greenToRed, histo, scratch);
         var curDiff = predictionCostCrossColor(accumulated, histo);
         if ((greenToRed & 0xFF) == (prevX & 0xFF)) {
             curDiff -= 3L << EntropyMath.LOG_2_PRECISION_BITS;
@@ -882,12 +947,13 @@ final class TransformEncoder {
      * @param redToBlue   the red-to-blue multiplier
      * @param accumulated the accumulated blue histogram
      * @param histo       scratch histogram
+     * @param scratch     the kernel's lane scratch
      * @return the cost
      */
     private static long costCrossColorBlue(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int prevX, int prevY,
-                                           int greenToBlue, int redToBlue, int[] accumulated, int[] histo) {
+                                           int greenToBlue, int redToBlue, int[] accumulated, int[] histo, int[] scratch) {
         Arrays.fill(histo, 0);
-        DSP.collectColorBlueTransforms(argb, pos, stride, tileWidth, tileHeight, greenToBlue, redToBlue, histo);
+        DSP.collectColorBlueTransforms(argb, pos, stride, tileWidth, tileHeight, greenToBlue, redToBlue, histo, scratch);
         var curDiff = predictionCostCrossColor(accumulated, histo);
         var bonus = 3L << EntropyMath.LOG_2_PRECISION_BITS;
         if ((greenToBlue & 0xFF) == ((prevX >>> 8) & 0xFF)) {
@@ -929,6 +995,7 @@ final class TransformEncoder {
         var accumulatedRed = new int[256];
         var accumulatedBlue = new int[256];
         var histo = new int[256];
+        var scratch = new int[LosslessDsp.LANE_SCRATCH];
         var redKeys = new int[16];
         var redCosts = new long[16];
         var blueGreens = new int[64];
@@ -954,7 +1021,8 @@ final class TransformEncoder {
                 var greenToRedBest = 0;
                 var redSeen = 1;
                 redKeys[0] = 0;
-                var bestDiff = costCrossColorRed(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, 0, accumulatedRed, histo);
+                var bestDiff = costCrossColorRed(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, 0, accumulatedRed, histo,
+                        scratch);
                 redCosts[0] = bestDiff;
                 for (var iter = 0; iter < kMaxIters; iter++) {
                     var delta = 32 >> iter;
@@ -971,7 +1039,8 @@ final class TransformEncoder {
                         if (known >= 0) {
                             curDiff = redCosts[known];
                         } else {
-                            curDiff = costCrossColorRed(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, cur, accumulatedRed, histo);
+                            curDiff = costCrossColorRed(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, cur, accumulatedRed, histo,
+                                    scratch);
                             redKeys[redSeen] = cur;
                             redCosts[redSeen++] = curDiff;
                         }
@@ -987,7 +1056,8 @@ final class TransformEncoder {
                 var blueSeen = 1;
                 blueGreens[0] = 0;
                 blueReds[0] = 0;
-                bestDiff = costCrossColorBlue(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, 0, 0, accumulatedBlue, histo);
+                bestDiff = costCrossColorBlue(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, 0, 0, accumulatedBlue, histo,
+                        scratch);
                 blueCosts[0] = bestDiff;
                 for (var iter = 0; iter < iters; iter++) {
                     var delta = BLUE_DELTAS[iter];
@@ -1005,7 +1075,8 @@ final class TransformEncoder {
                         if (known >= 0) {
                             curDiff = blueCosts[known];
                         } else {
-                            curDiff = costCrossColorBlue(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, g2b, r2b, accumulatedBlue, histo);
+                            curDiff = costCrossColorBlue(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, g2b, r2b, accumulatedBlue,
+                                    histo, scratch);
                             blueGreens[blueSeen] = g2b;
                             blueReds[blueSeen] = r2b;
                             blueCosts[blueSeen++] = curDiff;

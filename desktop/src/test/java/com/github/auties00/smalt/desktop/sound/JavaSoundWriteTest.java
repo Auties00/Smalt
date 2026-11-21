@@ -68,7 +68,8 @@ class JavaSoundWriteTest {
     }
 
     @ParameterizedTest(name = "{0} Hz, {1} channels")
-    @CsvSource({"48000, 1, 48000, 1", "48000, 2, 48000, 2", "16000, 1, 48000, 1", "44100, 2, 48000, 2", "48000, 6, 48000, 2"})
+    @CsvSource({"48000, 1, 48000, 1", "48000, 2, 48000, 2", "16000, 1, 48000, 1", "44100, 2, 48000, 2", "48000, 6, 48000, 6",
+            "48000, 8, 48000, 8", "48000, 3, 48000, 3"})
     @DisplayName("the file decodes to the input's length at the decoder's rate")
     void lengthAndQuality(int rate, int channels, int decodedRate, int decodedChannels, @TempDir Path directory)
             throws Exception {
@@ -80,20 +81,25 @@ class JavaSoundWriteTest {
         assertEquals(decodedChannels, decoded.length);
         var expectedFrames = Math.round((double) frames * decodedRate / rate);
         assertEquals(expectedFrames, decoded[0].length);
-        if (channels <= 2) {
-            // Opus preserves a pure tone well: compare the decoded signal with the input at 48 kHz
+        // Opus preserves a pure tone well: compare each decoded channel with its input tone at 48 kHz,
+        // except the LFE channel, which codes only the lowest band
+        var layout = ChannelLayout.defaultFor(channels);
+        for (var c = 0; c < (channels <= 2 ? 1 : channels); c++) {
+            if (layout.speakers().get(c) == com.github.auties00.smalt.audio.Speaker.LOW_FREQUENCY) {
+                continue;
+            }
             var input = new double[(int) expectedFrames];
             for (var i = 0; i < input.length; i++) {
-                input[i] = 12_000.0 / 32768 * Math.sin(2 * Math.PI * 440 * i / decodedRate);
+                input[i] = 12_000.0 / 32768 * Math.sin(2 * Math.PI * (440 + 110 * c) * i / decodedRate);
             }
             double signal = 0;
             double noise = 0;
             for (var i = 2_000; i < input.length - 2_000; i++) {
                 signal += input[i] * input[i];
-                var error = decoded[0][i] - input[i];
+                var error = decoded[c][i] - input[i];
                 noise += error * error;
             }
-            assertTrue(10 * Math.log10(signal / noise) > 15, "SNR " + 10 * Math.log10(signal / noise));
+            assertTrue(10 * Math.log10(signal / noise) > 15, "SNR of channel " + c + " " + 10 * Math.log10(signal / noise));
         }
     }
 

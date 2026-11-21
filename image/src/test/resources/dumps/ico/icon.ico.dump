@@ -1,0 +1,19 @@
+# image dump of ico/icon.ico; regenerate with -Dsmalt.test.updateDumps=true
+format ICO
+info ImageInfo[format=ICO, width=32, height=32, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 32x32 rgba8 alpha=true crc=ed760d98
+  format=ICO orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 8x8
+picture 32x32 rgba8 alpha=true crc=ed760d98
+  format=ICO orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=ICO, width=32, height=32, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+picture 32x32 rgba8 alpha=true crc=ed760d98
+  format=ICO orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=none

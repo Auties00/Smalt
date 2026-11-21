@@ -1,0 +1,13 @@
+# video decode dump of vvc/intra-400-10bit.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 120000
+seekable true
+track 1 VVC 104x72 timebase=1/90000
+0 pts=0 dur=3600 key=true 104x72 yuv8 MONOCHROME color=BT601/LIMITED/SMPTE170M/SMPTE170M y=a8774e73
+1 pts=3600 dur=3600 key=true 104x72 yuv8 MONOCHROME color=BT601/LIMITED/SMPTE170M/SMPTE170M y=59ef30e7
+2 pts=7200 dur=3600 key=true 104x72 yuv8 MONOCHROME color=BT601/LIMITED/SMPTE170M/SMPTE170M y=038fe3d4
+seek 0: @0
+seek 40000: @1
+seek 80000: @2
+seek 120000: end
+seek -1000000: @0

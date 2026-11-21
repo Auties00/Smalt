@@ -2,8 +2,10 @@ package com.github.auties00.smalt.image.avif.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGrid;
+import com.github.auties00.smalt.internal.heif.HeifImageCodec;
 import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.internal.heif.HeifStills;
@@ -14,31 +16,31 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Describes what reconstructing the primary image of an AVIF file takes: the coded items of its
+ * Describes what reconstructing a coded image item of an AVIF file takes: the coded items of its
  * color and alpha planes, the grids that place them, and whether the color is premultiplied by
  * the alpha.
  *
- * <p>The primary item is either a coded {@code av01} item or a {@code grid} whose inputs are
- * coded items. The alpha plane is the first auxiliary item that references the primary item with
- * {@code auxl}, carries the alpha URN in its {@code auxC} property and can be decoded (a coded
- * item or a grid of them, with data and no unsupported essential property); when the primary item
+ * <p>The item is either a coded {@code av01} item or a {@code grid} whose inputs are coded items
+ * (see {@link #isCoded}). The alpha plane is the first auxiliary item that references the item
+ * with {@code auxl}, carries the alpha URN in its {@code auxC} property and can be decoded (a
+ * coded item or a grid of them, with data and no unsupported essential property); when the item
  * is a grid without such an item, an alpha plane made of one auxiliary item per tile is used if
  * every tile has one. An alpha item that cannot be decoded is ignored, as libavif ignores it.
  *
- * @param primary the primary item
+ * @param item the item reconstructed, usually the primary item
  * @param grid the color grid, or {@code null} for a single coded item
  * @param colorTiles the coded color items, in row-major grid order
  * @param config the {@code av1C} configuration shared by the color items
  * @param alphaGrid the alpha grid, or {@code null} for a single coded alpha item or none
  * @param alphaTiles the coded alpha items, empty when the image has no alpha plane
- * @param alphaItem the alpha item that references the primary item, or {@code null} when
+ * @param alphaItem the alpha item that references the item, or {@code null} when
  * the alpha plane is absent or made of per-tile items
  * @param premultiplied whether the color samples are premultiplied by the alpha
  * @implNote This implementation follows the item selection of libavif's {@code avifDecoderReset},
  * {@code avifMetaFindAlphaItem} and {@code avifDecoderGenerateImageTiles}
  * ({@code src/read.c}, BSD 2-clause).
  */
-record StillPlan(HeifItem primary, HeifGrid grid, List<HeifItem> colorTiles, HeifProperty.Av1Configuration config,
+record StillPlan(HeifItem item, HeifGrid grid, List<HeifItem> colorTiles, HeifProperty.Av1Configuration config,
                  HeifGrid alphaGrid, List<HeifItem> alphaTiles, HeifItem alphaItem, boolean premultiplied) {
     /**
      * The property types this decoder implements; an item with another essential property is not
@@ -48,38 +50,68 @@ record StillPlan(HeifItem primary, HeifGrid grid, List<HeifItem> colorTiles, Hei
             "imir", "auxC", "a1op", "lsel", "a1lx", "clli", "mdcv");
 
     /**
-     * Plans the reconstruction of the primary image.
+     * The types of the derived image items this decoder reconstructs besides {@code grid}.
+     */
+    static final Set<String> DERIVED_TYPES = Set.of("iden", "iovl", "sato");
+
+    /**
+     * Returns whether an item is a coded image this plan describes: a coded {@code av01} item, or
+     * a {@code grid} none of whose inputs is a derived image or an image coded with HEVC, AVC, JPEG,
+     * JPEG 2000 or as uncompressed samples.
+     *
+     * @param file the parsed file
+     * @param item the image item
+     * @return {@code true} for a coded item or a grid of coded items; {@code false} for a derived
+     * image of another type or a grid with a derived input or an input of the HEIC family, which
+     * the {@link HeifImageCodec} of that family reconstructs
+     */
+    static boolean isCoded(HeifFile file, HeifItem item) {
+        return switch (item.type()) {
+            case "av01" -> true;
+            case "grid" -> {
+                for (var id : item.references("dimg")) {
+                    var input = file.item(id);
+                    if (input != null && (DERIVED_TYPES.contains(input.type()) || input.type().equals("grid")
+                            || HeifImageCodec.formatOf(input.type()) == ImageFormat.HEIC)) {
+                        yield false;
+                    }
+                }
+                yield true;
+            }
+            default -> false;
+        };
+    }
+
+    /**
+     * Plans the reconstruction of a coded image item.
      *
      * @param source the file
      * @param file the parsed file
+     * @param item the item, a coded item or a grid of coded items (see {@link #isCoded})
      * @param limits the bounds of the grid payloads
      * @return the plan
-     * @throws MediaException.Malformed if there is no primary item or the items are inconsistent
-     * @throws MediaException.Unsupported if the primary item is not AV1-coded or carries an
-     * essential property this decoder does not implement
+     * @throws MediaException.Malformed if the items are inconsistent
+     * @throws MediaException.Unsupported if the item is not AV1-coded or carries an essential
+     * property this decoder does not implement
      */
-    static StillPlan of(MediaSource source, HeifFile file, MediaLimits limits) {
-        var primary = file.primaryItem();
-        if (primary == null) {
-            throw new MediaException.Malformed("avif: the file has no primary item");
-        }
-        requireSupported(primary);
+    static StillPlan of(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+        requireSupported(item);
         HeifGrid grid = null;
         List<HeifItem> tiles;
-        switch (primary.type()) {
-            case "av01" -> tiles = List.of(primary);
+        switch (item.type()) {
+            case "av01" -> tiles = List.of(item);
             case "grid" -> {
-                grid = HeifStills.readGrid("avif", source, file, primary, limits);
-                tiles = inputs(file, primary, grid);
+                grid = HeifStills.readGrid("avif", source, file, item, limits);
+                tiles = inputs(file, item, grid);
             }
-            default -> throw new MediaException.Unsupported("avif", "the primary item is coded as '" + primary.type()
-                    + "', not AV1");
+            default -> throw new MediaException.Unsupported("avif", "item " + item.id() + " is coded as '"
+                    + item.type() + "', not AV1");
         }
         var config = configOf(tiles);
         HeifGrid alphaGrid = null;
         List<HeifItem> alphaTiles = List.of();
         HeifItem alphaItem = null;
-        for (var candidate : HeifStills.alphaCandidates(file, primary, SUPPORTED_PROPERTIES)) {
+        for (var candidate : HeifStills.alphaCandidates(file, item, SUPPORTED_PROPERTIES)) {
             if (!isUsableAlpha(candidate)) {
                 continue;
             }
@@ -122,8 +154,8 @@ record StillPlan(HeifItem primary, HeifGrid grid, List<HeifItem> colorTiles, Hei
                 alphaTiles = List.copyOf(perTile);
             }
         }
-        var premultiplied = alphaItem != null && primary.references("prem", alphaItem.id());
-        return new StillPlan(primary, grid, tiles, config, alphaGrid, alphaTiles, alphaItem, premultiplied);
+        var premultiplied = alphaItem != null && item.references("prem", alphaItem.id());
+        return new StillPlan(item, grid, tiles, config, alphaGrid, alphaTiles, alphaItem, premultiplied);
     }
 
     /**

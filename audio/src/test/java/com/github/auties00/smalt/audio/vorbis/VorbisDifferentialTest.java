@@ -2,7 +2,7 @@ package com.github.auties00.smalt.audio.vorbis;
 
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -30,7 +30,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * against the input length.
  */
 class VorbisDifferentialTest {
-    private static final double MIN_SNR = 90;
+    /** Both decoders compute in float, so they differ only by rounding: at least 90 dB of SNR over the stream. */
+    private static final Tolerance TOLERANCE = Tolerance.snr(90);
 
     /** ffmpeg channel layout names by channel count, in the order the channels are generated. */
     private static final String[] LAYOUTS = {null, "mono", "stereo", "3.0", "quad", "5.0", "5.1", "6.1", "7.1"};
@@ -68,11 +69,11 @@ class VorbisDifferentialTest {
             energy += (double) value * value;
         }
         if (energy == 0) {
-            assertArrayEquals(reference, ours, "silence");
+            // silence has no SNR; it compares exactly, -0.0 (ffmpeg's aarch64 build) equal to 0.0
+            Tolerance.exact().assertPcm("silence", reference, ours);
             return;
         }
-        var snr = Quality.snr(reference, ours);
-        assertTrue(snr >= MIN_SNR, "SNR " + snr + " dB");
+        TOLERANCE.assertPcm(file.getFileName().toString(), reference, ours);
     }
 
     @Nested

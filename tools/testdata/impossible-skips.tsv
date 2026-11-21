@@ -1,0 +1,6 @@
+# The skips no GitHub-hosted runner can run, which "skips.py cover --impossible" accepts. A row is a provisioning
+# limit of the hosted runners, never a missing tool or fixture: every other skip must pass on another job.
+# Columns: reason id, job glob, test class glob, why
+device:camera	windows-x64-*	com.github.auties00.smalt.capture.internal.windows.WindowsCaptureTest	the hosted Windows Server runners have no camera, and a Media Foundation virtual camera needs a registered media source component served by the Windows Camera Frame Server, which the runners do not provide
+device:camera	macos-arm64-*	com.github.auties00.smalt.capture.internal.macos.MacCaptureLiveTest	the hosted macOS runners have no camera, and a virtual camera needs a Core Media I/O camera extension that only an interactive user can approve
+opt-in:mf-decode	*	com.github.auties00.smalt.audio.ac3.Eac3MediaFoundationTest	the Media Foundation of the hosted Windows Server runners has no E-AC-3 (Dolby Digital Plus) decoder, so setting the decoded type fails with MF_E_INVALIDMEDIATYPE; the test runs on Windows 10 and 11 desktops, whose Media Foundation has it, with -Dsmalt.test.mfAudioDecode set to the tools/testdata/mf-oracle driver
