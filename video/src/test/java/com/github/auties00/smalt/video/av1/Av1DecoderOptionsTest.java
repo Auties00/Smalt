@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers the options convention on {@link Av1DecoderOptions}, and that the decoder's threading
@@ -49,6 +50,28 @@ class Av1DecoderOptionsTest {
         assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().threads(-1).build());
         assertThrows(NullPointerException.class, () -> defaults.toBuilder().limits(null).build());
         assertThrows(NullPointerException.class, () -> new Av1Decoder(track(64, 64), null));
+    }
+
+    @Test
+    @DisplayName("the operating point, layer output and Annex B settings default off, round trip and are checked")
+    void layersAndFormat() {
+        var defaults = Av1DecoderOptions.defaults();
+        assertEquals(0, defaults.operatingPoint());
+        assertFalse(defaults.allLayers());
+        assertFalse(defaults.annexB());
+        var changed = defaults.toBuilder().operatingPoint(31).allLayers(true).annexB(true).build();
+        assertEquals(31, changed.operatingPoint());
+        assertTrue(changed.allLayers());
+        assertTrue(changed.annexB());
+        assertEquals(changed, changed.toBuilder().build());
+        assertEquals(changed.hashCode(), changed.toBuilder().build().hashCode());
+        assertNotEquals(defaults, defaults.toBuilder().operatingPoint(1).build());
+        assertNotEquals(defaults, defaults.toBuilder().allLayers(true).build());
+        assertNotEquals(defaults, defaults.toBuilder().annexB(true).build());
+        assertTrue(changed.toString().contains("operatingPoint=31"), changed.toString());
+        assertTrue(changed.toString().contains("annexB=true"), changed.toString());
+        assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().operatingPoint(-1).build());
+        assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().operatingPoint(32).build());
     }
 
     @Test

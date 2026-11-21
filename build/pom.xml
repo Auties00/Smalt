@@ -60,6 +60,8 @@
         <japicmp.plugin.version>0.23.1</japicmp.plugin.version>
         <build.helper.plugin.version>3.6.0</build.helper.plugin.version>
         <exec.plugin.version>3.1.0</exec.plugin.version>
+        <jacoco.plugin.version>0.8.15</jacoco.plugin.version>
+        <forbiddenapis.plugin.version>3.11</forbiddenapis.plugin.version>
         <!-- false uploads and validates the release on the Central Portal, leaving the publish button to a human -->
         <central.autoPublish>true</central.autoPublish>
         <central.waitUntil>published</central.waitUntil>
@@ -97,6 +99,16 @@
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>exec-maven-plugin</artifactId>
                     <version>${exec.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>${jacoco.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>de.thetaphi</groupId>
+                    <artifactId>forbiddenapis</artifactId>
+                    <version>${forbiddenapis.plugin.version}</version>
                 </plugin>
                 <!--
                     Shared by the javadoc-check profile (reference lint) and the release profile (javadoc jars):
@@ -296,6 +308,35 @@
                         </configuration>
                     </plugin>
                 </plugins>
+            </build>
+        </profile>
+
+        <!--
+            JDK releases newer than the one Smalt targets (the early-access job of nightly.yml): the ASM that
+            maven-compiler-plugin bundles stops at the class file version of Java 27, so the plugin fails on the
+            class files of a newer JDK with "Unsupported class file major version". ASM 9.11 reads Java 28.
+        -->
+        <profile>
+            <id>newer-jdk</id>
+            <activation>
+                <jdk>[28,)</jdk>
+            </activation>
+            <build>
+                <pluginManagement>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-compiler-plugin</artifactId>
+                            <dependencies>
+                                <dependency>
+                                    <groupId>org.ow2.asm</groupId>
+                                    <artifactId>asm</artifactId>
+                                    <version>9.11.1</version>
+                                </dependency>
+                            </dependencies>
+                        </plugin>
+                    </plugins>
+                </pluginManagement>
             </build>
         </profile>
     </profiles>

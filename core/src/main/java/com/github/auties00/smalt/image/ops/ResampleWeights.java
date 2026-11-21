@@ -123,9 +123,9 @@ record ResampleWeights(int[] starts, int[] counts, int[] weights, int stride, in
     private static long firstOffset(ResizeFilter filter, long phase, int outputSize, long lengthNumerator, long denominator) {
         var unit = denominator * outputSize;
         var scaleDenominator = lengthNumerator > unit ? 2 * lengthNumerator : 2 * unit;
-        var reach = filter.support() * scaleDenominator;
-        var first = Math.floorDiv(phase - reach - unit, 2 * unit) + 1;
-        var last = Math.ceilDiv(phase + reach - unit, 2 * unit) - 1;
+        var reach = filter.doubleSupport() * (scaleDenominator / 2);
+        var first = firstTap(filter, phase, reach, unit);
+        var last = lastTap(filter, phase, reach, unit);
         return last < first ? Math.floorDiv(phase, 2 * unit) : first;
     }
 
@@ -156,10 +156,9 @@ record ResampleWeights(int[] starts, int[] counts, int[] weights, int stride, in
         var center = 2 * offsetNumerator * outputSize + (2L * i + 1) * lengthNumerator;
         var downscale = lengthNumerator > unit;
         var scaleDenominator = downscale ? 2 * lengthNumerator : 2 * unit;
-        var reach = filter.support() * scaleDenominator;
-        // source sample p is centered at (2p + 1) * unit; keep |(2p + 1) * unit - center| < reach
-        var first = Math.floorDiv(center - reach - unit, 2 * unit) + 1;
-        var last = Math.ceilDiv(center + reach - unit, 2 * unit) - 1;
+        var reach = filter.doubleSupport() * (scaleDenominator / 2);
+        var first = firstTap(filter, center, reach, unit);
+        var last = lastTap(filter, center, reach, unit);
         if (last < first) {
             first = last = Math.floorDiv(center, 2 * unit);
         }
@@ -186,6 +185,39 @@ record ResampleWeights(int[] starts, int[] counts, int[] weights, int stride, in
         starts[i] = low;
         locateCenter(low, high, unit, center, nearest, tie);
         return taps;
+    }
+
+    /**
+     * Returns the first source sample whose center lies within the reach of an output center:
+     * strictly closer than the reach, or, for {@link ResizeFilter#BOX}, whose kernel takes half its
+     * weight at the edge, at most the reach away.
+     *
+     * @param filter the interpolating filter
+     * @param center the output center, in units where source sample {@code p} is centered at {@code (2p + 1) * unit}
+     * @param reach the stretched support, in the same units
+     * @param unit half the distance between source sample centers
+     * @return the first source sample, possibly outside the axis
+     */
+    private static long firstTap(ResizeFilter filter, long center, long reach, long unit) {
+        return filter == ResizeFilter.BOX
+                ? Math.ceilDiv(center - reach - unit, 2 * unit)
+                : Math.floorDiv(center - reach - unit, 2 * unit) + 1;
+    }
+
+    /**
+     * Returns the last source sample whose center lies within the reach of an output center, as
+     * {@link #firstTap} defines it.
+     *
+     * @param filter the interpolating filter
+     * @param center the output center, in units where source sample {@code p} is centered at {@code (2p + 1) * unit}
+     * @param reach the stretched support, in the same units
+     * @param unit half the distance between source sample centers
+     * @return the last source sample, possibly outside the axis
+     */
+    private static long lastTap(ResizeFilter filter, long center, long reach, long unit) {
+        return filter == ResizeFilter.BOX
+                ? Math.floorDiv(center + reach - unit, 2 * unit)
+                : Math.ceilDiv(center + reach - unit, 2 * unit) - 1;
     }
 
     /**

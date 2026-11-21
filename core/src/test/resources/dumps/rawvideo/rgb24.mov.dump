@@ -1,0 +1,22 @@
+# demux dump of rawvideo/rgb24.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 400000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+track 1 VIDEO RAW_VIDEO timebase=1/15360 duration=6144 config=17:937649f1
+  video 33x17 orientation=NORMAL rate=15/1 sar=68/99 interlacing=PROGRESSIVE
+packets 6
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=1700 crc=25761eab
+1 t1 pts=1024 dts=1024 dur=1024 flags=KEY size=1700 crc=25761eab
+2 t1 pts=2048 dts=2048 dur=1024 flags=KEY size=1700 crc=6ceb7dc9
+3 t1 pts=3072 dts=3072 dur=1024 flags=KEY size=1700 crc=6ceb7dc9
+4 t1 pts=4096 dts=4096 dur=1024 flags=KEY size=1700 crc=39b33a65
+5 t1 pts=5120 dts=5120 dur=1024 flags=KEY size=1700 crc=39b33a65
+seek 0: t1@0
+seek 133333: t1@1
+seek 266666: t1@3
+seek 400000: end
+seek -1000000: t1@0

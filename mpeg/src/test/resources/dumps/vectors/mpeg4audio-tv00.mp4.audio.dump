@@ -1,0 +1,61 @@
+# audio decode dump of vectors/mpeg4audio-tv00.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 26112000
+seekable true
+track 1 TWINVQ rate=8000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=029dd8bb
+1 frames=4096 crc16=917dae9a
+2 frames=4096 crc16=aebcaab7
+3 frames=4096 crc16=0a3265ab
+4 frames=4096 crc16=5169ef7d
+5 frames=4096 crc16=6ebdf3cd
+6 frames=4096 crc16=6b8cd041
+7 frames=4096 crc16=5f00270c
+8 frames=4096 crc16=62560748
+9 frames=4096 crc16=94c52272
+10 frames=4096 crc16=36a52ca9
+11 frames=4096 crc16=0a3eb404
+12 frames=4096 crc16=7752570a
+13 frames=4096 crc16=f2465561
+14 frames=4096 crc16=45c73118
+15 frames=4096 crc16=e596532e
+16 frames=4096 crc16=5aad1407
+17 frames=4096 crc16=e87fee6e
+18 frames=4096 crc16=ae8d32ef
+19 frames=4096 crc16=92263f1a
+20 frames=4096 crc16=a6a88aa0
+21 frames=4096 crc16=14ac72eb
+22 frames=4096 crc16=647a421f
+23 frames=4096 crc16=685f8a23
+24 frames=4096 crc16=58768da6
+25 frames=4096 crc16=61a0bcbd
+26 frames=4096 crc16=13f14dca
+27 frames=4096 crc16=db2219f7
+28 frames=4096 crc16=b7fa92c4
+29 frames=4096 crc16=9063681c
+30 frames=4096 crc16=d1c1cf38
+31 frames=4096 crc16=153aa58e
+32 frames=4096 crc16=f30b947a
+33 frames=4096 crc16=0dc0a3fe
+34 frames=4096 crc16=6682c72c
+35 frames=4096 crc16=dec456ec
+36 frames=4096 crc16=791a3dde
+37 frames=4096 crc16=190d8c5c
+38 frames=4096 crc16=fe0815aa
+39 frames=4096 crc16=43311389
+40 frames=4096 crc16=18c9a3cc
+41 frames=4096 crc16=3019959e
+42 frames=4096 crc16=d15248e9
+43 frames=4096 crc16=cf00c8da
+44 frames=4096 crc16=9a565c22
+45 frames=4096 crc16=196199a3
+46 frames=4096 crc16=d6d01412
+47 frames=4096 crc16=0d6c3115
+48 frames=4096 crc16=6ce1aeae
+49 frames=4096 crc16=401e39c9
+50 frames=4096 crc16=e4d85f23
+seek 0: @sample 0
+seek 8704000: @sample 69632
+seek 17408000: @sample 139264
+seek 26112000: end
+seek -1000000: @sample 0

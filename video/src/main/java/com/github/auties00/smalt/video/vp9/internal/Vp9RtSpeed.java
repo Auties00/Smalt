@@ -32,6 +32,11 @@ final class Vp9RtSpeed {
     static final int FAST_HEX = 5;
 
     /**
+     * The big diamond search with its initial scale scan ({@code BIGDIA}).
+     */
+    static final int BIGDIA = 3;
+
+    /**
      * The diamond pattern search ({@code FAST_DIAMOND}).
      */
     static final int FAST_DIAMOND = 6;
@@ -90,7 +95,7 @@ final class Vp9RtSpeed {
     static final int INTRA_DC_H_V = INTRA_DC | (1 << Vp9Constants.V_PRED) | (1 << Vp9Constants.H_PRED);
 
     /**
-     * The motion search method: {@link #NSTEP}, {@link #FAST_HEX} or {@link #FAST_DIAMOND}.
+     * The motion search method: {@link #NSTEP}, {@link #BIGDIA}, {@link #FAST_HEX} or {@link #FAST_DIAMOND}.
      */
     int searchMethod;
 

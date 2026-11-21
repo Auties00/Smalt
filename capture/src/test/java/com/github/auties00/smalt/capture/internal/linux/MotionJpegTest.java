@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.capture.internal.convert.ScalarConversionKernel;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.jpeg.MjpegDecoder;
@@ -172,7 +173,9 @@ class MotionJpegTest {
         return -1;
     }
 
-    static void assertSamePlanes(YuvPicture expected, YuvPicture actual) {
+    static void assertSamePlanes(Picture expectedPicture, Picture actualPicture) {
+        var expected = (YuvPicture) expectedPicture;
+        var actual = (YuvPicture) actualPicture;
         assertEquals(expected.width(), actual.width());
         assertEquals(expected.height(), actual.height());
         assertEquals(expected.chromaFormat(), actual.chromaFormat());

@@ -100,7 +100,7 @@ class GeometryTest {
             var picture = Pictures.randomRgba(new SplittableRandom(4), 5, 3, true);
             var background = 0x80102030;
             for (var offset : new int[][]{{0, 0}, {2, 1}, {-2, -1}, {4, 2}, {-5, 0}, {6, 4}, {-4, -2}, {Integer.MIN_VALUE, 0}, {0, Integer.MAX_VALUE}}) {
-                var padded = ImageOps.pad(picture, 6, 4, offset[0], offset[1], background);
+                var padded = (RgbaPicture) ImageOps.pad(picture, 6, 4, offset[0], offset[1], background);
                 assertTrue(padded.hasAlpha());
                 for (var y = 0; y < 4; y++) {
                     for (var x = 0; x < 6; x++) {
@@ -129,7 +129,7 @@ class GeometryTest {
         void opaqueAlphaBytes() {
             var random = Pictures.randomRgba(new SplittableRandom(6), 3, 3, true);
             var flagged = RgbaPicture.of(3, 3, random.stride(), random.pixels(), false);
-            var padded = ImageOps.pad(flagged, 5, 5, 1, 1, 0xFFFFFFFF);
+            var padded = (RgbaPicture) ImageOps.pad(flagged, 5, 5, 1, 1, 0xFFFFFFFF);
             for (var i = 0; i < 25; i++) {
                 assertEquals((byte) 255, padded.pixels()[4 * i + 3]);
             }
@@ -139,7 +139,7 @@ class GeometryTest {
         @DisplayName("converts planar pictures to RGBA first")
         void planar() {
             var yuv = Pictures.randomYuv(new SplittableRandom(7), 4, 4, ChromaFormat.YUV420, false, ColorInfo.JPEG);
-            var padded = ImageOps.pad(yuv, 6, 6, 1, 1, 0xFF000000);
+            var padded = (RgbaPicture) ImageOps.pad(yuv, 6, 6, 1, 1, 0xFF000000);
             var rgba = ImageOps.toRgba(yuv);
             for (var y = 0; y < 4; y++) {
                 for (var x = 0; x < 4; x++) {
@@ -269,7 +269,7 @@ class GeometryTest {
         @DisplayName("fitInto centers the fitted picture on a transparent sticker canvas")
         void fitInto() {
             var wide = Pictures.patternRgba(1000, 500, false);
-            var sticker = ImageOps.fitInto(wide, 512, 512, ResizeFilter.LANCZOS3, 0);
+            var sticker = (RgbaPicture) ImageOps.fitInto(wide, 512, 512, ResizeFilter.LANCZOS3, 0);
             assertEquals(512, sticker.width());
             assertEquals(512, sticker.height());
             assertTrue(sticker.hasAlpha());
@@ -278,10 +278,10 @@ class GeometryTest {
             assertEquals(0xFF, pixel(sticker, 100, 383) >>> 24);
             assertEquals(0, pixel(sticker, 100, 384));
             var small = Pictures.patternRgba(100, 100, true);
-            var enlarged = ImageOps.fitInto(small, 512, 512, ResizeFilter.BICUBIC, 0);
+            var enlarged = (RgbaPicture) ImageOps.fitInto(small, 512, 512, ResizeFilter.BICUBIC, 0);
             assertEquals(512, enlarged.width());
             var thin = RgbaPicture.allocate(1, 1000, false);
-            var line = ImageOps.fitInto(thin, 512, 512, ResizeFilter.AREA, 0x00000000);
+            var line = (RgbaPicture) ImageOps.fitInto(thin, 512, 512, ResizeFilter.AREA, 0x00000000);
             assertEquals(0xFF000000, pixel(line, 255, 0));
             assertEquals(0, pixel(line, 254, 0));
             assertEquals(0, pixel(line, 256, 0));
@@ -335,16 +335,20 @@ class GeometryTest {
             assertThrows(NullPointerException.class, () -> ImageOps.toRgba(picture, null));
             assertThrows(NullPointerException.class, () -> ImageOps.toYuv(picture, null, ColorInfo.JPEG));
             assertThrows(NullPointerException.class, () -> ImageOps.toYuv(picture, ChromaFormat.YUV420, null));
-            assertThrows(NullPointerException.class, () -> ImageOps.resize(picture, 2, 2, null));
+            assertThrows(NullPointerException.class, () -> ImageOps.resize(picture, 2, 2, (ResizeFilter) null));
+            assertThrows(NullPointerException.class, () -> ImageOps.resize(picture, 2, 2, (ResizeOptions) null));
             assertThrows(NullPointerException.class, () -> ImageOps.resize(null, 2, 2, ResizeFilter.AREA));
             assertThrows(NullPointerException.class, () -> ImageOps.orient(picture, null));
             assertThrows(NullPointerException.class, () -> ImageOps.crop(null, 0, 0, 1, 1));
             assertThrows(NullPointerException.class, () -> ImageOps.pad(null, 1, 1, 0, 0, 0));
             assertThrows(NullPointerException.class, () -> ImageOps.flatten(null, 0));
             assertThrows(NullPointerException.class, () -> ImageOps.isOpaque(null));
-            assertThrows(NullPointerException.class, () -> ImageOps.fitWithin(picture, 2, null));
-            assertThrows(NullPointerException.class, () -> ImageOps.fitInto(picture, 2, 2, null, 0));
-            assertThrows(NullPointerException.class, () -> ImageOps.coverSquare(picture, 2, null));
+            assertThrows(NullPointerException.class, () -> ImageOps.fitWithin(picture, 2, (ResizeFilter) null));
+            assertThrows(NullPointerException.class, () -> ImageOps.fitWithin(picture, 2, (ResizeOptions) null));
+            assertThrows(NullPointerException.class, () -> ImageOps.fitInto(picture, 2, 2, (ResizeFilter) null, 0));
+            assertThrows(NullPointerException.class, () -> ImageOps.fitInto(picture, 2, 2, (ResizeOptions) null, 0));
+            assertThrows(NullPointerException.class, () -> ImageOps.coverSquare(picture, 2, (ResizeFilter) null));
+            assertThrows(NullPointerException.class, () -> ImageOps.coverSquare(picture, 2, (ResizeOptions) null));
         }
 
         @Test

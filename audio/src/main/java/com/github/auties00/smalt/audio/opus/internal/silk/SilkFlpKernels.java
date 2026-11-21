@@ -42,8 +42,7 @@ interface SilkFlpKernels {
      *
      * <p>Signal {@code c} starts at {@code c * inputStride} in {@code input}; its {@code order + 1}
      * correlations are written from {@code c * corrStride} in {@code corr}. Each result is
-     * bit-identical to a separate call of
-     * {@link SigProcFlp#warpedAutocorrelationFlp(float[], float[], int, float, int, int)}: the four
+     * bit-identical to a separate call of {@link SigProcFlp#warpedAutocorrelationFlp}: the four
      * recursions are merely interleaved, so the processor overlaps their dependency chains.
      *
      * @param corr        receives the correlations

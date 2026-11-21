@@ -1,0 +1,36 @@
+# demux dump of mp4/mpeg2.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 800000
+seekable true
+metadata compatible_brands="isomiso2mp41"
+metadata encoder="Lavf61.7.100"
+metadata major_brand="isom"
+metadata minor_version="512"
+track 1 VIDEO MPEG2_VIDEO timebase=1/12800 duration=10240 config=none
+  video 160x120 orientation=NORMAL rate=25/1 sar=1/1 interlacing=PROGRESSIVE
+packets 20
+0 t1 pts=0 dts=-512 dur=512 flags=KEY size=3465 crc=20b3bbc9
+1 t1 pts=1536 dts=0 dur=512 flags=- size=1829 crc=64250370
+2 t1 pts=512 dts=512 dur=512 flags=- size=1131 crc=7ca22291
+3 t1 pts=1024 dts=1024 dur=512 flags=- size=902 crc=53bebfc3
+4 t1 pts=3072 dts=1536 dur=512 flags=- size=1869 crc=5a323959
+5 t1 pts=2048 dts=2048 dur=512 flags=- size=1118 crc=cf4f8125
+6 t1 pts=2560 dts=2560 dur=512 flags=- size=968 crc=645be8fa
+7 t1 pts=4608 dts=3072 dur=512 flags=- size=1960 crc=deb91a9d
+8 t1 pts=3584 dts=3584 dur=512 flags=- size=1163 crc=02b41cc8
+9 t1 pts=4096 dts=4096 dur=512 flags=- size=1033 crc=5bb7bfeb
+10 t1 pts=6144 dts=4608 dur=512 flags=KEY size=3861 crc=c90d0a6a
+11 t1 pts=5120 dts=5120 dur=512 flags=- size=1076 crc=803b3b34
+12 t1 pts=5632 dts=5632 dur=512 flags=- size=1133 crc=918c9c3c
+13 t1 pts=7680 dts=6144 dur=512 flags=- size=1918 crc=03695055
+14 t1 pts=6656 dts=6656 dur=512 flags=- size=1022 crc=76c47e5d
+15 t1 pts=7168 dts=7168 dur=512 flags=- size=1079 crc=3d34c174
+16 t1 pts=9216 dts=7680 dur=512 flags=- size=1610 crc=69dae091
+17 t1 pts=8192 dts=8192 dur=512 flags=- size=927 crc=4c3d49e5
+18 t1 pts=8704 dts=8704 dur=512 flags=- size=1024 crc=a7e9842d
+19 t1 pts=9728 dts=9216 dur=512 flags=- size=1704 crc=267f68f0
+seek 0: t1@0
+seek 266666: t1@0
+seek 533333: t1@10
+seek 800000: end
+seek -1000000: t1@0

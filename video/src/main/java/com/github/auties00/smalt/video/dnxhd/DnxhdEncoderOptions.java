@@ -42,6 +42,10 @@ public final class DnxhdEncoderOptions {
 
     private final boolean losslessAlpha;
 
+    private final AlphaStorage alphaStorage;
+
+    private final boolean premultipliedAlpha;
+
     private final OptionalLong bitrate;
 
     private final Rational frameRate;
@@ -65,6 +69,8 @@ public final class DnxhdEncoderOptions {
         this.chromaFormat = Optional.ofNullable(builder.chromaFormat);
         this.alpha = builder.alpha;
         this.losslessAlpha = builder.losslessAlpha;
+        this.alphaStorage = builder.alphaStorage;
+        this.premultipliedAlpha = builder.premultipliedAlpha;
         this.bitrate = builder.bitrate;
         this.frameRate = builder.frameRate;
         this.timeBase = builder.timeBase;
@@ -196,14 +202,10 @@ public final class DnxhdEncoderOptions {
     /**
      * {@return whether every frame carries an alpha channel; {@code false} by default}
      *
-     * <p>Alpha is coded in band as ST 2019-1 with Amendment 1:2023 defines it: each frame grows by
-     * half (the size of the compression ID with alpha), HD-profile frames take header version 4,
-     * and every scan line codes its alpha after its video. The alpha comes from the picture's
-     * alpha plane or channel, full range; a picture without alpha is coded opaque. Every
-     * compression ID but 1253 and DNxHR LB permits alpha.
+     * <p>The alpha comes from the picture's alpha plane or channel, full range; a picture without
+     * alpha is coded opaque. {@link #alphaStorage()} chooses where each frame stores it.
      *
-     * @apiNote Not every decoder reads in-band alpha, and some encoders store alpha differently,
-     * after the coding units of each frame; {@link DnxhdDecoder} reads both.
+     * @apiNote Not every decoder reads alpha, in either storage; {@link DnxhdDecoder} reads both.
      */
     public boolean alpha() {
         return alpha;
@@ -218,6 +220,27 @@ public final class DnxhdEncoderOptions {
      */
     public boolean losslessAlpha() {
         return losslessAlpha;
+    }
+
+    /**
+     * {@return where each frame stores its alpha channel when {@link #alpha()} is set;
+     * {@link AlphaStorage#IN_BAND} by default}
+     */
+    public AlphaStorage alphaStorage() {
+        return alphaStorage;
+    }
+
+    /**
+     * {@return whether the video is coded premultiplied by alpha; {@code false} by default}
+     *
+     * <p>The encoder multiplies every video sample by its alpha (luma, red, green and blue about
+     * black, Cb and Cr about the middle code, a subsampled chroma sample by the mean alpha of the
+     * luma samples it covers) and sets the premultiplied alpha flag {@code PMA} of ST 2019-1
+     * Amendment 1:2023. Pictures are taken with straight alpha, as {@link DnxhdDecoder} returns
+     * them. Needs {@link #alpha()} stored {@linkplain AlphaStorage#IN_BAND in band}.
+     */
+    public boolean premultipliedAlpha() {
+        return premultipliedAlpha;
     }
 
     /**
@@ -260,8 +283,13 @@ public final class DnxhdEncoderOptions {
      * {@link ColorInfo#BT709_LIMITED} by default}
      *
      * <p>An {@linkplain com.github.auties00.smalt.image.MatrixCoefficients#UNSPECIFIED unspecified} matrix
-     * converts with BT.709. RGB input cannot be encoded as Y'CbCr with a matrix that two luma weights do
-     * not define (see {@link com.github.auties00.smalt.image.MatrixCoefficients#kr() MatrixCoefficients.kr()}).
+     * converts with BT.709; every other matrix converts as
+     * {@link com.github.auties00.smalt.image.ops.ImageOps#toYuv16 ImageOps.toYuv16} does, except the
+     * {@linkplain com.github.auties00.smalt.image.MatrixCoefficients#IDENTITY identity} matrix, which RGB input
+     * cannot be encoded as Y'CbCr with (code it as {@linkplain #rgb() RGB} instead). The frame header
+     * signals coded Y'CbCr samples in the BT.709 or an unspecified matrix as color volume 0 (BT.709), in the BT.2020
+     * non-constant or constant luminance matrix as color volume 1 or 2, and in every other matrix as color volume 3,
+     * which leaves the color description to the container.
      */
     public ColorInfo color() {
         return color;
@@ -296,6 +324,8 @@ public final class DnxhdEncoderOptions {
                 && chromaFormat.equals(that.chromaFormat)
                 && alpha == that.alpha
                 && losslessAlpha == that.losslessAlpha
+                && alphaStorage == that.alphaStorage
+                && premultipliedAlpha == that.premultipliedAlpha
                 && bitrate.equals(that.bitrate)
                 && frameRate.equals(that.frameRate)
                 && timeBase.equals(that.timeBase)
@@ -308,16 +338,49 @@ public final class DnxhdEncoderOptions {
     @Override
     public int hashCode() {
         return Objects.hash(profile, compressionId, bitDepth, rgb, alternateColorSpace, chromaFormat, alpha,
-                losslessAlpha, bitrate, frameRate, timeBase, fieldOrder, color, threads, limits);
+                losslessAlpha, alphaStorage, premultipliedAlpha, bitrate, frameRate, timeBase, fieldOrder, color,
+                threads, limits);
     }
 
     @Override
     public String toString() {
         return "DnxhdEncoderOptions[profile=" + profile + ", compressionId=" + compressionId + ", bitDepth="
                 + bitDepth + ", rgb=" + rgb + ", alternateColorSpace=" + alternateColorSpace + ", chromaFormat="
-                + chromaFormat + ", alpha=" + alpha + ", losslessAlpha=" + losslessAlpha + ", bitrate=" + bitrate
+                + chromaFormat + ", alpha=" + alpha + ", losslessAlpha=" + losslessAlpha + ", alphaStorage="
+                + alphaStorage + ", premultipliedAlpha=" + premultipliedAlpha + ", bitrate=" + bitrate
                 + ", frameRate=" + frameRate + ", timeBase=" + timeBase + ", fieldOrder=" + fieldOrder + ", color="
                 + color + ", threads=" + threads + ", limits=" + limits + "]";
+    }
+
+    /**
+     * Where a frame stores its alpha channel.
+     */
+    public enum AlphaStorage {
+        /**
+         * In band, as ST 2019-1 with Amendment 1:2023 defines it: every coding unit sets the alpha
+         * flag {@code ALP} and takes the size of its compression ID with alpha, half again the size
+         * without, HD-profile coding units take header version 4, and every scan line codes its alpha
+         * after its video, DCT-coded or, with {@link DnxhdEncoderOptions#losslessAlpha()}, run-length
+         * coded. Every compression ID but 1253 and DNxHR LB permits it.
+         */
+        IN_BAND,
+
+        /**
+         * After the video, as Avid's QuickTime encoders store it: the frame is the coding units of the
+         * video, then the alpha as 8-bit samples, one row of the picture's width after the other, then
+         * the size of the video part in four big-endian bytes. Streams of more than 8 bits size the
+         * alpha area for 10-bit samples, a quarter more, and leave the bytes after the samples zero.
+         * Every compression ID permits it.
+         */
+        AVID_UNCOMPRESSED,
+
+        /**
+         * After the video, as a coding unit of the stream's compression ID and bit depth (two for
+         * field-encoded interlaced IDs) whose luma holds the alpha and whose chroma is neutral, as
+         * Avid's QuickTime encoders store it; the frame then ends with the size of the video part in
+         * four big-endian bytes. Every compression ID permits it.
+         */
+        AVID_CODED
     }
 
     /**
@@ -342,6 +405,10 @@ public final class DnxhdEncoderOptions {
         private boolean alpha;
 
         private boolean losslessAlpha;
+
+        private AlphaStorage alphaStorage = AlphaStorage.IN_BAND;
+
+        private boolean premultipliedAlpha;
 
         private OptionalLong bitrate = OptionalLong.empty();
 
@@ -369,6 +436,8 @@ public final class DnxhdEncoderOptions {
             this.chromaFormat = options.chromaFormat.orElse(null);
             this.alpha = options.alpha;
             this.losslessAlpha = options.losslessAlpha;
+            this.alphaStorage = options.alphaStorage;
+            this.premultipliedAlpha = options.premultipliedAlpha;
             this.bitrate = options.bitrate;
             this.frameRate = options.frameRate;
             this.timeBase = options.timeBase;
@@ -504,6 +573,29 @@ public final class DnxhdEncoderOptions {
         }
 
         /**
+         * Sets where frames store their alpha channel; see {@link DnxhdEncoderOptions#alphaStorage()}.
+         *
+         * @param alphaStorage the value
+         * @return this builder
+         */
+        public Builder alphaStorage(AlphaStorage alphaStorage) {
+            this.alphaStorage = Objects.requireNonNull(alphaStorage, "alphaStorage");
+            return this;
+        }
+
+        /**
+         * Sets whether the video is coded premultiplied by alpha; see
+         * {@link DnxhdEncoderOptions#premultipliedAlpha()}.
+         *
+         * @param premultipliedAlpha the value
+         * @return this builder
+         */
+        public Builder premultipliedAlpha(boolean premultipliedAlpha) {
+            this.premultipliedAlpha = premultipliedAlpha;
+            return this;
+        }
+
+        /**
          * Sets the bitrate a {@link DnxhdProfile#DNXHD} encoder picks its compression ID by; see
          * {@link DnxhdEncoderOptions#bitrate()}.
          *
@@ -600,7 +692,7 @@ public final class DnxhdEncoderOptions {
          * is not positive, the bit depth is not 8, 10 or 12, the compression ID is not in
          * [1235, 1260], the bitrate is not positive, a DNxHR family has a compression ID or a
          * bitrate, the thread count is negative, the chroma layout is not 4:2:0, 4:2:2 or 4:4:4, or
-         * lossless alpha is set without alpha
+         * lossless or premultiplied alpha is set without alpha stored in band
          */
         public DnxhdEncoderOptions build() {
             Checks.inRange("frame rate", frameRate.toDouble(), 0.1, 1000);
@@ -629,6 +721,13 @@ public final class DnxhdEncoderOptions {
             }
             if (losslessAlpha && !alpha) {
                 throw new IllegalArgumentException("lossless alpha needs alpha");
+            }
+            if (premultipliedAlpha && !alpha) {
+                throw new IllegalArgumentException("premultiplied alpha needs alpha");
+            }
+            if ((losslessAlpha || premultipliedAlpha) && alphaStorage != AlphaStorage.IN_BAND) {
+                throw new IllegalArgumentException((losslessAlpha ? "lossless" : "premultiplied")
+                        + " alpha needs alpha stored in band, not " + alphaStorage);
             }
             return new DnxhdEncoderOptions(this);
         }

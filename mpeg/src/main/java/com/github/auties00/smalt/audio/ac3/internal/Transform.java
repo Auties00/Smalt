@@ -48,14 +48,14 @@ public final class Transform {
     static {
         for (var k = 0; k < 128; k++) {
             var angle = 2 * Math.PI * (8 * k + 1) / 4096;
-            COS_LONG[k] = (float) -Math.cos(angle);
-            SIN_LONG[k] = (float) -Math.sin(angle);
+            COS_LONG[k] = (float) -StrictMath.cos(angle);
+            SIN_LONG[k] = (float) -StrictMath.sin(angle);
             CONJ_SIN_LONG[k] = -SIN_LONG[k];
         }
         for (var k = 0; k < 64; k++) {
             var angle = 2 * Math.PI * (8 * k + 1) / 2048;
-            COS_SHORT[k] = (float) -Math.cos(angle);
-            SIN_SHORT[k] = (float) -Math.sin(angle);
+            COS_SHORT[k] = (float) -StrictMath.cos(angle);
+            SIN_SHORT[k] = (float) -StrictMath.sin(angle);
             CONJ_SIN_SHORT[k] = -SIN_SHORT[k];
         }
     }

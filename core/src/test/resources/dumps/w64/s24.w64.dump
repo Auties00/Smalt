@@ -1,0 +1,19 @@
+# demux dump of w64/s24.w64; regenerate with -Dsmalt.test.updateDumps=true
+format W64
+duration 600000
+seekable true
+track 0 AUDIO PCM_S24LE timebase=1/22050 duration=13230 config=none
+  audio rate=22050 bits=24 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 7
+0 t0 pts=0 dts=0 dur=2048 flags=KEY size=12288 crc=0587b90f
+1 t0 pts=2048 dts=2048 dur=2048 flags=KEY size=12288 crc=bad586db
+2 t0 pts=4096 dts=4096 dur=2048 flags=KEY size=12288 crc=68b62f0b
+3 t0 pts=6144 dts=6144 dur=2048 flags=KEY size=12288 crc=5cb4b69a
+4 t0 pts=8192 dts=8192 dur=2048 flags=KEY size=12288 crc=f73f7145
+5 t0 pts=10240 dts=10240 dur=2048 flags=KEY size=12288 crc=099ed6ad
+6 t0 pts=12288 dts=12288 dur=942 flags=KEY size=5652 crc=5d6076ec
+seek 0: t0@0
+seek 200000: t0@pts=4410
+seek 400000: t0@pts=8820
+seek 600000: end
+seek -1000000: t0@0

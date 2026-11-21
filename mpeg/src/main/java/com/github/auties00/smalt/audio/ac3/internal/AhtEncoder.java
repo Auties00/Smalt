@@ -44,7 +44,7 @@ final class AhtEncoder {
         for (var j = 0; j < 6; j++) {
             for (var m = 0; m < 6; m++) {
                 var weight = j == 0 ? Math.sqrt(0.5) : 1.0;
-                matrix[j * 6 + m] = (float) (Math.sqrt(2) * weight * Math.cos(j * (2 * m + 1) * Math.PI / 12) / 6);
+                matrix[j * 6 + m] = (float) (Math.sqrt(2) * weight * StrictMath.cos(j * (2 * m + 1) * Math.PI / 12) / 6);
             }
         }
         return matrix;

@@ -136,14 +136,16 @@ final class VectorYuvDsp implements YuvDsp {
 
     /**
      * The reference kernel used for tails.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarYuvDsp scalar;
+    private static final ScalarYuvDsp SCALAR = new ScalarYuvDsp();
 
     /**
      * Constructs the kernel.
      */
     private VectorYuvDsp() {
-        this.scalar = new ScalarYuvDsp();
     }
 
     /**
@@ -189,7 +191,7 @@ final class VectorYuvDsp implements YuvDsp {
             var packed = r.lanewise(VectorOperators.OR, g.lanewise(VectorOperators.LSHL, 8)).lanewise(VectorOperators.OR, b.lanewise(VectorOperators.LSHL, 16)).lanewise(VectorOperators.OR, INTS_FF000000);
             PIXEL_BYTE_VECTOR.cast(packed.reinterpretShape(BYTES_PER_PIXEL, 0)).intoArray(dst, dstPos + (i << 2));
         }
-        scalar.yuvToRgbaRowFrom(y, yPos, u, v, dst, dstPos, i, count);
+        SCALAR.yuvToRgbaRowFrom(y, yPos, u, v, dst, dstPos, i, count);
     }
 
     @Override
@@ -206,6 +208,6 @@ final class VectorYuvDsp implements YuvDsp {
             LANE_BYTE_VECTOR.cast(luma.convertShape(VectorOperators.I2B, BYTES_PER_LANE, 0))
                     .intoArray(y, yPos + i);
         }
-        scalar.rgbaToYRow(rgba, rgbaPos + (i << 2), y, yPos + i, count - i);
+        SCALAR.rgbaToYRow(rgba, rgbaPos + (i << 2), y, yPos + i, count - i);
     }
 }

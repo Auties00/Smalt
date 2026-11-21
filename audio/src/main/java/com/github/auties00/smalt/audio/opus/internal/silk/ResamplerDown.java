@@ -16,6 +16,11 @@ public final class ResamplerDown {
      */
     private static final int ORDER_FIR = 4;
 
+    /**
+     * The length of the work array of {@link #down2_3}.
+     */
+    static final int DOWN2_3_BUFFER = Resampler.RESAMPLER_MAX_BATCH_SIZE_IN + ORDER_FIR;
+
     private ResamplerDown() {
         throw new AssertionError();
     }
@@ -57,10 +62,10 @@ public final class ResamplerDown {
      * @param in     the input signal
      * @param inOff  the index of the first input sample
      * @param inLen  the number of input samples
+     * @param buf    a work array of at least {@link #DOWN2_3_BUFFER} values, overwritten
      */
-    public static void down2_3(int[] S, short[] out, int outOff, short[] in, int inOff, int inLen) {
+    public static void down2_3(int[] S, short[] out, int outOff, short[] in, int inOff, int inLen, int[] buf) {
         var coefs = ResamplerRom.silk_Resampler_2_3_COEFS_LQ;
-        var buf = new int[Resampler.RESAMPLER_MAX_BATCH_SIZE_IN + ORDER_FIR];
         System.arraycopy(S, 0, buf, 0, ORDER_FIR);
         int nSamplesIn;
         while (true) {

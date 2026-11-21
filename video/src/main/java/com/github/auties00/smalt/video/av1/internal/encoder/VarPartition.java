@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.video.av1.internal.encoder;
 
 import com.github.auties00.smalt.video.av1.internal.McDsp;
+import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
 
 import java.util.Arrays;
 
@@ -438,7 +439,7 @@ final class VarPartition {
         setThresholds(key, qindex, f.baseQindex, blockSad);
         sourceVariance = Integer.MAX_VALUE;
         if (sourceSadNonrd > LOW_SAD) {
-            var packed = flatSseSum(src, srcOff, srcStride);
+            var packed = flatSseSum(src, srcOff, srcStride, f.bitDepth);
             sourceVariance = EncDsp.variance(packed, 12) >>> 12;
         }
         refForPartition = 0;
@@ -540,24 +541,31 @@ final class VarPartition {
     }
 
     /**
-     * Returns the sums of a 64x64 source block against a flat 128 reference, packed like
-     * {@link EncDsp#sseSum}.
+     * Returns the sums of a 64x64 source block against a flat mid-gray reference, packed like
+     * {@link EncDsp#sseSum} at the 8-bit scale.
      *
      * @param src the source
      * @param off the offset of the block
      * @param stride the row stride
+     * @param bitDepth the bit depth of the samples
      * @return the packed sums
      */
-    private static long flatSseSum(short[] src, int off, int stride) {
+    private static long flatSseSum(short[] src, int off, int stride, int bitDepth) {
         long sse = 0;
         long sum = 0;
+        var mid = 1 << (bitDepth - 1);
         for (var y = 0; y < 64; y++) {
             var p = off + y * stride;
             for (var x = 0; x < 64; x++) {
-                var d = src[p + x] - 128;
+                long d = src[p + x] - mid;
                 sum += d;
                 sse += d * d;
             }
+        }
+        var shift = bitDepth - 8;
+        if (shift > 0) {
+            sse = (sse + (1L << (2 * shift - 1))) >> (2 * shift);
+            sum = (sum + (1L << (shift - 1))) >> shift;
         }
         return sse << 32 | (sum & 0xFFFFFFFFL);
     }
@@ -737,7 +745,8 @@ final class VarPartition {
             part[slot] = TileEncoder.PARTITION_NONE;
             return true;
         }
-        if (fitsH && miCol + widthVertCheck <= miCols) {
+        // 4:2:2 streams take no vertical partitions, as decoders reject them
+        if (fitsH && miCol + widthVertCheck <= miCols && frame.layout != SequenceHeader.LAYOUT_I422) {
             if (halfVariance(level, index, 0, 2) < threshold && halfVariance(level, index, 1, 3) < threshold) {
                 part[slot] = TileEncoder.PARTITION_V;
                 return true;
@@ -912,7 +921,8 @@ final class VarPartition {
         var col = (short) partMv;
         var s = ref.stride[0];
         var off = ref.origin[0] + (py + row) * s + px + col;
-        McDsp.select().mc(McDsp.FILTER_2D_BILINEAR, pred, 0, 64, ref.padded[0], off, s, 64, 64, 0, 0, mcScratch, 255);
+        McDsp.select().mc(McDsp.FILTER_2D_BILINEAR, pred, 0, 64, ref.padded[0], off, s, 64, 64, 0, 0, mcScratch,
+                frame.bdMax);
     }
 
     /**
@@ -925,6 +935,13 @@ final class VarPartition {
      */
     private void chromaCheck(int px, int py, int ySad, boolean zeroMotion) {
         var f = frame;
+        if (f.planes == 1) {
+            return;
+        }
+        var ssHor = f.ssHor;
+        var ssVer = f.ssVer;
+        var cw = 64 >> ssHor;
+        var ch = 64 >> ssVer;
         var shiftUpper = 1;
         var shiftLower = 3;
         var facUv = (long) f.width * f.height >= 1920L * 1080 ? 3 : 5;
@@ -936,27 +953,27 @@ final class VarPartition {
         for (var pl = 1; pl < 3; pl++) {
             var src = f.source.data[pl];
             var srcStride = f.source.stride[1];
-            var srcOff = (py >> 1) * srcStride + (px >> 1);
+            var srcOff = (py >> ssVer) * srcStride + (px >> ssHor);
             int uvSad;
             var refP = zeroMotion ? f.ref(0) : f.ref(refForPartition);
             var s = refP.stride[pl];
-            var row = zeroMotion ? 0 : (short) (partMv >> 16) >> 1;
-            var col = zeroMotion ? 0 : (short) partMv >> 1;
+            var row = zeroMotion ? 0 : (short) (partMv >> 16) >> ssVer;
+            var col = zeroMotion ? 0 : (short) partMv >> ssHor;
             uvSad = dsp.sad(src, srcOff, srcStride, refP.padded[pl],
-                    refP.origin[pl] + ((py >> 1) + row) * s + (px >> 1) + col, s, 32, 32);
+                    refP.origin[pl] + ((py >> ssVer) + row) * s + (px >> ssHor) + col, s, cw, ch);
             var uvSadG = 0;
             var uvSadAlt = 0;
             if (lastYSadG != Integer.MAX_VALUE) {
                 var g = f.ref(3);
                 var gs = g.stride[pl];
-                uvSadG = dsp.sad(src, srcOff, srcStride, g.padded[pl], g.origin[pl] + (py >> 1) * gs + (px >> 1), gs, 32,
-                        32);
+                uvSadG = dsp.sad(src, srcOff, srcStride, g.padded[pl], g.origin[pl] + (py >> ssVer) * gs + (px >> ssHor),
+                        gs, cw, ch);
             }
             if (lastYSadAlt != Integer.MAX_VALUE) {
                 var a = f.ref(6);
                 var as = a.stride[pl];
-                uvSadAlt = dsp.sad(src, srcOff, srcStride, a.padded[pl], a.origin[pl] + (py >> 1) * as + (px >> 1), as,
-                        32, 32);
+                uvSadAlt = dsp.sad(src, srcOff, srcStride, a.padded[pl], a.origin[pl] + (py >> ssVer) * as + (px >> ssHor),
+                        as, cw, ch);
             }
             if (uvSad > (ySad >> shiftUpper)) {
                 colorSensitivity[pl - 1] = 1;

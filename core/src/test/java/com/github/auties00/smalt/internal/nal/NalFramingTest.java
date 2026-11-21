@@ -222,6 +222,45 @@ class NalFramingTest {
             }
         }
 
+        @ParameterizedTest(name = "seed {0}")
+        @ValueSource(ints = {8, 9})
+        @DisplayName("converts Annex B back to four-byte length prefixes, unit for unit")
+        void lengthPrefixedRoundTrip(int seed) {
+            var random = new Random(seed);
+            for (var trial = 0; trial < 2000; trial++) {
+                var hevc = random.nextBoolean();
+                // Escaped units never hold a start code and never end in a zero byte.
+                var data = accessUnit(random, 4, hevc);
+                for (var offset = 0; offset < data.length; ) {
+                    var length = (data[offset] & 0xFF) << 24 | (data[offset + 1] & 0xFF) << 16
+                            | (data[offset + 2] & 0xFF) << 8 | data[offset + 3] & 0xFF;
+                    for (var index = offset + 4; index < offset + 4 + length; index++) {
+                        if (data[index] == 0) {
+                            data[index] = (byte) (1 + random.nextInt(255));
+                        }
+                    }
+                    offset += 4 + length;
+                }
+                var expected = new ByteArrayOutputStream();
+                NalUnits.forEachLengthPrefixed(data, 4, (unit, offset, length) -> {
+                    if (length > 0) {
+                        expected.write(length >>> 24);
+                        expected.write(length >>> 16);
+                        expected.write(length >>> 8);
+                        expected.write(length);
+                        expected.write(unit, offset, length);
+                    }
+                });
+                var annexB = NalUnits.toAnnexB(data, 4, hevc, null, null);
+                var trailing = random.nextBoolean() ? new byte[]{0, 0} : new byte[0];
+                var padded = java.util.Arrays.copyOf(annexB, annexB.length + trailing.length);
+                assertArrayEquals(expected.toByteArray(), NalUnits.toLengthPrefixed(padded));
+            }
+            assertEquals(0, NalUnits.toLengthPrefixed(new byte[]{1, 2, 3}).length);
+            assertArrayEquals(new byte[]{0, 0, 0, 2, 0x65, 7, 0, 0, 0, 1, 0x41},
+                    NalUnits.toLengthPrefixed(new byte[]{9, 0, 0, 1, 0x65, 7, 0, 0, 0, 0, 1, 0x41}));
+        }
+
         @Test
         @DisplayName("rejects broken framing with the muxers' messages")
         void errors() {

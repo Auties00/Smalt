@@ -1,0 +1,21 @@
+# demux dump of wav/g722.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 500000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 0 AUDIO ADPCM_G722 timebase=1/16000 duration=8000 config=none
+  audio rate=16000 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 8
+0 t0 pts=0 dts=0 dur=1024 flags=KEY size=512 crc=b9b9856f
+1 t0 pts=1024 dts=1024 dur=1024 flags=KEY size=512 crc=a667b378
+2 t0 pts=2048 dts=2048 dur=1024 flags=KEY size=512 crc=7e602bad
+3 t0 pts=3072 dts=3072 dur=1024 flags=KEY size=512 crc=dc2dc70f
+4 t0 pts=4096 dts=4096 dur=1024 flags=KEY size=512 crc=c1a10ae0
+5 t0 pts=5120 dts=5120 dur=1024 flags=KEY size=512 crc=3995760e
+6 t0 pts=6144 dts=6144 dur=1024 flags=KEY size=512 crc=7043a39d
+7 t0 pts=7168 dts=7168 dur=832 flags=KEY size=416 crc=6d991f52
+seek 0: t0@0
+seek 166666: t0@2
+seek 333333: t0@5
+seek 500000: end
+seek -1000000: t0@0

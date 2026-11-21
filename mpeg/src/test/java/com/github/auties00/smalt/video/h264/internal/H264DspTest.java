@@ -196,13 +196,13 @@ class H264DspTest {
         void vectorTransforms() {
             var random = new Random(11);
             for (var trial = 0; trial < 600; trial++) {
-                var coefficients = new int[64];
+                var coefficients = new int[128];
                 var range = trial % 3 == 0 ? 1 << 22 : 2048;
-                for (var i = 0; i < 64; i++) {
+                for (var i = 0; i < 128; i++) {
                     coefficients[i] = random.nextInt(8) == 0 ? random.nextInt(range) - range / 2 : 0;
                 }
                 var plane = randomPlane(random, 16 * 16, false);
-                for (var kernel = 0; kernel < 5; kernel++) {
+                for (var kernel = 0; kernel < 6; kernel++) {
                     var expected = plane.clone();
                     var actual = plane.clone();
                     var expectedCoefficients = coefficients.clone();
@@ -224,9 +224,13 @@ class H264DspTest {
                             SCALAR.idct8x8DcAdd(expectedCoefficients, 0, expected, 17, 16);
                             VECTOR.idct8x8DcAdd(actualCoefficients, 0, actual, 17, 16);
                         }
+                        case 4 -> {
+                            SCALAR.chromaDcAdd(expectedCoefficients, 0, expected, 17, 16);
+                            VECTOR.chromaDcAdd(actualCoefficients, 0, actual, 17, 16);
+                        }
                         default -> {
-                            SCALAR.chromaDcAdd(expectedCoefficients, expected, 17, 16);
-                            VECTOR.chromaDcAdd(actualCoefficients, actual, 17, 16);
+                            SCALAR.chromaDcAdd(expectedCoefficients, 64, expected, 17, 16);
+                            VECTOR.chromaDcAdd(actualCoefficients, 64, actual, 17, 16);
                         }
                     }
                     assertArrayEquals(expected, actual, "kernel " + kernel);

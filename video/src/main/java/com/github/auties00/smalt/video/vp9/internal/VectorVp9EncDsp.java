@@ -279,8 +279,11 @@ final class VectorVp9EncDsp extends Vp9EncDsp {
 
     /**
      * The scalar kernels, for the widths without a vector kernel.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarVp9EncDsp scalar = new ScalarVp9EncDsp();
+    private static final ScalarVp9EncDsp SCALAR = new ScalarVp9EncDsp();
 
     /**
      * Creates the vector implementation.
@@ -322,7 +325,7 @@ final class VectorVp9EncDsp extends Vp9EncDsp {
                 }
             }
         }
-        return scalar.sad(src, srcOff, srcStride, ref, refOff, refStride, w, h);
+        return SCALAR.sad(src, srcOff, srcStride, ref, refOff, refStride, w, h);
     }
 
     /**
@@ -606,7 +609,7 @@ final class VectorVp9EncDsp extends Vp9EncDsp {
         if ((w & 15) == 0) {
             return variance16(src, srcOff, srcStride, ref, refOff, refStride, w, h);
         }
-        return scalar.variance(src, srcOff, srcStride, ref, refOff, refStride, w, h);
+        return SCALAR.variance(src, srcOff, srcStride, ref, refOff, refStride, w, h);
     }
 
     /**
@@ -786,7 +789,7 @@ final class VectorVp9EncDsp extends Vp9EncDsp {
             horizontal16(ref, refOff, refStride, x0, x1, scratch, w, h + 1);
             return vertical16(scratch, y0, y1, src, srcOff, srcStride, w, h);
         }
-        return scalar.subPixelVariance(ref, refOff, refStride, xOffset, yOffset, src, srcOff, srcStride, w, h,
+        return SCALAR.subPixelVariance(ref, refOff, refStride, xOffset, yOffset, src, srcOff, srcStride, w, h,
                 scratch);
     }
 
@@ -1698,7 +1701,7 @@ final class VectorVp9EncDsp extends Vp9EncDsp {
     @Override
     int satd(int[] coeff, int off, int n) {
         if ((n & 7) != 0) {
-            return scalar.satd(coeff, off, n);
+            return SCALAR.satd(coeff, off, n);
         }
         var sums = INTS_8.cast(IntVector.zero(I256));
         for (var i = 0; i < n; i += 8) {
@@ -1711,7 +1714,7 @@ final class VectorVp9EncDsp extends Vp9EncDsp {
     @Override
     long blockErrorFp(int[] coeff, int[] dqcoeff, int off, int n) {
         if ((n & 7) != 0) {
-            return scalar.blockErrorFp(coeff, dqcoeff, off, n);
+            return SCALAR.blockErrorFp(coeff, dqcoeff, off, n);
         }
         var errors = LONGS_4.cast(LongVector.zero(L256));
         for (var i = 0; i < n; i += 8) {
@@ -1781,7 +1784,7 @@ final class VectorVp9EncDsp extends Vp9EncDsp {
             subtract16(diff, diffOff, diffStride, src, srcOff, srcStride, pred, predOff, predStride, w, h);
             return;
         }
-        scalar.subtract(diff, diffOff, diffStride, src, srcOff, srcStride, pred, predOff, predStride, w, h);
+        SCALAR.subtract(diff, diffOff, diffStride, src, srcOff, srcStride, pred, predOff, predStride, w, h);
     }
 
     /**

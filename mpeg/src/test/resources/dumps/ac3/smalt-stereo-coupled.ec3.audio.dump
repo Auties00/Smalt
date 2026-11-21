@@ -1,0 +1,27 @@
+# audio decode dump of ac3/smalt-stereo-coupled.ec3; regenerate with -Dsmalt.test.updateDumps=true
+format AC3
+duration 1008000
+seekable true
+track 0 EAC3 rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=77d1248e
+1 frames=4096 crc16=5dbe3b5c
+2 frames=4096 crc16=b2292460
+3 frames=4096 crc16=56a7c487
+4 frames=4096 crc16=aa6093d0
+5 frames=4096 crc16=329bab92
+6 frames=4096 crc16=a08d9e1e
+7 frames=4096 crc16=6ba781e5
+8 frames=4096 crc16=27cdc823
+9 frames=4096 crc16=6ffac790
+10 frames=4096 crc16=2c1ab205
+11 frames=3328 crc16=e9ea0e22
+seek 0: @sample 0
+seek 336000: @sample 16128
+seek 672000: @sample 32256
+seek 1008000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AC3
+  duration -1
+  seekable false
+  track 0 EAC3 rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT]

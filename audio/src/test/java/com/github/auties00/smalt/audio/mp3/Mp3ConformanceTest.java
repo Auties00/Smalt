@@ -1,12 +1,24 @@
 package com.github.auties00.smalt.audio.mp3;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.AudioBuffer;
+import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
+import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.Tolerance;
+import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Packet;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -14,14 +26,26 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * Decodes the ISO/IEC 11172-4 (MPEG-1 Layers I, II, III) and ISO/IEC 13818-4 (MPEG-2 Layer III)
  * compliance bitstreams, plus the "illegal stream" and robustness vectors that minimp3 ships,
- * and compares them with their reference PCM using minimp3's criterion: 16-bit PSNR of at least
- * 96 dB. Layer III reference files are allowed to lack one or two trailing frames (the reference
+ * and compares them with their reference PCM, rounded to 16 bits like the reference, by the full
+ * accuracy limits of ISO/IEC 11172-4 (an RMS difference below 2^-15/sqrt(12) of full scale, no
+ * sample off by more than 2^-14) and by minimp3's criterion, a PSNR of at least 96 dB. Layer III
+ * reference files are allowed to lack one or two trailing frames (the reference
  * decoder drops a truncated final frame) and the leading frames whose bit reservoir precedes the
  * stream (which this decoder conceals as silence); Layer I and II references are zero-padded.
  */
 class Mp3ConformanceTest {
+    /** The ISO/IEC 11172-4 full accuracy class a compliant decoder meets on these streams. */
+    private static final Tolerance COMPLIANCE = Tolerance.iso11172(Tolerance.Iso11172Accuracy.FULL);
+
+    /** minimp3's acceptance criterion over the same streams. */
+    private static final Tolerance MINIMP3 = Tolerance.psnr(96);
+
     private static void assertCompliant(String name, boolean layer3, boolean strictLength) {
-        var decoded = Mp3Vectors.decode(Mp3Vectors.read(Mp3Vectors.fetch(name + ".bit")));
+        // the free-format vector has its bitrate index rewritten after coding, so every CRC word fails; minimp3's
+        // references of the ILL vectors are the stereo base of their multichannel extension
+        var options = Mp3DecoderOptions.builder().crcCheck(!name.equals("l2-nonstandard-free_format"))
+                .multichannel(!name.startsWith("ILL")).build();
+        var decoded = Mp3Vectors.decode(Mp3Vectors.read(Mp3Vectors.fetch(name + ".bit")), options);
         var ours = Mp3Vectors.toS16(decoded.interleaved());
         var reference = Mp3Vectors.readPcm(Mp3Vectors.read(Mp3Vectors.fetch(name + ".pcm")));
         var frame = decoded.channels() * 1152;
@@ -37,7 +61,13 @@ class Mp3ConformanceTest {
         for (var i = 0; i < bestSkip * frame; i++) {
             assertEquals(0, ours[i], "a skipped leading frame is not concealment silence");
         }
-        assertTrue(bestPsnr >= 96, name + ": PSNR " + bestPsnr + " dB below 96 dB");
+        var start = bestSkip * frame;
+        var common = Math.min(reference.length, ours.length - start);
+        var expected = Arrays.copyOf(reference, common);
+        var actual = Arrays.copyOfRange(ours, start, start + common);
+        System.out.println("[mp3-compliance] " + name + ": " + Tolerance.Difference.ofPcm(expected, actual));
+        MINIMP3.assertPcm(name, expected, actual);
+        COMPLIANCE.assertPcm(name, expected, actual);
         var extra = ours.length - bestSkip * frame - reference.length;
         if (strictLength) {
             assertEquals(0, extra, name + ": sample count differs from the reference");
@@ -50,14 +80,14 @@ class Mp3ConformanceTest {
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"l1-fl1", "l1-fl2", "l1-fl3", "l1-fl4", "l1-fl5", "l1-fl6", "l1-fl7", "l1-fl8"})
-    @DisplayName("Layer I compliance streams reach 96 dB PSNR")
+    @DisplayName("Layer I compliance streams meet ISO/IEC 11172-4 full accuracy and 96 dB PSNR")
     void layer1(String name) {
         assertCompliant(name, false, false);
     }
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"l2-fl10", "l2-fl11", "l2-fl12", "l2-fl13", "l2-fl14", "l2-fl15", "l2-fl16", "l2-test32"})
-    @DisplayName("Layer II compliance streams reach 96 dB PSNR")
+    @DisplayName("Layer II compliance streams meet ISO/IEC 11172-4 full accuracy and 96 dB PSNR")
     void layer2(String name) {
         assertCompliant(name, false, false);
     }
@@ -65,27 +95,76 @@ class Mp3ConformanceTest {
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"l3-compl", "l3-he_32khz", "l3-he_44khz", "l3-he_48khz", "l3-he_free", "l3-he_mode",
             "l3-hecommon", "l3-si", "l3-si_block", "l3-si_huff", "l3-sin1k0db", "l3-test45", "l3-test46"})
-    @DisplayName("MPEG-1 Layer III compliance streams reach 96 dB PSNR")
+    @DisplayName("MPEG-1 Layer III compliance streams meet ISO/IEC 11172-4 full accuracy and 96 dB PSNR")
     void layer3(String name) {
         assertCompliant(name, true, false);
     }
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"M2L3_bitrate_16_all", "M2L3_bitrate_22_all", "M2L3_bitrate_24_all", "M2L3_compl24", "M2L3_noise"})
-    @DisplayName("MPEG-2 Layer III compliance streams reach 96 dB PSNR")
+    @DisplayName("MPEG-2 Layer III compliance streams meet ISO/IEC 11172-4 full accuracy and 96 dB PSNR")
     void mpeg2(String name) {
         assertCompliant(name, true, false);
     }
 
+    static Stream<String> illegalStreamNames() {
+        return Stream.of("ILL2_center2", "ILL2_dual", "ILL2_dynx22", "ILL2_dynx31", "ILL2_dynx32", "ILL2_ext_switching",
+                "ILL2_layer1", "ILL2_layer3", "ILL2_mono", "ILL2_multilingual", "ILL2_overalloc1", "ILL2_prediction",
+                "ILL2_samples", "ILL2_scf63", "ILL2_tca21", "ILL2_tca30", "ILL2_tca30_PC", "ILL2_tca31_PC",
+                "ILL2_tca31_mtx0", "ILL2_tca31_mtx2", "ILL2_tca32_PC", "ILL2_wrongcrc", "ILL4_ext_id1", "ILL4_sync",
+                "ILL4_wrong_length1", "ILL4_wrong_length2", "ILL4_wrongcrc");
+    }
+
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"ILL2_center2", "ILL2_dual", "ILL2_dynx22", "ILL2_dynx31", "ILL2_dynx32", "ILL2_ext_switching",
-            "ILL2_layer1", "ILL2_layer3", "ILL2_mono", "ILL2_multilingual", "ILL2_overalloc1", "ILL2_prediction",
-            "ILL2_samples", "ILL2_scf63", "ILL2_tca21", "ILL2_tca30", "ILL2_tca30_PC", "ILL2_tca31_PC", "ILL2_tca31_mtx0",
-            "ILL2_tca31_mtx2", "ILL2_tca32_PC", "ILL2_wrongcrc", "ILL4_ext_id1", "ILL4_sync", "ILL4_wrong_length1",
-            "ILL4_wrong_length2", "ILL4_wrongcrc"})
-    @DisplayName("MPEG-2 extension and illegal-stream vectors decode to their reference exactly in length")
+    @MethodSource("illegalStreamNames")
+    @DisplayName("MPEG-2 extension and illegal-stream vectors decode their stereo base to the reference exactly in length")
     void illegalStreams(String name) {
         assertCompliant(name, false, true);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("illegalStreamNames")
+    @DisplayName("with the multichannel extension on, every frame decodes either exactly as its stereo base or to "
+            + "more channels of the same length")
+    void illegalStreamsMultichannel(String name) {
+        var data = Mp3Vectors.read(Mp3Vectors.fetch(name + ".bit"));
+        var base = buffers(data, Mp3DecoderOptions.builder().multichannel(false).build());
+        var full = buffers(data, Mp3DecoderOptions.defaults());
+        assertEquals(base.size(), full.size(), name + ": buffer count");
+        for (var i = 0; i < base.size(); i++) {
+            var stereo = base.get(i);
+            var multichannel = full.get(i);
+            assertEquals(stereo[0].length, multichannel[0].length, name + ": frame " + i + " length");
+            if (multichannel.length == stereo.length) {
+                for (var c = 0; c < stereo.length; c++) {
+                    assertArrayEquals(stereo[c], multichannel[c], name + ": frame " + i + " channel " + c);
+                }
+            } else {
+                assertTrue(multichannel.length > stereo.length, name + ": frame " + i + " has "
+                        + multichannel.length + " channels");
+            }
+        }
+    }
+
+    /** Decodes a stream to a copy of the planes of every buffer, untrimmed. */
+    private static List<float[][]> buffers(byte[] data, Mp3DecoderOptions options) {
+        var out = new ArrayList<float[][]>();
+        try (var demuxer = new MpegAudioDemuxer(MediaSource.of(data));
+             var decoder = new Mp3Decoder((AudioTrack) demuxer.tracks().getFirst(), options)) {
+            Consumer<AudioBuffer> sink = buffer -> {
+                var planes = new float[buffer.channels()][];
+                for (var c = 0; c < planes.length; c++) {
+                    planes[c] = Arrays.copyOf(buffer.plane(c), buffer.frames());
+                }
+                out.add(planes);
+            };
+            Packet packet;
+            while ((packet = demuxer.read()) != null) {
+                decoder.decode(packet, sink);
+            }
+            decoder.flush(sink);
+        }
+        return out;
     }
 
     @ParameterizedTest(name = "{0}")

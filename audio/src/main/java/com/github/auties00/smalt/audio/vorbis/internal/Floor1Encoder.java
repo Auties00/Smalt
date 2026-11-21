@@ -616,6 +616,29 @@ public final class Floor1Encoder {
     }
 
     /**
+     * Blends two fits of the same floor, for the packet blobs between them
+     * ({@code floor1_interpolate_fit}).
+     *
+     * @param a the fit at weight 0, or {@code null}
+     * @param b the fit at weight 65536, or {@code null}
+     * @param weight the weight of {@code b}, from 0 to 65536
+     * @param output receives the blended posts, at least as long as the fits
+     * @return {@code output}, or {@code null} (the floor unused) when either fit is {@code null}
+     */
+    public int[] interpolate(int[] a, int[] b, int weight, int[] output) {
+        if (a == null || b == null) {
+            return null;
+        }
+        for (var i = 0; i < posts; i++) {
+            output[i] = ((65536 - weight) * (a[i] & 0x7FFF) + weight * (b[i] & 0x7FFF) + 32768) >> 16;
+            if ((a[i] & 0x8000) != 0 && (b[i] & 0x8000) != 0) {
+                output[i] |= 0x8000;
+            }
+        }
+        return output;
+    }
+
+    /**
      * Codes a fitted floor and renders the integer amplitudes the decoder will reconstruct
      * ({@code floor1_encode}).
      *

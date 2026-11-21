@@ -1,0 +1,13 @@
+# image dump of dds/y410.dds; regenerate with -Dsmalt.test.updateDumps=true
+format DDS
+info ImageInfo[format=DDS, width=24, height=16, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 24x16 rgba8 alpha=true crc=3e9eb029
+  format=DDS orientation=NORMAL source=24x16
+  icc=none exif=none xmp=none
+  profile=none
+scaled 6x4
+picture 24x16 rgba8 alpha=true crc=3e9eb029
+  format=DDS orientation=NORMAL source=24x16
+  icc=none exif=none xmp=none
+  profile=none

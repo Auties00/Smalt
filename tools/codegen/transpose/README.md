@@ -13,4 +13,4 @@ python gen_transpose.py VectorTransformKernel.template ../../../core/src/main/ja
 ```
 
 and run `python ../check.py` (CI runs it too), which fails when the committed file differs from the
-generator's output. After a change, run `KernelEquivalenceTest` and `JitRobustnessTest`.
+generator's output. After a change, run `KernelEquivalenceTest` and `CoreKernelGuardTest`.

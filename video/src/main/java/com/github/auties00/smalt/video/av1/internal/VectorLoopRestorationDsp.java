@@ -45,6 +45,14 @@ public final class VectorLoopRestorationDsp extends ScalarLoopRestorationDsp {
     private static final Class<ShortVector> SHORT128 = vectorClass(S128);
 
     /**
+     * The scalar spans that finish the columns the vector loops leave.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
+     */
+    private static final ScalarLoopRestorationDsp TAIL = new ScalarLoopRestorationDsp();
+
+    /**
      * Constructs the kernels.
      */
     private VectorLoopRestorationDsp() {
@@ -116,7 +124,7 @@ public final class VectorLoopRestorationDsp extends ScalarLoopRestorationDsp {
                     .intoArray(sc, out + x);
         }
         if (x < x1) {
-            super.wienerHSpan(sc, out, src, srcOff, x, x1, filter, bias, shift, clipLimit);
+            TAIL.wienerHSpan(sc, out, src, srcOff, x, x1, filter, bias, shift, clipLimit);
         }
     }
 
@@ -154,7 +162,7 @@ public final class VectorLoopRestorationDsp extends ScalarLoopRestorationDsp {
             SHORT128.cast(value.convertShape(VectorOperators.I2S, S128, 0)).intoArray(dst, dstOff + i);
         }
         if (i < w) {
-            super.wienerVSpan(sc, dst, dstOff + i, r0 + i, r1 + i, r2 + i, r3 + i, r4 + i, r5 + i, r6 + i, filter,
+            TAIL.wienerVSpan(sc, dst, dstOff + i, r0 + i, r1 + i, r2 + i, r3 + i, r4 + i, r5 + i, r6 + i, filter,
                     w - i, bias, shift, bitdepthMax);
         }
     }

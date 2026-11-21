@@ -1,0 +1,20 @@
+# demux dump of wav/s16.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 600000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 0 AUDIO PCM_S16LE timebase=1/22050 duration=13230 config=none
+  audio rate=22050 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 7
+0 t0 pts=0 dts=0 dur=2048 flags=KEY size=8192 crc=db4279f4
+1 t0 pts=2048 dts=2048 dur=2048 flags=KEY size=8192 crc=1bd2f1bb
+2 t0 pts=4096 dts=4096 dur=2048 flags=KEY size=8192 crc=28425d35
+3 t0 pts=6144 dts=6144 dur=2048 flags=KEY size=8192 crc=b3be62c6
+4 t0 pts=8192 dts=8192 dur=2048 flags=KEY size=8192 crc=0c8cd4a8
+5 t0 pts=10240 dts=10240 dur=2048 flags=KEY size=8192 crc=00aaaf71
+6 t0 pts=12288 dts=12288 dur=942 flags=KEY size=3768 crc=4d951c74
+seek 0: t0@0
+seek 200000: t0@pts=4410
+seek 400000: t0@pts=8820
+seek 600000: end
+seek -1000000: t0@0

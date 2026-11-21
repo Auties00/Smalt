@@ -2,6 +2,8 @@ package com.github.auties00.smalt.capture.internal.macos;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.capture.CaptureDevice;
+import com.github.auties00.smalt.capture.ScreenCaptureOptions;
+import com.github.auties00.smalt.capture.internal.CaptureArea;
 import com.github.auties00.smalt.capture.internal.FramePacing;
 import com.github.auties00.smalt.track.Rational;
 
@@ -13,24 +15,23 @@ import java.util.concurrent.TimeUnit;
 import static java.lang.foreign.ValueLayout.ADDRESS;
 
 /**
- * Captures a display with ScreenCaptureKit (macOS 12.3 and later).
+ * Captures a display or a window with ScreenCaptureKit (macOS 12.3 and later).
  *
  * <p>Opening a screen checks the Screen Recording permission, finds the display among the
  * {@code SCShareableContent} displays, and starts an {@code SCStream} over an
- * {@code SCContentFilter} of the whole display. The stream is configured for the display's pixel
- * size, NV12 ({@code '420v'}) output converted by the system with the BT.709 matrix in the sRGB
- * color space, the cursor drawn, and a minimum frame interval of one frame at the requested rate.
+ * {@code SCContentFilter} of the whole display; opening a window finds it among the content's windows and
+ * filters on that window alone ({@code initWithDesktopIndependentWindow:}), so other windows never cover
+ * it. The stream is configured for the pixel size of the captured area (with a {@code sourceRect} in
+ * points for a region), NV12 ({@code '420v'}) output converted by the system with the BT.709 matrix in the
+ * sRGB color space, the cursor drawn as the options ask, and a minimum frame interval of one frame at the
+ * requested rate.
  * ScreenCaptureKit sends a frame only when the display changes, so the session repeats the last
  * frame when none arrives within a frame interval, keeping the requested rate. Frames whose
  * {@code SCStreamFrameInfoStatus} is not complete are skipped. A stream stopped by the user ends
- * the session; a stream stopped by an error fails it.
+ * the session; a stream stopped by an error fails a screen session and ends a window session, whose
+ * window was closed.
  */
 final class MacStreamSession extends MacCaptureSession implements DelegateSink {
-    /**
-     * How long the shareable content, which may show the permission prompt, may take.
-     */
-    private static final long CONTENT_TIMEOUT_MILLIS = TimeUnit.SECONDS.toMillis(30);
-
     /**
      * How long starting the stream may take.
      */
@@ -40,6 +41,11 @@ final class MacStreamSession extends MacCaptureSession implements DelegateSink {
      * How long stopping the stream may take.
      */
     private static final long STOP_TIMEOUT_MILLIS = TimeUnit.SECONDS.toMillis(5);
+
+    /**
+     * The highest frame rate a session paces itself at; higher requests are served at this rate.
+     */
+    private static final int MAX_RATE = 1_000;
 
     /**
      * The bridge serving the delegate and the completion handlers.
@@ -102,14 +108,21 @@ final class MacStreamSession extends MacCaptureSession implements DelegateSink {
     private boolean started;
 
     /**
+     * Whether the session captures a window rather than a display.
+     */
+    private final boolean window;
+
+    /**
      * Creates a session.
      *
+     * @param source the screen or window
      * @param width the picture width, even
      * @param height the picture height, even
      * @param frameRate the frames per second
      */
-    private MacStreamSession(ObjcBridge bridge, CaptureDevice.Screen screen, int width, int height, Rational frameRate) {
-        super(screen, width, height, FramePacing.periodNanos(frameRate));
+    private MacStreamSession(ObjcBridge bridge, CaptureDevice source, int width, int height, Rational frameRate) {
+        super(source, width, height, FramePacing.periodNanos(frameRate));
+        this.window = source instanceof CaptureDevice.Window;
         this.bridge = bridge;
         this.reader = new PixelBufferReader();
         this.key = bridge.register(this);
@@ -126,23 +139,31 @@ final class MacStreamSession extends MacCaptureSession implements DelegateSink {
      *
      * <p>Runs on a platform thread inside an autorelease pool.
      *
-     * @param frameRate the frames per second
+     * @param options the frame rate, region and pointer settings
      * @return the running session
      * @throws MediaException.Io if the permission is missing, the screen is gone, or the
      * stream does not start
-     * @throws MediaException.Unsupported if the screen is smaller than 2x2 pixels
+     * @throws MediaException.Unsupported if the captured area is smaller than 2x2 pixels
      */
-    static MacStreamSession open(ObjcBridge bridge, CaptureDevice.Screen screen, Rational frameRate) {
+    static MacStreamSession open(ObjcBridge bridge, CaptureDevice.Screen screen, ScreenCaptureOptions options) {
         MacDisplays.requireCapturePermission();
         var displayId = MacDisplays.displayId(screen);
-        var width = screen.width() & ~1;
-        var height = screen.height() & ~1;
-        if (width == 0 || height == 0) {
-            throw new MediaException.Unsupported("capture size", "the screen " + screen.name() + " is smaller than 2x2 pixels");
-        }
-        var session = new MacStreamSession(bridge, screen, width, height, frameRate);
+        var area = CaptureArea.of(options, screen.width(), screen.height(), "the screen " + screen.name());
+        var bounds = CoreGraphics.bounds(displayId);
+        var scale = bounds[2] > 0 ? screen.width() / bounds[2] : 1;
+        var rate = FramePacing.atMost(options.frameRate(), MAX_RATE);
+        var session = new MacStreamSession(bridge, screen, area.width(), area.height(), rate);
         try {
-            session.start(displayId, frameRate);
+            session.content = MacWindows.content(bridge);
+            var display = find(session.content, displayId);
+            if (ObjC.isNull(display)) {
+                throw new MediaException.Io("the screen " + screen.name() + " is not available for capture",
+                        new IOException("no SCDisplay has the id " + Integer.toUnsignedString(displayId)));
+            }
+            var excluded = ObjC.id(ScreenCaptureKit.NS_ARRAY, ScreenCaptureKit.ARRAY);
+            session.filter = ObjC.id(ObjC.id(ScreenCaptureKit.CONTENT_FILTER, ObjC.ALLOC), ScreenCaptureKit.INIT_WITH_DISPLAY,
+                    display, excluded);
+            session.start(rate, options, area, screen.width(), screen.height(), scale);
             return session;
         } catch (Throwable failure) {
             session.close();
@@ -151,26 +172,68 @@ final class MacStreamSession extends MacCaptureSession implements DelegateSink {
     }
 
     /**
-     * Finds the display, configures the stream and starts it.
+     * Opens a window.
      *
-     * @param displayId the display
+     * <p>Runs on a platform thread inside an autorelease pool.
+     *
+     * @param options the frame rate, region and pointer settings
+     * @return the running session
+     * @throws MediaException.Io if the permission is missing, the window is gone, or the stream does not
+     * start
+     * @throws MediaException.Unsupported if the captured area is smaller than 2x2 pixels
+     */
+    static MacStreamSession open(ObjcBridge bridge, CaptureDevice.Window window, ScreenCaptureOptions options) {
+        MacDisplays.requireCapturePermission();
+        int windowId;
+        try {
+            windowId = Integer.parseUnsignedInt(window.id());
+        } catch (NumberFormatException invalid) {
+            throw new MediaException.Io("the window " + window.name() + " is not a macOS window",
+                    new IOException("invalid window id " + window.id()));
+        }
+        var content = MacWindows.content(bridge);
+        MacStreamSession session = null;
+        try {
+            var found = MacWindows.find(content, windowId);
+            if (ObjC.isNull(found)) {
+                throw new MediaException.Io("the window " + window.name() + " no longer exists",
+                        new IOException("no SCWindow has the id " + window.id()));
+            }
+            var frame = ObjC.rect(found, ScreenCaptureKit.FRAME);
+            var scale = MacWindows.scale(MacWindows.displays(), frame[0] + frame[2] / 2, frame[1] + frame[3] / 2);
+            var width = (int) Math.min(Integer.MAX_VALUE, Math.round(frame[2] * scale));
+            var height = (int) Math.min(Integer.MAX_VALUE, Math.round(frame[3] * scale));
+            var area = CaptureArea.of(options, width, height, "the window " + window.name());
+            var rate = FramePacing.atMost(options.frameRate(), MAX_RATE);
+            session = new MacStreamSession(bridge, window, area.width(), area.height(), rate);
+            session.content = content;
+            content = MemorySegment.NULL;
+            session.filter = ObjC.id(ObjC.id(ScreenCaptureKit.CONTENT_FILTER, ObjC.ALLOC), ScreenCaptureKit.INIT_WITH_WINDOW,
+                    found);
+            session.start(rate, options, area, width, height, scale);
+            return session;
+        } catch (Throwable failure) {
+            if (session != null) {
+                session.close();
+            }
+            ObjC.release(content);
+            throw failure;
+        }
+    }
+
+    /**
+     * Configures the stream over the filter and starts it.
+     *
      * @param frameRate the frames per second
+     * @param options the pointer settings
+     * @param area the captured area, in pixels of the source
+     * @param sourceWidth the width of the source, in pixels
+     * @param sourceHeight the height of the source, in pixels
+     * @param scale the pixels per point of the source
      * @throws MediaException.Io if a step fails
      */
-    private void start(int displayId, Rational frameRate) {
-        var listed = bridge.await(ObjcBridge.Handler.OBJECT_ERROR, CONTENT_TIMEOUT_MILLIS, "listing the screens",
-                block -> ObjC.call(ScreenCaptureKit.SHAREABLE_CONTENT, ScreenCaptureKit.GET_SHAREABLE_CONTENT, block));
-        content = listed.object();
-        if (listed.error() != null || ObjC.isNull(content)) {
-            throw failure("cannot list the screens available for capture", listed.error());
-        }
-        var display = find(content, displayId);
-        if (ObjC.isNull(display)) {
-            throw new MediaException.Io("the screen " + device().name() + " is not available for capture",
-                    new IOException("no SCDisplay has the id " + Integer.toUnsignedString(displayId)));
-        }
-        var excluded = ObjC.id(ScreenCaptureKit.NS_ARRAY, ScreenCaptureKit.ARRAY);
-        filter = ObjC.id(ObjC.id(ScreenCaptureKit.CONTENT_FILTER, ObjC.ALLOC), ScreenCaptureKit.INIT_WITH_DISPLAY, display, excluded);
+    private void start(Rational frameRate, ScreenCaptureOptions options, CaptureArea area, int sourceWidth,
+                       int sourceHeight, double scale) {
         configuration = ObjC.newInstance(ScreenCaptureKit.STREAM_CONFIGURATION);
         if (ObjC.isNull(filter) || ObjC.isNull(configuration)) {
             throw new MediaException.Io("cannot configure the screen capture", new IOException("SCContentFilter or SCStreamConfiguration init failed"));
@@ -179,7 +242,11 @@ final class MacStreamSession extends MacCaptureSession implements DelegateSink {
         ObjC.callWithLong(configuration, ScreenCaptureKit.SET_HEIGHT, height());
         ObjC.callWithTime(configuration, ScreenCaptureKit.SET_MINIMUM_FRAME_INTERVAL, CmTime.frameDuration(frameRate));
         ObjC.callWithInt(configuration, ScreenCaptureKit.SET_PIXEL_FORMAT, FourCc.NV12_VIDEO_RANGE);
-        ObjC.callWithBool(configuration, ScreenCaptureKit.SET_SHOWS_CURSOR, true);
+        ObjC.callWithBool(configuration, ScreenCaptureKit.SET_SHOWS_CURSOR, options.cursor());
+        if (!area.covers(sourceWidth, sourceHeight)) {
+            ObjC.callWithRect(configuration, ScreenCaptureKit.SET_SOURCE_RECT, area.x() / scale, area.y() / scale,
+                    area.width() / scale, area.height() / scale);
+        }
         ObjC.call(configuration, ScreenCaptureKit.SET_COLOR_MATRIX, CoreGraphics.YCBCR_MATRIX_709);
         ObjC.call(configuration, ScreenCaptureKit.SET_COLOR_SPACE_NAME, CoreGraphics.SRGB);
         queue = Dispatch.createSerialQueue();
@@ -294,7 +361,7 @@ final class MacStreamSession extends MacCaptureSession implements DelegateSink {
     @Override
     public void stopped(MemorySegment error) {
         var reason = NsError.read(error);
-        if (reason == null || reason.is(errorDomain(), ScreenCaptureKit.ERROR_USER_STOPPED)) {
+        if (window || reason == null || reason.is(errorDomain(), ScreenCaptureKit.ERROR_USER_STOPPED)) {
             exchange.finish();
         } else {
             exchange.fail(failure("the screen capture stopped", reason));

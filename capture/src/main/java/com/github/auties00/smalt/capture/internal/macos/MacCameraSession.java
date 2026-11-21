@@ -1,6 +1,8 @@
 package com.github.auties00.smalt.capture.internal.macos;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.capture.CameraCaptureSession;
+import com.github.auties00.smalt.capture.CameraControls;
 import com.github.auties00.smalt.capture.CaptureDevice;
 import com.github.auties00.smalt.capture.CaptureMode;
 
@@ -26,7 +28,7 @@ import static java.lang.foreign.ValueLayout.ADDRESS;
  * configuration. A session whose {@code AVCaptureSession} stops running (the camera
  * was unplugged or taken over) ends, and {@link #read()} returns {@code null}.
  */
-final class MacCameraSession extends MacCaptureSession implements DelegateSink {
+final class MacCameraSession extends MacCaptureSession implements CameraCaptureSession, DelegateSink {
     /**
      * How long the user may take to answer the camera permission prompt.
      */
@@ -56,6 +58,11 @@ final class MacCameraSession extends MacCaptureSession implements DelegateSink {
      * The mapping from capture times to session timestamps, set when capture starts.
      */
     private volatile CaptureClock clock;
+
+    /**
+     * The controls of the camera, set once the capture started.
+     */
+    private volatile AvFoundationControls controls;
 
     /**
      * The retained {@code AVCaptureDeviceInput}, or {@code NULL}.
@@ -142,6 +149,7 @@ final class MacCameraSession extends MacCaptureSession implements DelegateSink {
             }
             session = new MacCameraSession(bridge, camera, device, width, height);
             session.start(ObjC.element(formatArray, selection.index()), selection.frameDuration());
+            session.controls = AvFoundationControls.open(device);
             return session;
         } catch (Throwable failure) {
             if (session != null) {
@@ -346,6 +354,16 @@ final class MacCameraSession extends MacCaptureSession implements DelegateSink {
         return bgra ? FourCc.BGRA : 0;
     }
 
+    @Override
+    public CaptureDevice.Camera device() {
+        return (CaptureDevice.Camera) super.device();
+    }
+
+    @Override
+    public CameraControls controls() {
+        return controls;
+    }
+
     /**
      * Builds the failure of a call that reported an {@code NSError}.
      *
@@ -393,6 +411,10 @@ final class MacCameraSession extends MacCaptureSession implements DelegateSink {
 
     @Override
     void release() {
+        var opened = controls;
+        if (opened != null) {
+            opened.close();
+        }
         if (!ObjC.isNull(captureSession)) {
             ObjC.call(captureSession, AvFoundation.STOP_RUNNING);
         }

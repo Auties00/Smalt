@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.ShortVector;
 import jdk.incubator.vector.VectorOperators;
@@ -83,8 +84,11 @@ final class VectorSilkKernels implements SilkKernels {
 
     /**
      * The scalar kernels used when a batch has no exploitable periodic structure.
+     *
+     * <p>Static, so that the scalar tail after a vector loop keeps no reference to this kernel live across the loop's
+     * safepoint poll (see the JVM flags section of the README).
      */
-    private final ScalarSilkKernels scalar = new ScalarSilkKernels();
+    private static final ScalarSilkKernels SCALAR = new ScalarSilkKernels();
 
     /**
      * Creates the vector kernels.
@@ -93,13 +97,13 @@ final class VectorSilkKernels implements SilkKernels {
     }
 
     /**
-     * Creates the vector kernels when the platform has 256-bit integer vectors, or the scalar
-     * kernels otherwise, since the eight-lane vectors would not be backed by hardware.
+     * Creates the vector kernels when {@link Simd#WIDE} holds, or the scalar kernels otherwise,
+     * since the eight-lane vectors would not be backed by hardware.
      *
      * @return the kernels
      */
     static SilkKernels create() {
-        if (IntVector.SPECIES_PREFERRED.vectorBitSize() < 256) {
+        if (!Simd.WIDE) {
             return new ScalarSilkKernels();
         }
         return new VectorSilkKernels();
@@ -185,7 +189,7 @@ final class VectorSilkKernels implements SilkKernels {
                 }
             }
         }
-        return scalar.iirFirInterpol(out, outOff, buf, max_index_Q16, index_increment_Q16, scratch);
+        return SCALAR.iirFirInterpol(out, outOff, buf, max_index_Q16, index_increment_Q16, scratch);
     }
 
     /**
@@ -288,7 +292,7 @@ final class VectorSilkKernels implements SilkKernels {
             return downFirPolyphase(out, outOff, buf, coefs, coefsOff, FIR_Order, index_increment_Q16 >> 16, n,
                     scratch);
         }
-        return scalar.downFirInterpol(out, outOff, buf, coefs, coefsOff, FIR_Order, FIR_Fracs, max_index_Q16,
+        return SCALAR.downFirInterpol(out, outOff, buf, coefs, coefsOff, FIR_Order, FIR_Fracs, max_index_Q16,
                 index_increment_Q16, scratch);
     }
 
@@ -428,7 +432,7 @@ final class VectorSilkKernels implements SilkKernels {
             SHORT_VECTOR.cast(clamped.convertShape(VectorOperators.I2S, S8, 0)).intoArray(out, outOff + ix);
         }
         if (ix < len) {
-            scalar.lpcAnalysisFilterTail(out, outOff, in, inOff, B, BOff, ix, len, d);
+            SCALAR.lpcAnalysisFilterTail(out, outOff, in, inOff, B, BOff, ix, len, d);
         }
     }
 }

@@ -1,0 +1,61 @@
+# demux dump of asf/mjpeg-pcm.wmv; regenerate with -Dsmalt.test.updateDumps=true
+format ASF
+duration 600000
+seekable true
+metadata album="Samples"
+metadata artist="Smalt"
+metadata creation_time="1970-01-01T00:00:00Z"
+metadata encoder="Lavf61.7.100"
+metadata title="Behavior"
+track 1 VIDEO MJPEG timebase=1/1000 duration=? config=none
+  video 64x48 orientation=NORMAL sar=1/1
+  metadata AspectRatioX="1"
+  metadata AspectRatioY="1"
+track 2 AUDIO PCM_S16LE timebase=1/1000 duration=? config=none
+  audio rate=8000 bits=16 skip=0 layout=[FRONT_CENTER]
+packets 23
+0 t1 pts=0 dts=0 dur=? flags=KEY size=1030 crc=f0361b45
+1 t2 pts=0 dts=0 dur=44 flags=KEY size=710 crc=95c029ea
+2 t2 pts=44 dts=44 dur=46 flags=KEY size=744 crc=d5f31bb1
+3 t1 pts=67 dts=67 dur=? flags=KEY size=1030 crc=f0361b45
+4 t2 pts=91 dts=91 dur=46 flags=KEY size=742 crc=46b53328
+5 t1 pts=133 dts=133 dur=? flags=KEY size=1027 crc=2f3ae5b4
+6 t2 pts=137 dts=137 dur=46 flags=KEY size=744 crc=e67a579c
+7 t2 pts=184 dts=184 dur=46 flags=KEY size=742 crc=955e33b9
+8 t1 pts=200 dts=200 dur=? flags=KEY size=1027 crc=2f3ae5b4
+9 t2 pts=230 dts=230 dur=46 flags=KEY size=744 crc=040b80e5
+10 t1 pts=267 dts=267 dur=? flags=KEY size=1026 crc=ce26c78f
+11 t2 pts=277 dts=277 dur=46 flags=KEY size=742 crc=7d2ed66a
+12 t2 pts=323 dts=323 dur=46 flags=KEY size=744 crc=4a9f8104
+13 t1 pts=333 dts=333 dur=? flags=KEY size=1026 crc=ce26c78f
+14 t2 pts=370 dts=370 dur=46 flags=KEY size=742 crc=d3e52ea4
+15 t1 pts=400 dts=400 dur=? flags=KEY size=1023 crc=7799adfe
+16 t2 pts=416 dts=416 dur=46 flags=KEY size=744 crc=83bdc083
+17 t2 pts=462 dts=462 dur=46 flags=KEY size=744 crc=60a8a2bc
+18 t1 pts=467 dts=467 dur=? flags=KEY size=1024 crc=fc7b3ea1
+19 t2 pts=509 dts=509 dur=46 flags=KEY size=742 crc=9f810250
+20 t1 pts=533 dts=533 dur=? flags=KEY size=1023 crc=9a6743e4
+21 t2 pts=555 dts=555 dur=42 flags=KEY size=684 crc=bf87b6e6
+22 t2 pts=598 dts=598 dur=2 flags=KEY size=32 crc=d4a316fe
+seek 0: t1@0 t2@0
+seek 200000: t1@3 t2@4
+seek 400000: t1@6 t2@8
+seek 600000: end
+seek -1000000: t1@0 t2@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format ASF
+  duration 600000
+  seekable false
+  metadata album="Samples"
+  metadata artist="Smalt"
+  metadata creation_time="1970-01-01T00:00:00Z"
+  metadata encoder="Lavf61.7.100"
+  metadata title="Behavior"
+  track 1 VIDEO MJPEG timebase=1/1000 duration=? config=none
+    video 64x48 orientation=NORMAL sar=1/1
+    metadata AspectRatioX="1"
+    metadata AspectRatioY="1"
+  track 2 AUDIO PCM_S16LE timebase=1/1000 duration=? config=none
+    audio rate=8000 bits=16 skip=0 layout=[FRONT_CENTER]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

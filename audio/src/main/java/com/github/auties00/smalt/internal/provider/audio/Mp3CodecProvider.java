@@ -6,17 +6,20 @@ import com.github.auties00.smalt.audio.AudioDecoders;
 import com.github.auties00.smalt.audio.AudioEncoder;
 import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.AudioEncoders;
+import com.github.auties00.smalt.audio.mp3.Mp2Encoder;
+import com.github.auties00.smalt.audio.mp3.Mp2EncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp3BitrateMode;
 import com.github.auties00.smalt.audio.mp3.Mp3Decoder;
 import com.github.auties00.smalt.audio.mp3.Mp3Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp3EncoderOptions;
+import com.github.auties00.smalt.audio.mp3.Mp3StereoMode;
 import com.github.auties00.smalt.spi.AudioCodecProvider;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 
 /**
  * Provides {@link Mp3Decoder} to {@link AudioDecoders} for MP3 and MP2 tracks, and
- * {@link Mp3Encoder} to {@link AudioEncoders} for MP3.
+ * {@link Mp3Encoder} and {@link Mp2Encoder} to {@link AudioEncoders} for MP3 and MP2 (Layer II).
  *
  * @implNote This implementation maps the codec-independent options onto the MP3 options as
  *           follows:
@@ -37,6 +40,11 @@ import com.github.auties00.smalt.track.Codec;
  *           channel at 16 to 24 kHz and 16 kbit/s per channel below</td></tr>
  *           <tr><th scope="row">real time</th><td>{@link Mp3EncoderOptions#forRealtime()}: no bit
  *           reservoir, so every frame decodes on its own</td></tr>
+ *           <tr><th scope="row">MP2</th><td>Layer II at the nearest of the six Layer II rates (16 to
+ *           48 kHz) and the nearest bitrate of the rate's MPEG version allowed for the channel count, or
+ *           without one the {@link Mp2EncoderOptions#effectiveBitrate() automatic} bitrate; two channels at
+ *           128 kbit/s or less in joint stereo, otherwise stereo; every frame decodes on its own, so real
+ *           time changes nothing</td></tr>
  *           <tr><th scope="row">lossless sample size</th><td>ignored</td></tr>
  *           </tbody>
  *           </table>
@@ -46,6 +54,11 @@ public final class Mp3CodecProvider implements AudioCodecProvider {
      * The Layer III sampling rates, in ascending order.
      */
     private static final int[] RATES = {8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000};
+
+    /**
+     * The Layer II sampling rates, in ascending order.
+     */
+    private static final int[] MP2_RATES = {16000, 22050, 24000, 32000, 44100, 48000};
 
     /**
      * The MPEG-1 Layer III bitrates in kilobits per second.
@@ -75,7 +88,7 @@ public final class Mp3CodecProvider implements AudioCodecProvider {
 
     @Override
     public boolean encodes(Codec codec) {
-        return codec == Codec.MP3;
+        return codec == Codec.MP3 || codec == Codec.MP2;
     }
 
     /**
@@ -87,7 +100,11 @@ public final class Mp3CodecProvider implements AudioCodecProvider {
     public AudioEncoder createEncoder(Codec codec, AudioEncoderOptions options) {
         var channels = options.layout().channels();
         if (channels < 1 || channels > 2) {
-            throw new IllegalArgumentException("MP3 codes mono or stereo, not " + channels + " channels");
+            throw new IllegalArgumentException(codec.displayName() + " codes mono or stereo, not " + channels
+                    + " channels");
+        }
+        if (codec == Codec.MP2) {
+            return createMp2Encoder(options);
         }
         var rate = nearestRate(options.sampleRate());
         var table = rate >= 32000 ? MPEG1_BITRATES : MPEG2_BITRATES;
@@ -105,6 +122,40 @@ public final class Mp3CodecProvider implements AudioCodecProvider {
                 .bitrate(kbps * 1000)
                 .bitReservoir(!options.realtime())
                 .build());
+    }
+
+    /**
+     * Creates a Layer II encoder for codec-independent options.
+     *
+     * @param options the codec-independent options
+     * @return the encoder
+     */
+    private static AudioEncoder createMp2Encoder(AudioEncoderOptions options) {
+        var rate = MP2_RATES[0];
+        for (var candidate : MP2_RATES) {
+            if (Math.abs(candidate - options.sampleRate()) < Math.abs(rate - options.sampleRate())) {
+                rate = candidate;
+            }
+        }
+        var builder = Mp2EncoderOptions.builder().format(rate, options.layout());
+        if (options.bitrate().isPresent()) {
+            var requested = options.bitrate().getAsInt();
+            var best = 0;
+            for (var kbps : rate >= 32000 ? new int[]{32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384}
+                    : new int[]{8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160}) {
+                var allowed = rate < 32000 || (options.layout().channels() == 1 ? kbps < 224
+                        : kbps != 32 && kbps != 48 && kbps != 56 && kbps != 80);
+                if (allowed && (best == 0 || Math.abs(kbps * 1000 - requested) < Math.abs(best * 1000 - requested))) {
+                    best = kbps;
+                }
+            }
+            builder.bitrate(best * 1000);
+        }
+        var built = builder.build();
+        if (options.layout().channels() == 2 && built.effectiveBitrate() <= 128_000) {
+            built = built.toBuilder().stereoMode(Mp3StereoMode.JOINT_STEREO).build();
+        }
+        return new Mp2Encoder(built);
     }
 
     /**

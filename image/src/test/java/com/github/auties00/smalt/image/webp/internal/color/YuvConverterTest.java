@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.webp.internal.color;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
@@ -7,7 +8,6 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.simd.Simd;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -180,7 +180,7 @@ class YuvConverterTest {
         @Test
         @DisplayName("convert Y'CbCr rows to RGBA exactly like the scalar kernel")
         void yuvToRgba() {
-            Assumptions.assumeTrue(Simd.ENABLED, "Vector API disabled");
+            Skip.unlessVector(Simd.ENABLED);
             var vector = VectorYuvDsp.create();
             var scalar = new ScalarYuvDsp();
             var random = new Random(42);
@@ -204,7 +204,7 @@ class YuvConverterTest {
         @Test
         @DisplayName("convert RGBA rows to luma exactly like the scalar kernel")
         void rgbaToY() {
-            Assumptions.assumeTrue(Simd.ENABLED, "Vector API disabled");
+            Skip.unlessVector(Simd.ENABLED);
             var vector = VectorYuvDsp.create();
             var scalar = new ScalarYuvDsp();
             var random = new Random(43);

@@ -2,9 +2,15 @@ package com.github.auties00.smalt.aot.internal;
 
 import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingMode;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.raw.RawDecoder;
 import com.github.auties00.smalt.image.raw.RawFormat;
+import com.github.auties00.smalt.image.tiff.TiffDecoder;
 import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,6 +53,64 @@ class WorkloadsTest {
         for (var family : TrainingFamily.values()) {
             var hasRealtime = Workloads.of(family).stream().anyMatch(factory -> factory.mode() == TrainingMode.REALTIME);
             assertEquals(realtime.contains(family), hasRealtime, family.name());
+        }
+    }
+
+    @Test
+    @DisplayName("the synthetic TIFF variants decode, the masked page with alpha")
+    void tiffVariants() {
+        var files = SyntheticImages.tiffVariants(SyntheticImages.rgba(SyntheticVideo.natural(32, 16, 1).getFirst(),
+                true));
+        assertEquals(7, files.size());
+        for (var file : files) {
+            var picture = TiffDecoder.decode(MediaSource.of(file)).picture();
+            assertEquals(32, picture.width());
+            assertEquals(16, picture.height());
+        }
+        var masked = (RgbaPicture) TiffDecoder.decode(MediaSource.of(files.getLast())).picture();
+        assertTrue(masked.hasAlpha());
+        assertEquals(0, masked.pixels()[3]);
+    }
+
+    @Test
+    @DisplayName("the synthetic multi-scan and arithmetic-coded lossless JPEG files decode to their samples")
+    void losslessScans() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(48, 20, 1).getFirst(), false);
+        var wide = ImageDecoderOptions.builder().highBitDepth(true).build();
+        for (var precision : new int[]{8, 12, 16}) {
+            var samples = SyntheticImages.losslessSamples(picture, 3, precision);
+            for (var arithmetic : new boolean[]{false, true}) {
+                for (var scans : List.of(new int[][]{{0, 1, 2}}, new int[][]{{2}, {0, 1}})) {
+                    var jpeg = SyntheticImages.losslessScansJpeg(samples, 48, 20, 3, precision, precision % 7 + 1,
+                            arithmetic, scans);
+                    var decoded = JpegDecoder.decode(MediaSource.of(jpeg), wide).picture();
+                    for (var i = 0; i < 48 * 20; i++) {
+                        for (var c = 0; c < 3; c++) {
+                            var x = i % 48;
+                            var y = i / 48;
+                            var actual = switch (decoded) {
+                                case YuvPicture yuv -> (c == 0 ? yuv.y()[y * yuv.yStride() + x]
+                                        : (c == 1 ? yuv.u() : yuv.v())[y * yuv.uvStride() + x]) & 0xFF;
+                                case Yuv16Picture yuv -> (c == 0 ? yuv.y()[y * yuv.yStride() + x]
+                                        : (c == 1 ? yuv.u() : yuv.v())[y * yuv.uvStride() + x]) & 0xFFFF;
+                                default -> throw new AssertionError(decoded);
+                            };
+                            assertEquals(samples[i * 3 + c], actual, precision + " bits, arithmetic " + arithmetic);
+                        }
+                    }
+                }
+            }
+        }
+        var gray = SyntheticImages.losslessSamples(picture, 1, 8);
+        var five = new int[48 * 20 * 5];
+        for (var i = 0; i < five.length; i++) {
+            five[i] = gray[i / 5] ^ (i % 5) * 37 & 0xFF;
+        }
+        var jpeg = SyntheticImages.losslessScansJpeg(five, 48, 20, 5, 8, 6, true, new int[][]{{0, 1, 2, 3}, {4}});
+        var channels = (Channel8Picture) JpegDecoder.decode(MediaSource.of(jpeg),
+                ImageDecoderOptions.builder().keepChannels(true).build()).picture();
+        for (var i = 0; i < five.length; i++) {
+            assertEquals(five[i], channels.pixels()[i] & 0xFF);
         }
     }
 
@@ -95,15 +159,18 @@ class WorkloadsTest {
     }
 
     @Test
-    @DisplayName("synthetic MRW, CRW and X3F files are decodable files of their formats")
+    @DisplayName("synthetic MRW, CRW, CR3 and X3F files are decodable files of their formats")
     void syntheticVendorRaw() {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(64, 48, 1).getFirst(), false);
         var files = List.of(SyntheticVendorRaw.mrw(picture, true), SyntheticVendorRaw.mrw(picture, false),
                 SyntheticVendorRaw.crw(picture), SyntheticVendorRaw.x3f(picture, false),
-                SyntheticVendorRaw.x3f(picture, true));
-        var formats = List.of(RawFormat.MRW, RawFormat.MRW, RawFormat.CRW, RawFormat.X3F, RawFormat.X3F);
-        // the image areas: MRW 8 photosites smaller, CRW without its masked columns, X3F its active area
-        var sizes = new int[][]{{56, 40}, {56, 40}, {56, 44}, {60, 44}, {60, 44}};
+                SyntheticVendorRaw.x3f(picture, true), SyntheticCr3.cr3(picture, 0, 0x100),
+                SyntheticCr3.cr3(picture, 3, 0x100), SyntheticCr3.cr3(picture, 3, 0x200));
+        var formats = List.of(RawFormat.MRW, RawFormat.MRW, RawFormat.CRW, RawFormat.X3F, RawFormat.X3F, RawFormat.CR3,
+                RawFormat.CR3, RawFormat.CR3);
+        // the image areas: MRW 8 photosites smaller, CRW without its masked columns, X3F its active area, CR3 its
+        // crop 8 photosites in from every edge
+        var sizes = new int[][]{{56, 40}, {56, 40}, {56, 44}, {60, 44}, {60, 44}, {48, 32}, {48, 32}, {48, 32}};
         for (var index = 0; index < files.size(); index++) {
             var info = RawDecoder.info(MediaSource.of(files.get(index)));
             assertEquals(formats.get(index), info.format());
@@ -115,5 +182,67 @@ class WorkloadsTest {
         }
         assertArrayEquals(RawDecoder.decodeRaw(MediaSource.of(files.get(0))).samples(),
                 RawDecoder.decodeRaw(MediaSource.of(files.get(1))).samples());
+    }
+
+    @Test
+    @DisplayName("synthetic RAF files, compressed and of bare SuperCCD words, are decodable files of their format")
+    void syntheticRaf() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(800, 48, 1).getFirst(), false);
+        for (var variant = 0; variant < 4; variant++) {
+            var file = SyntheticRaf.compressed(picture, (variant & 1) != 0, variant >= 2);
+            var info = RawDecoder.info(MediaSource.of(file));
+            assertEquals(RawFormat.RAF, info.format());
+            assertTrue(info.isDecodable(), info.unsupportedFeature().orElse(""));
+            assertEquals(800, info.width());
+            assertEquals(48, info.height());
+            assertEquals(800 * 48, RawDecoder.decodeRaw(MediaSource.of(file)).samples().length);
+        }
+        var superCcd = SyntheticRaf.superCcd(SyntheticImages.rgba(SyntheticVideo.natural(64, 48, 1).getFirst(), false));
+        var info = RawDecoder.info(MediaSource.of(superCcd));
+        assertTrue(info.isDecodable(), info.unsupportedFeature().orElse(""));
+        assertTrue(info.cfaLayout().isStaggered());
+        assertEquals(com.github.auties00.smalt.image.Orientation.TRANSPOSE, info.orientation());
+        // the low-sensitivity photodiodes of the SuperCCD SR file are the second sample of each photosite
+        var sensor = RawDecoder.decodeRaw(MediaSource.of(superCcd));
+        assertEquals(2, sensor.channels());
+        assertEquals(sensor.width() * sensor.height() * 2, sensor.samples().length);
+        assertTrue(RawDecoder.decode(MediaSource.of(superCcd)).picture().width() > 0);
+    }
+
+    @Test
+    @DisplayName("a synthetic GPR file is a decodable DNG of VC-5 sensor data whose photosites follow the picture's green")
+    void syntheticGpr() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(256, 128, 1).getFirst(), false);
+        var file = SyntheticRaw.gpr(picture);
+        var info = RawDecoder.info(MediaSource.of(file));
+        assertEquals(RawFormat.DNG, info.format());
+        assertTrue(info.isDecodable(), info.unsupportedFeature().orElse(""));
+        assertEquals(256, info.width());
+        assertEquals(128, info.height());
+        var sensor = RawDecoder.decodeRaw(MediaSource.of(file));
+        // the mean photosite of each 16 by 16 block against the mean green of the picture there, which the lowpass
+        // band of the green sum carries
+        var decoded = new double[16 * 8];
+        var green = new double[16 * 8];
+        for (var y = 0; y < 128; y++) {
+            for (var x = 0; x < 256; x++) {
+                decoded[y / 16 * 16 + x / 16] += sensor.samples()[y * 256 + x] & 0xFFFF;
+                green[y / 16 * 16 + x / 16] += picture.pixels()[y * picture.stride() + x * 4 + 1] & 0xFF;
+            }
+        }
+        double meanA = 0, meanB = 0;
+        for (var index = 0; index < decoded.length; index++) {
+            meanA += decoded[index] / decoded.length;
+            meanB += green[index] / green.length;
+        }
+        double covariance = 0, varianceA = 0, varianceB = 0;
+        for (var index = 0; index < decoded.length; index++) {
+            covariance += (decoded[index] - meanA) * (green[index] - meanB);
+            varianceA += (decoded[index] - meanA) * (decoded[index] - meanA);
+            varianceB += (green[index] - meanB) * (green[index] - meanB);
+        }
+        var correlation = covariance / Math.sqrt(varianceA * varianceB);
+        assertTrue(correlation > 0.9, "the correlation of the photosites with the picture's green is " + correlation);
+        assertTrue(RawDecoder.decode(MediaSource.of(file)).picture().width() > 0);
     }
 }

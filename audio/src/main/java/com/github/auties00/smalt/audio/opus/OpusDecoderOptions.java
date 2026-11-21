@@ -25,10 +25,16 @@ public final class OpusDecoderOptions {
      */
     private final int channels;
 
+    /**
+     * The decoder complexity, from 0 to 10.
+     */
+    private final int complexity;
+
     private OpusDecoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.sampleRate = builder.sampleRate;
         this.channels = builder.channels == null ? 0 : builder.channels;
+        this.complexity = builder.complexity;
     }
 
     /**
@@ -93,12 +99,29 @@ public final class OpusDecoderOptions {
      * {@return the number of output channels, 1 or 2, or empty (the default) for the count the
      * track's {@code OpusHead} declares, which is stereo for a decoder created without a track}
      *
-     * <p>A count other than the stream's own is honored for mono and stereo streams (channel
-     * mapping family 0), which decode to it natively; a multichannel stream always decodes to its
-     * own layout.
+     * <p>A single mono or stereo stream decodes to another count natively; any other stream, a
+     * multichannel or ambisonic one included, is mixed down to {@link
+     * com.github.auties00.smalt.audio.ChannelLayout#MONO MONO} or {@link
+     * com.github.auties00.smalt.audio.ChannelLayout#STEREO STEREO} by the matrices the {@link OpusDecoder}
+     * class describes.
      */
     public OptionalInt channels() {
         return channels == 0 ? OptionalInt.empty() : OptionalInt.of(channels);
+    }
+
+    /**
+     * {@return the decoder complexity, from 0 to 10; 0 by default}
+     *
+     * <p>From 0 to 4 the decoder conceals lost packets with the classic pitch-based and noise-based concealment of
+     * RFC 6716. From 5 on it runs the neural networks of libopus 1.5: lost speech is concealed by the deep PLC, which
+     * predicts the features of the missing frames and synthesizes them with the FARGAN vocoder, and the Deep
+     * REDundancy of later packets can rebuild lost ones ({@link OpusDecoder#recover(OpusDred, int, float[], int,
+     * int)}). At 6 the LACE enhancer, and from 7 the larger NoLACE enhancer, improve 20 ms frames of wideband SILK
+     * speech. Each step costs more processing time than the one before; the networks load when a decoder first
+     * needs them, a few megabytes in all.
+     */
+    public int complexity() {
+        return complexity;
     }
 
     @Override
@@ -106,19 +129,21 @@ public final class OpusDecoderOptions {
         return object instanceof OpusDecoderOptions that
                 && limits.equals(that.limits)
                 && sampleRate == that.sampleRate
-                && channels == that.channels;
+                && channels == that.channels
+                && complexity == that.complexity;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, sampleRate, channels);
+        return Objects.hash(limits, sampleRate, channels, complexity);
     }
 
     @Override
     public String toString() {
         return "OpusDecoderOptions[limits=" + limits
                 + ", sampleRate=" + sampleRate
-                + ", channels=" + (channels == 0 ? "source" : String.valueOf(channels)) + "]";
+                + ", channels=" + (channels == 0 ? "source" : String.valueOf(channels))
+                + ", complexity=" + complexity + "]";
     }
 
     /**
@@ -137,6 +162,11 @@ public final class OpusDecoderOptions {
          */
         private Integer channels;
 
+        /**
+         * The decoder complexity, from 0 to 10.
+         */
+        private int complexity;
+
         private Builder() {
             this.limits = MediaLimits.DEFAULT;
             this.sampleRate = 48_000;
@@ -146,6 +176,7 @@ public final class OpusDecoderOptions {
             this.limits = options.limits;
             this.sampleRate = options.sampleRate;
             this.channels = options.channels == 0 ? null : options.channels;
+            this.complexity = options.complexity;
         }
 
         /**
@@ -182,6 +213,17 @@ public final class OpusDecoderOptions {
         }
 
         /**
+         * Sets the decoder complexity; see {@link OpusDecoderOptions#complexity()}.
+         *
+         * @param complexity the value
+         * @return this builder
+         */
+        public Builder complexity(int complexity) {
+            this.complexity = complexity;
+            return this;
+        }
+
+        /**
          * Selects the channel count the source declares; see {@link OpusDecoderOptions#channels()}.
          *
          * @return this builder
@@ -196,13 +238,14 @@ public final class OpusDecoderOptions {
          *
          * @return the options
          * @throws IllegalArgumentException if the sampling rate is not 8000, 12000, 16000, 24000 or
-         * 48000 Hz, or the channel count is set to a value other than 1 or 2
+         * 48000 Hz, the channel count is set to a value other than 1 or 2, or the complexity is outside 0 to 10
          */
         public OpusDecoderOptions build() {
             checkSampleRate("output sample rate", sampleRate);
             if (channels != null) {
                 Checks.inRange("channel count", channels, 1, 2);
             }
+            Checks.inRange("complexity", complexity, 0, 10);
             return new OpusDecoderOptions(this);
         }
     }

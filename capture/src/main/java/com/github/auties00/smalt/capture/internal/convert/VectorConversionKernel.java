@@ -94,7 +94,7 @@ public final class VectorConversionKernel implements ConversionKernel {
      */
     private static final int SLACK = Math.max(0, B8.length() - L);
 
-    private final ScalarConversionKernel scalar = new ScalarConversionKernel();
+    private static final ScalarConversionKernel SCALAR = new ScalarConversionKernel();
 
     private VectorConversionKernel() {
     }
@@ -143,7 +143,7 @@ public final class VectorConversionKernel implements ConversionKernel {
         var c = coefficients;
         rgbToLumaRow(src, off + first, y, yOff, end, weight(layout, first, c.yr, c.yg, c.yb),
                 weight(layout, first + 1, c.yr, c.yg, c.yb), weight(layout, first + 2, c.yr, c.yg, c.yb), c.yBias);
-        scalar.rgbToLumaRange(src, off, layout, coefficients, y, yOff, end, width);
+        SCALAR.rgbToLumaRange(src, off, layout, coefficients, y, yOff, end, width);
     }
 
     /**
@@ -178,7 +178,7 @@ public final class VectorConversionKernel implements ConversionKernel {
                 weight(layout, first, c.ur, c.ug, c.ub), weight(layout, first + 1, c.ur, c.ug, c.ub),
                 weight(layout, first + 2, c.ur, c.ug, c.ub), weight(layout, first, c.vr, c.vg, c.vb),
                 weight(layout, first + 1, c.vr, c.vg, c.vb), weight(layout, first + 2, c.vr, c.vg, c.vb), c.cBias);
-        scalar.rgbToChromaRange(src, off0, off1, layout, coefficients, u, v, cOff, end, pairs);
+        SCALAR.rgbToChromaRange(src, off0, off1, layout, coefficients, u, v, cOff, end, pairs);
     }
 
     /**
@@ -257,7 +257,7 @@ public final class VectorConversionKernel implements ConversionKernel {
             HALF_BYTE_VECTOR.cast(SHORT_VECTOR.cast(samples.lanewise(VectorOperators.LSHR, shift))
                     .convertShape(VectorOperators.S2B, BH, 0)).intoArray(y, yOff + x);
         }
-        scalar.packedLumaRange(src, off, lumaIndex, y, yOff, end, width);
+        SCALAR.packedLumaRange(src, off, lumaIndex, y, yOff, end, width);
     }
 
     @Override
@@ -265,7 +265,7 @@ public final class VectorConversionKernel implements ConversionKernel {
                              byte[] u, byte[] v, int cOff) {
         var end = vectorEnd(pairs, L, SLACK);
         packedChromaRow(src, off0, off1, u, v, cOff, end, 8 * cbIndex, 8 * crIndex);
-        scalar.packedChromaRange(src, off0, off1, cbIndex, crIndex, u, v, cOff, end, pairs);
+        SCALAR.packedChromaRange(src, off0, off1, cbIndex, crIndex, u, v, cOff, end, pairs);
     }
 
     /**
@@ -300,7 +300,7 @@ public final class VectorConversionKernel implements ConversionKernel {
             HALF_BYTE_VECTOR.cast(SHORT_VECTOR.cast(pairs.lanewise(VectorOperators.LSHR, 8))
                     .convertShape(VectorOperators.S2B, BH, 0)).intoArray(second, dOff + k);
         }
-        scalar.deinterleaveRange(src, off, first, second, dOff, end, count);
+        SCALAR.deinterleaveRange(src, off, first, second, dOff, end, count);
     }
 
     @Override
@@ -315,6 +315,6 @@ public final class VectorConversionKernel implements ConversionKernel {
                     .lanewise(VectorOperators.SUB, BYTE_VECTOR.cast(upper.lanewise(VectorOperators.XOR, lower)).lanewise(VectorOperators.LSHR, 1)))
                     .intoArray(dst, dOff + i);
         }
-        scalar.averageRowsRange(a, aOff, b, bOff, dst, dOff, end, count);
+        SCALAR.averageRowsRange(a, aOff, b, bOff, dst, dOff, end, count);
     }
 }

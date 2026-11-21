@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.raw.RawSamples;
 import com.github.auties00.smalt.testkit.Conformance;
 import org.junit.jupiter.api.BeforeAll;
@@ -15,7 +16,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Re-runs {@link PanasonicDerivation} on CC0 witness samples against Adobe DNG Converter as a
@@ -61,7 +61,7 @@ class PanasonicDerivationTest {
     }
 
     private List<PanasonicDerivation.Sample> version4() {
-        assumeTrue(version4 != null, "no oracle files in " + ORACLE + "; run tools/testdata/raw-oracle.py");
+        Skip.unless(version4 != null, "data:raw-oracle", "no oracle files in " + ORACLE + "; run tools/testdata/raw-oracle.py");
         return version4;
     }
 
@@ -69,9 +69,9 @@ class PanasonicDerivationTest {
     @DisplayName("whole 16-byte blocks of 14 (version 4) or 9 (version 5) photosites fill the data")
     void rate() {
         for (var sample : version4()) {
-            assertEquals(PanasonicDecoder.group(4), PanasonicDerivation.photositesPerBlock(sample), sample.name());
+            assertEquals(PanasonicDecoder.group(4, 12), PanasonicDerivation.photositesPerBlock(sample), sample.name());
         }
-        assertEquals(PanasonicDecoder.group(5), PanasonicDerivation.photositesPerBlock(version5));
+        assertEquals(PanasonicDecoder.group(5, 14), PanasonicDerivation.photositesPerBlock(version5));
     }
 
     @Test
