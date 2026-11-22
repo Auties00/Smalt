@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794748046111,
+  "lastUpdate": 1795354193990,
   "repoUrl": "https://github.com/Auties00/Smalt",
   "entries": {
     "Smalt A/B head (hosted runner, ns per operation)": [
@@ -930,6 +930,328 @@ window.BENCHMARK_DATA = {
             "value": 243794908.681,
             "unit": "ns/op",
             "extra": "runner: AMD EPYC 7763 64-Core Processor\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.3%\n95% interval: +0.2% to +3.9%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Alessandro Autiero",
+            "username": "Auties00",
+            "email": "alautiero@gmail.com"
+          },
+          "committer": {
+            "name": "Alessandro Autiero",
+            "username": "Auties00",
+            "email": "alautiero@gmail.com"
+          },
+          "id": "11011c18d668a68ef3e8621d28b7bf09ccc76847",
+          "message": "Complete the feature set, harden the codecs and rewrite the README\n\nImplements the formats, codec paths and processing features that were\nmissing or marked TODO across every module, closes the gaps found in the\nfollow-up waves, and adds conformance, fuzz and oracle tests run on CI.\nThe README is split into a short root page and one page per module.",
+          "timestamp": "2026-11-21T03:53:44Z",
+          "url": "https://github.com/Auties00/Smalt/commit/11011c18d668a68ef3e8621d28b7bf09ccc76847"
+        },
+        "date": 1795354193104,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "com.github.auties00.smalt.audio.opus.internal.silk.SilkEncoderBenchmark.encode60s config=voiceNote",
+            "value": 400451549.042,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.8%\n95% interval: +0.2% to +2.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.audio.voice.VoiceProcessorBenchmark.frame kernels=vector scenario=double talk",
+            "value": 56423.762,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.5%\n95% interval: +0.0% to +2.9%"
+          },
+          {
+            "name": "com.github.auties00.smalt.capture.internal.convert.ConversionBenchmark.bgrx1080p kernel=vector",
+            "value": 999835.529,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -7.6%\n95% interval: -8.1% to -7.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.capture.internal.convert.ConversionBenchmark.nv12Chroma720p kernel=vector",
+            "value": 13481.064,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -22.0%\n95% interval: -25.4% to -17.1%"
+          },
+          {
+            "name": "com.github.auties00.smalt.capture.internal.convert.ConversionBenchmark.yuy2720p kernel=vector",
+            "value": 119525.069,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.6%\n95% interval: -4.1% to +5.1%"
+          },
+          {
+            "name": "com.github.auties00.smalt.image.color.ColorTransformBenchmark.transform transform=p3",
+            "value": 49147187.734,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.2%\n95% interval: -1.0% to +1.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.image.color.ColorTransformBenchmark.transform transform=pq-16",
+            "value": 581034509.125,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +12.9%\n95% interval: +11.5% to +18.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=aacenc",
+            "value": 41045977.805,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +3.0%\n95% interval: +2.4% to +3.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=ac3",
+            "value": 29690370.647,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.6%\n95% interval: -0.3% to +1.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=alacenc",
+            "value": 23668959.634,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=amrnb",
+            "value": 19622271.961,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +27.6%\n95% interval: +26.9% to +28.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=amrwb",
+            "value": 47910616.192,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.1%\n95% interval: -1.9% to +1.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=av1enc:speed=FASTER:threads=1",
+            "value": 253775886.938,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.8%\n95% interval: -4.1% to +4.7%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=capture",
+            "value": 3041922.18,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -3.3%\n95% interval: -3.8% to +0.9%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=convert",
+            "value": 3553633.184,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.1%\n95% interval: -0.6% to +0.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=dnxhddec",
+            "value": 1538576.23,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.1%\n95% interval: -0.6% to +0.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=dnxhdenc",
+            "value": 1591383.421,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.1%\n95% interval: -1.6% to +1.9%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=dvrec:threads=1",
+            "value": 58731985.926,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=effects",
+            "value": 12767445.485,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.8%\n95% interval: -0.5% to +4.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=flacenc",
+            "value": 7003214.119,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +2.0%\n95% interval: -1.3% to +4.0%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=gifdec",
+            "value": 4733915.841,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.4%\n95% interval: -3.2% to +4.1%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h263enc:threads=1",
+            "value": 148053681.857,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264dec:threads=1",
+            "value": 32854416.742,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +2.6%\n95% interval: +2.2% to +3.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264dec:threads=2",
+            "value": 19645826.025,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.8%\n95% interval: -0.1% to +3.1%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264enc:rt=true:threads=2",
+            "value": 57168856.474,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.8%\n95% interval: -0.7% to +2.9%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264enc:speed=BALANCED:profile=main:threads=1",
+            "value": 153769462.982,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.6%\n95% interval: -1.3% to +2.5%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=h264enc:speed=FASTEST:profile=baseline:threads=1",
+            "value": 86776494.271,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.7%\n95% interval: -1.1% to +1.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=heaac",
+            "value": 5266237.671,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +52.6%\n95% interval: +50.4% to +54.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=heaacenc",
+            "value": 51501764.812,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=jpegsend",
+            "value": 17923118.156,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.6%\n95% interval: -1.7% to +2.3%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=mp3enc",
+            "value": 51202484.7,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +3.6%\n95% interval: +0.2% to +4.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=mpeg4dec:threads=1",
+            "value": 15193593.97,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=mpeg4enc:threads=1",
+            "value": 307279670.812,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=opuscall",
+            "value": 67884765.475,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.6%\n95% interval: -0.0% to +1.3%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=opusvoice",
+            "value": 59799189.419,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.9%\n95% interval: -0.4% to +2.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=pngdec",
+            "value": 33839528.087,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.1%\n95% interval: -0.9% to +0.5%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=proresdec",
+            "value": 2176070.563,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.3%\n95% interval: -0.7% to +2.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=proresenc",
+            "value": 1871022.01,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.9%\n95% interval: -5.2% to +6.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=resample",
+            "value": 4287124.625,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +10.6%\n95% interval: +6.5% to +12.4%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=voice",
+            "value": 33754539.783,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.5%\n95% interval: +1.0% to +2.6%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=vp8enc:speed=6:threads=1",
+            "value": 78360319.106,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +1.5%\n95% interval: -0.3% to +2.2%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=vp8enc:speed=8:threads=2:resilient=false",
+            "value": 60638188.903,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.8%\n95% interval: -2.0% to +3.4%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=vp9enc:speed=6:threads=1",
+            "value": 220600651.95,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): -0.6%\n95% interval: -2.4% to +1.3%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=webpanim",
+            "value": 457243600.208,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.8%\n95% interval: -0.2% to +1.5%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=webpdec",
+            "value": 4785632.681,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.2%\n95% interval: -0.6% to +2.3%"
+          },
+          {
+            "name": "com.github.auties00.smalt.jit.JitEndToEndBenchmark.round spec=webpenc",
+            "value": 169481590.542,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +7.8%\n95% interval: +4.9% to +17.3%"
+          },
+          {
+            "name": "com.github.auties00.smalt.video.h264.H264DecoderBenchmark.decode stream=720p-baseline-cavlc threads=1",
+            "value": 836277586.375,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +4.0%\n95% interval: +3.5% to +4.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.video.vp8.Vp8RtEncodeBenchmark.encodeFrame size=720 speed=6 threads=1",
+            "value": 7734741.943,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.9%\n95% interval: -0.6% to +2.1%"
+          },
+          {
+            "name": "com.github.auties00.smalt.video.vp9.internal.Vp9RtEncodeBenchmark.encodeFrame size=720 speed=6 threads=1",
+            "value": 28598247.165,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +2.8%\n95% interval: -4.5% to +7.8%"
+          },
+          {
+            "name": "com.github.auties00.smalt.video.vp9.internal.Vp9RtEncodeBenchmark.encodeFrameScalar size=720 speed=6 threads=1",
+            "value": 163302250.167,
+            "unit": "ns/op",
+            "extra": "runner: Intel(R) Xeon(R) 6975P-C\nforks: 5\nchange against 6d37e75bdddf (last commit at least a week old): +0.4%\n95% interval: -8.8% to +9.2%"
           }
         ]
       }
