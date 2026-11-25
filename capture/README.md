@@ -1,26 +1,17 @@
-<div align="center">
-
 # smalt-capture
 
-**Cameras, screens, windows, microphones and speakers**
+> Camera, screen, window and microphone capture, and speaker playback.
 
-![Artifact](https://img.shields.io/badge/artifact-smalt--capture-2f6fe6?style=flat-square&labelColor=0b2a6f)
-![Module](https://img.shields.io/badge/module-com.github.auties00.smalt.capture-2f6fe6?style=flat-square&labelColor=0b2a6f)
+[← Back to Smalt](../README.md) · [Javadoc](https://javadoc.io/doc/com.github.auties00/smalt-capture)
 
-[Smalt](../README.md) | [core](../core/README.md) | [image](../image/README.md) | [audio](../audio/README.md) | [video](../video/README.md) | [mpeg](../mpeg/README.md) | **capture** | [raw](../raw/README.md) | [desktop](../desktop/README.md) | [aot](../aot/README.md) | [bom](../bom/README.md)
+## At a glance
 
-</div>
-
-`smalt-capture` reads cameras, screens, windows and microphones and plays to speakers. It calls the operating
-system through the Foreign Function and Memory API, so there is still no native library to ship. It depends on
-[`smalt-core`](../core/README.md) and [`smalt-image`](../image/README.md).
-
-**Contents:** [Install](#install) | [Guide](#guide) | [Backends](#backends) | [Known limits](#known-limits)
-
-> [!IMPORTANT]
-> This is the only Smalt artifact that needs a JVM flag:
-> `--enable-native-access=com.github.auties00.smalt.capture` on the module path, or
-> `--enable-native-access=ALL-UNNAMED` on the class path.
+- `VideoDevices` lists and opens cameras, screens and application windows. Every frame is an 8-bit YUV 4:2:0 `YuvPicture`.
+- `AudioDevices` records microphones, plays to speakers, and records what a speaker plays (loopback).
+- Adjust 15 camera controls, such as exposure, focus, zoom and white balance, and listen for devices coming and going.
+- Runs on Windows 10+, macOS 12+ (audio from 11) and Linux on x86-64, AArch64 or RISC-V 64. No native library is bundled.
+- Depends on [smalt-core](../core/README.md#at-a-glance), which supplies `YuvPicture` and `AudioBuffer`, and [smalt-image](../image/README.md#at-a-glance), which decodes MJPEG cameras.
+- The only Smalt module that calls native code: launch with `--enable-native-access=com.github.auties00.smalt.capture` (see [Install](#install)).
 
 ## Install
 
@@ -31,154 +22,395 @@ system through the Foreign Function and Memory API, so there is still no native 
 </dependency>
 ```
 
-The version comes from the [BOM](../bom/README.md); Gradle coordinates and JVM flags are in the
-[root README](../README.md#install).
+The version comes from the BOM: see [Install](../README.md#install) for the BOM import and Gradle.
+On the module path, add `requires com.github.auties00.smalt.capture;` to your `module-info.java`.
 
-## Guide
+Launch with `--enable-native-access=com.github.auties00.smalt.capture` on the module path, or `--enable-native-access=ALL-UNNAMED` on the class path.
+The module reaches the OS through Java's Foreign Function & Memory API (`java.lang.foreign`).
 
-### Capture the camera
+- Without the flag, the JVM prints a warning once and capture still works.
+- With `--illegal-native-access=deny`, Windows reports no devices; device calls throw `MediaException.Io` on macOS and `IllegalCallerException` on Linux.
+
+### Before you run
+
+| OS | What you need |
+|---|---|
+| Windows | N editions: the Media Feature Pack, or there are no cameras |
+| macOS | Camera and Screen Recording permission for the app that launches Java |
+| macOS loopback | macOS 14.2+ and the System Audio Recording permission |
+| Linux | The client libraries below; a missing one turns off only its feature |
+
+<details>
+<summary><b>Linux libraries</b></summary>
+
+| Library | Needed for |
+|---|---|
+| `libX11.so.6` | X11 screens and windows |
+| `libXext.so.6` | Faster X11 screen reads (MIT-SHM) |
+| `libXrandr.so.2` | X11 monitors |
+| `libXcomposite.so.1` | Windows covered by other windows |
+| `libXfixes.so.3` | The pointer in X11 captures |
+| `libpipewire-0.3.so.0` | Wayland screens |
+| `libasound.so.2` | ALSA audio devices |
+| `libpulse.so.0`, `libpulse-simple.so.0` | PulseAudio or PipeWire devices, and loopback |
+
+</details>
+
+## Examples
+
+### List cameras, screens and microphones
+
+Each device has an `id()` to open it later and a `name()` to show.
+
+```java
+for (var camera : VideoDevices.cameras()) {
+    System.out.println("camera: " + camera.name());
+}
+for (var screen : VideoDevices.screens()) {
+    System.out.println("screen: " + screen.name() + " " + screen.width() + "x" + screen.height());
+}
+for (var microphone : AudioDevices.inputs()) {
+    System.out.println("microphone: " + microphone.name());
+}
+```
+
+### Take a photo with the default camera
+
+`read()` blocks until the next frame and returns null once the device stops.
 
 ```java
 var camera = VideoDevices.defaultCamera().orElseThrow();
 try (var session = VideoDevices.openCapture(camera)) {
-    var frame = session.read(); // blocks until the next frame
-    var picture = frame.picture();
+    var frame = Objects.requireNonNull(session.read(), "the camera stopped");
+    Files.write(Path.of("photo.png"), Images.encode(frame.picture(), ImageFormat.PNG));
 }
 ```
 
-> [!IMPORTANT]
-> Every operation is a plain blocking call: there is no `CompletableFuture` anywhere in the
-> API. Run long work on your own (virtual) threads; Smalt parallelizes each operation internally on one
-> bounded pool, sized by the `smalt.threads` system property (`MediaRuntime.parallelism()` reports it). Options
-> that take a thread count use `0` for that shared pool and `1` for the calling thread only.
+### Take a screenshot
 
-### Capture a window or a part of a screen
+Open the primary screen at 1 frame per second and keep the first frame.
 
 ```java
-var window = VideoDevices.windows().getFirst();            // front to back
+var screen = VideoDevices.primaryScreen().orElseThrow();
+try (var session = VideoDevices.openCapture(screen, 1)) {
+    var frame = Objects.requireNonNull(session.read(), "the screen share ended");
+    Files.write(Path.of("screen.png"), Images.encode(frame.picture(), ImageFormat.PNG));
+}
+```
+
+### Capture part of a window
+
+`ScreenCaptureOptions` picks the frame rate, a region in window pixels, and whether to draw the pointer.
+
+```java
+var window = VideoDevices.windows().stream().findFirst().orElseThrow(); // front to back
 var options = ScreenCaptureOptions.builder()
         .frameRate(30)
-        .region(0, 0, window.width() / 2, window.height())  // the left half, in the window's pixels
-        .cursor(false)                                      // leave the pointer out
+        .region(0, 0, Math.max(2, window.width() / 2), window.height())
+        .cursor(false)
         .build();
 try (var session = VideoDevices.openCapture(window, options)) {
-    var frame = session.read();
-}
-```
-
-A camera session also adjusts the camera (`session.controls()`: exposure in microseconds, white balance in
-kelvin, power-line frequency in hertz, focus, zoom, pan, tilt and the picture controls, each with its range and
-automatic mode), and `VideoDevices.addListener` reports cameras and screens as they are plugged in, removed or
-rearranged, on a thread of its own.
-
-### Capture the microphone and play to the speaker
-
-```java
-var options = AudioStreamOptions.forVoice(); // 16 kHz mono, 10 ms periods
-try (var microphone = AudioDevices.openCapture(AudioDevices.defaultInput().orElseThrow(), options);
-     var speaker = AudioDevices.openPlayback(AudioDevices.defaultOutput().orElseThrow(), options)) {
-    var frame = new short[160];
-    while (microphone.read(frame, 0, 160) == 160) { // blocks until 10 ms were captured
-        speaker.write(frame, 0, 160);              // blocks only while the queue is full
+    for (int i = 0; i < 90; i++) { // 3 seconds
+        var frame = session.read();
+        if (frame == null) break; // the window closed
+        if (i % 30 != 0) continue;
+        Files.write(Path.of("window-" + i + ".png"), Images.encode(frame.picture(), ImageFormat.PNG));
     }
 }
 ```
 
-`AudioDevices` lists inputs and outputs (id, name, default flag, native formats), opens them in the shared
-or exclusive mode at any rate and channel count, captures what an output plays (`openLoopback`, Windows, macOS 14.2 and Linux), and
-reports new default devices and devices plugged in or removed to an `AudioDeviceListener`. Each session runs
-its own high-priority device thread; `read` and `write` move float or 16-bit samples through a bounded queue,
-and `delayMicros()` on both sides gives the stream delay of an echo canceller such as `VoiceProcessor`. An
-unplugged device fails the next `read` or `write` with `MediaException.Io`.
+### Set a camera mode and white balance
 
-## Backends
+Pick one of the camera's own modes: opening a mode it does not list throws `MediaException.Unsupported`.
 
-What each operating system provides, in package `capture` of `com.github.auties00.smalt`:
+```java
+var camera = VideoDevices.defaultCamera().orElseThrow();
+var mode = camera.modes().stream()
+        .filter(m -> m.height() == 720)
+        .findFirst()
+        .orElseThrow();
+try (var session = VideoDevices.openCapture(camera, mode)) {
+    var controls = session.controls();
+    controls.capability(CameraControl.WHITE_BALANCE) // macOS: automatic or locked only, no range
+            .flatMap(CameraControls.Capability::range)
+            .filter(range -> range.accepts(5000))
+            .ifPresent(range -> controls.set(CameraControl.WHITE_BALANCE, 5000)); // kelvin
+}
+```
 
-- **Cameras, screens and windows**
-  - *Artifact:* `smalt-capture`
-  - *Package:* `capture`
-  - *Backends:* Windows: Media Foundation (camera controls through the source's `IAMCameraControl` and `IAMVideoProcAmp`), DXGI desktop duplication or GDI (screens), Windows Graphics Capture or `PrintWindow` (windows), configuration manager notifications of cameras and monitors. macOS: AVFoundation (focus, exposure and white balance modes, zoom), ScreenCaptureKit (screens and windows; `CGDisplayCreateImage` screens before 12.3). Linux: V4L2 single-planar and multi-planar cameras (with their controls; `/dev` watched for cameras) in every field order (interlaced, sequential and alternating fields woven, single fields line-doubled) and in planar, semi-planar and packed 4:2:0, 4:2:2 and 4:4:4 Y'CbCr, 16-, 24- and 32-bit R'G'B', 8- to 16-bit luma and Motion-JPEG; in a Wayland session, screens (the compositor's outputs) through the `xdg-desktop-portal` screen cast portal and PipeWire, in shared memory or linear DMA-BUFs, the pointer embedded by the compositor or drawn from the stream's metadata; X11 with MIT-SHM, Composite and XFixes (screens and windows of TrueColor visuals of 16, 24 or 32 bits per pixel, pointer). Screen and window regions, the pointer drawn or left out (`ScreenCaptureOptions`), exposure, focus, zoom, white balance, power-line frequency and the picture controls of a camera (`CameraControls`), and a listener of cameras and screens plugged in, removed or rearranged (`VideoDevices.addListener`). Called with FFM, so it needs `--enable-native-access=com.github.auties00.smalt.capture`.
-- **Microphones and speakers**
-  - *Artifact:* `smalt-capture`
-  - *Package:* `capture.audio`
-  - *Backends:* Windows: WASAPI (shared mode with the engine's PCM converter and `IAudioClient3` short periods, exclusive mode, loopback of an output, endpoint notifications). macOS: CoreAudio HAL output unit (shared mode, exclusive mode through the device's hog mode, loopback of an output through a process tap from macOS 14.2). Linux: ALSA, whose `default` device reaches PulseAudio or PipeWire (shared mode; exclusive mode opens a device without software resampling), plus the sinks and sources of a PulseAudio or PipeWire (`pipewire-pulse`) sound server, whose defaults are then the default devices; loopback of an output through the monitor source of the sink it plays to; changes reported as they happen through the server's subscription and `/dev/snd`. Float or 16-bit samples, any rate and channel count in the shared mode, capture and playback delays for echo cancellation. Run on the CI runners of all three systems against loopback devices.
+### Record the microphone to WAV
 
-On Windows, the first capture call that joins COM's multithreaded apartment keeps that apartment, and the
-libraries it loaded, until the process exits (`CoIncrementMTAUsage`): audio engine and capture libraries keep
-worker threads running after a stream is released, and unloading them under those threads would crash the
-process. A thread of the application that never initialized COM then belongs to the implicit multithreaded
-apartment.
+Capture sessions hand out core `AudioBuffer`s, so core's `AudioWriter` can store them directly.
+
+```java
+var microphone = AudioDevices.defaultInput().orElseThrow();
+try (var session = AudioDevices.openCapture(microphone);
+     var output = MediaSink.of(Path.of("memo.wav"));
+     var writer = AudioWriter.open(output, OutputContainer.WAV,
+             AudioWriterOptions.of(session.sampleRate(), session.layout()))) {
+    long limit = session.sampleRate() * 5L; // 5 seconds
+    long frames = 0;
+    for (var chunk = session.read(); chunk != null && frames < limit; chunk = session.read()) {
+        writer.write(chunk);
+        frames += chunk.frames();
+    }
+    writer.finish();
+}
+```
+
+### Record what the speakers play
+
+A loopback session captures the mix of every app on an output; its reads wait while nothing plays.
+
+```java
+var speakers = AudioDevices.defaultOutput().orElseThrow();
+try (var loopback = AudioDevices.openLoopback(speakers);
+     var output = MediaSink.of(Path.of("system.wav"));
+     var writer = AudioWriter.open(output, OutputContainer.WAV,
+             AudioWriterOptions.of(loopback.sampleRate(), loopback.layout()))) {
+    long limit = loopback.sampleRate() * 5L; // 5 seconds of sound
+    long frames = 0;
+    for (var chunk = loopback.read(); chunk != null && frames < limit; chunk = loopback.read()) {
+        writer.write(chunk);
+        frames += chunk.frames();
+    }
+    writer.finish();
+}
+```
+
+### Play a tone to the speakers
+
+`write` takes interleaved samples in [-1, 1] and blocks only while the queue is full; `drain()` waits for playback.
+
+```java
+var speaker = AudioDevices.defaultOutput().orElseThrow();
+try (var session = AudioDevices.openPlayback(speaker)) {
+    int rate = session.sampleRate(), channels = session.channels();
+    var samples = new float[rate * channels]; // 1 second
+    for (int i = 0; i < rate; i++) {
+        var value = (float) (0.2 * StrictMath.sin(2 * StrictMath.PI * 440 * i / rate));
+        Arrays.fill(samples, i * channels, (i + 1) * channels, value);
+    }
+    session.write(samples, 0, rate);
+    session.drain();
+}
+```
+
+## Formats
+
+Video sessions always deliver 8-bit YUV 4:2:0 pictures with even sizes; audio sessions read and write float or 16-bit PCM.
+
+| Device | Capture | Playback | Notes |
+|---|:-:|:-:|---|
+| Camera | ✅ | ➖ | Size and frame rate from a `CaptureMode`; 15 controls |
+| Screen | ✅ | ➖ | Integer or fractional rate, region, pointer on or off |
+| Application window | ✅ | ➖ | Region; keeps capturing when moved; X11 only on Linux |
+| Microphone | ✅ | ➖ | 1000-768000 Hz, 1-32 channels; converted in shared mode |
+| Speaker | ➖ | ✅ | Blocking writes; `drain()` waits for playback |
+| Speaker loopback | ✅ | ➖ | Mix of every app; shared mode only |
+
+✅ supported · ❌ not supported · ➖ not applicable
+
+Shared mode mixes with other apps; exclusive mode takes the device, at one of its `formats()` only.
+
+<details>
+<summary><b>Video sessions in detail</b></summary>
+
+- **Frames:** `read()` returns a `Frame(picture, timestampMicros)`, or null once the session ends.
+- **Colors:** cameras that send YUV keep their reported matrix and range; RGB sources become BT.709 limited range.
+- **Camera modes:** `camera.modes()` lists width, height and a `Rational` frame rate, largest first; the list may be empty.
+- **Screen rate:** `openCapture(screen, fps)` or `ScreenCaptureOptions`; the default is 30 fps, the cap 1000 fps.
+- **Repeats:** when nothing changes on screen, the last picture comes again with a new timestamp.
+- **Region:** `ScreenCaptureOptions.region(x, y, width, height)`, in screen or window pixels, cropped to even sizes.
+- **Window resizes:** the size is fixed at open; later sizes are rescaled to it.
+- **Slow readers:** a reader that falls behind gets the newest frame and skips older ones.
+- **Exact conversion:** RGB sources convert to 4:2:0 bit for bit as core's `ImageOps.toYuv` does.
+
+</details>
+
+<details>
+<summary><b>Camera controls</b></summary>
+
+`session.controls()` reports each control's range, step or discrete values, default, and whether it has an automatic mode.
+
+| Control | Unit |
+|---|---|
+| `BRIGHTNESS`, `CONTRAST`, `HUE`, `SATURATION`, `SHARPNESS`, `GAMMA`, `GAIN`, `BACKLIGHT_COMPENSATION`, `FOCUS`, `ZOOM` | Device units |
+| `WHITE_BALANCE` | Kelvin |
+| `POWER_LINE_FREQUENCY` | 0, 50 or 60 Hz |
+| `EXPOSURE` | Microseconds |
+| `PAN`, `TILT` | Arc seconds |
+
+- `set(control, value)` sets a manual value; `setAutomatic(control, true)` hands it back to the camera.
+- Which controls exist depends on the OS and the camera: see [Known limits](#known-limits).
+
+</details>
+
+<details>
+<summary><b>Audio sessions in detail</b></summary>
+
+| Preset | Rate and channels | Period | Device latency | Queue |
+|---|---|---|---|---|
+| `AudioStreamOptions.defaults()` | The device's | 10 ms | 40 ms | 200 ms |
+| `AudioStreamOptions.forRealtime()` | The device's | 10 ms | 20 ms | 60 ms |
+| `AudioStreamOptions.forVoice()` | 16 kHz mono | 10 ms | 20 ms | 60 ms |
+
+- **Device formats:** `device.formats()` lists rate, channels and encoding (`PCM_S16`, `PCM_S24`, `PCM_S32`, `FLOAT32`), the current one first.
+- **Reads:** `read()` returns one period as a planar float `AudioBuffer`; `read(float[]...)` and `read(short[]...)` fill interleaved arrays.
+- **Writes:** `write(AudioBuffer)`, `write(float[]...)` or `write(short[]...)`; a write blocks only while the queue is full.
+- **Builder:** set `sampleRate`, `channels`, `period`, `latency`, `bufferDuration` and `shareMode`; durations go from 1 ms to 10 s.
+- **Timing:** `timestampMicros()` and `delayMicros()` on capture, `delayMicros()` on playback, for echo cancellation.
+- **Loss:** a full capture queue drops the oldest audio (`overruns()`); an empty playback queue plays silence (`underruns()`).
+- **Unplug:** the next read, write or drain throws `MediaException.Io` once; then reads report the end and writes discard audio.
+
+</details>
 
 ## Known limits
 
-> [!WARNING]
-> Capture depends on the operating system, its version and the permissions the user grants. Open an entry
-> to see what a platform cannot do.
+- **Other systems:** every list is empty and every `openCapture` throws `MediaException.Unsupported`.
+- **Pixel format:** you cannot choose the format a camera sends; it is always converted to 4:2:0.
+- **Frame lifetime:** a frame's planes are reused, so encode or process it before the next `read()` or `close()`.
+- **Threads:** read a session from one thread; `close()` from any thread unblocks a pending `read()`.
+- **End of stream:** `read()` returns null when the session closes, the device stops, the window closes or a Wayland share is revoked.
+- **Region:** must overlap the source, else `IllegalArgumentException`; an area under 2x2 throws `Unsupported`.
+- **Listing is slow:** `cameras()` asks every camera for its modes; `defaultCamera()` and `camera(id)` ask only one.
+- **Controls persist:** a control change applies to the device, so it can outlive the session and affect other apps.
+- **Loopback:** shared mode only, on every OS.
+- **Silent loopback:** reads wait while the output plays nothing; macOS and Linux may deliver silence while the device stays running.
 
 <details>
-<summary><b>Tested devices</b></summary>
+<summary><b>Windows (OS) limits</b></summary>
 
-The capture backends run on the Windows, macOS and Linux CI runners against virtual devices (loopback audio
-pairs, the runners' displays, `v4l2loopback` and `vivid` cameras on Linux), except the Windows and macOS
-cameras: no camera can be provisioned on those runners, so the camera capture of those two systems is not
-run there.
+- N editions without the Media Feature Pack have no cameras; opening one throws `Unsupported`.
+- Camera exposure takes only power-of-two fractions of a second (1/2 s, 1/4 s, ...), listed in microseconds.
+- A user can forbid exclusive mode per audio device in the sound settings.
+- Window lists skip untitled, cloaked, tool and owned windows.
+- Window capture with the pointer off falls back to `PrintWindow` before Windows 10 2004.
+- The first capture call keeps COM's multithreaded apartment and its libraries loaded until the process exits.
 
 </details>
 
 <details>
-<summary><b>Camera controls on macOS</b></summary>
+<summary><b>macOS limits</b></summary>
 
-Camera controls on macOS are the focus, exposure and white balance modes (continuous or locked) and, where
-the device offers it, the zoom: AVFoundation has no manual values for the others on macOS, and no
-power-line frequency. Windows camera controls are those the driver exposes through `IAMCameraControl` and
-`IAMVideoProcAmp`; the exposure of a Windows camera steps in powers of two. macOS reports cameras and screens
-plugged in or removed by listing them every second (cameras every five seconds), so its events follow a change
-within that interval. The Linux camera controls and camera hotplug are tested against the `vivid` and
-`v4l2loopback` drivers (and `v4l2-ctl`); the Windows camera controls only against simulated `IAMCameraControl`
-and `IAMVideoProcAmp` interfaces, and the macOS ones not at all, since no camera can be provisioned on those CI
-runners, where cameras plugged in or removed are not tested either.
+- Camera controls: focus, exposure and white balance only as automatic or locked; zoom where the camera offers it.
+- No power-line frequency or picture controls (brightness, contrast and the like).
+- Before 12.3 there is no window capture (empty list) and screen snapshots never show the pointer.
+- A refused System Audio Recording permission makes loopback throw `Unsupported`.
+- Loopback open and reads wait until the user answers the permission prompt; only the first output stream is tapped.
+- Exclusive mode (hog mode) uses the device's channel count; input and output of one device share a rate.
+- A shared capture stops delivering while its device runs at another rate, and resumes when the rate returns.
 
 </details>
 
 <details>
-<summary><b>Window and screen capture</b></summary>
+<summary><b>Linux limits</b></summary>
 
-Window capture on X11 without the Composite extension reads the window itself, so the parts other windows
-cover hold whatever the X server returns; window capture on macOS needs ScreenCaptureKit (macOS 12.3), and the
-screen snapshots of older macOS versions never show the pointer. On Wayland a screen is captured through the
-screen cast portal, so the desktop may ask the user which monitor to share, and its choice is what the session
-captures; a compositor that offers only DMA-BUF buffers is captured when one of them is linear (tiled buffers need a
-graphics API to read, so such a compositor fails to negotiate), and reading them is slower than reading shared memory,
-which is preferred when offered. The pointer is drawn from the stream's metadata when the portal cannot embed it, in
-the 4-byte R'G'B' bitmap formats, taken as premultiplied, and a portal offering neither mode shows no pointer. Wayland
-windows are not listed (Wayland has no protocol to list other clients'
-windows; the portal shares one only through the desktop's own picker); the X11 windows of a Wayland session
-(XWayland) are captured as X11 windows. Packed 24-bit X11 pixmaps are converted but tested only against synthetic
-images, since no current X server offers that format (X.Org removed it in 1.20).
+- Wayland screens: the portal picks the monitor and may ask the user; declining throws `MediaException.Io`.
+- Wayland screens need `libpipewire-0.3.so.0`; producers that offer only tiled DMA-BUF fail.
+- Wayland: native Wayland windows are not listed; `windows()` needs an X11 display (XWayland windows work).
+- X11 without the Composite extension: covered parts of a window hold whatever the server returns.
+- The pointer is missing when the Wayland portal offers neither an embedded nor a metadata cursor.
+- V4L2: Bayer formats and compressed formats other than MJPEG and JPEG are not supported.
+- Exclusive audio works on ALSA devices only, not on `pulse:` devices.
+- Loopback needs a PulseAudio or PipeWire server; bare ALSA has none.
+
+</details>
+
+## Devices and events
+
+| Call | Returns |
+|---|---|
+| `VideoDevices.cameras()`, `defaultCamera()`, `camera(id)` | Cameras, default first |
+| `VideoDevices.screens()`, `primaryScreen()`, `screen(id)` | Screens, primary first |
+| `VideoDevices.windows()`, `window(id)` | Windows, front to back where the OS knows the order |
+| `AudioDevices.inputs()`, `defaultInput()`, `input(id)` | Microphones and other inputs, default first |
+| `AudioDevices.outputs()`, `defaultOutput()`, `output(id)` | Speakers and other outputs, default first |
+
+| Listener | Events |
+|---|---|
+| `VideoDevices.addListener` | `CameraAdded`, `CameraRemoved`, `DefaultCameraChanged`, `ScreenAdded`, `ScreenRemoved`, `ScreenChanged` |
+| `AudioDevices.addListener` | `DefaultChanged`, `DeviceAdded`, `DeviceRemoved` |
+
+Listeners run on a dedicated dispatch thread, one event at a time, so a slow listener delays the next events.
+
+### React when a camera is plugged in
+
+```java
+VideoDevices.addListener(event -> System.out.println(switch (event) {
+    case VideoDeviceEvent.CameraAdded added -> "plugged in: " + added.cameraId();
+    case VideoDeviceEvent.CameraRemoved removed -> "unplugged: " + removed.cameraId();
+    default -> "other change: " + event;
+}));
+```
+
+## Backends
+
+Which OS API serves each device:
+
+| Device | Windows | macOS | Linux |
+|---|---|---|---|
+| Cameras | Media Foundation | AVFoundation | V4L2 |
+| Screens | DXGI duplication, GDI fallback | ScreenCaptureKit (12.3+), else CoreGraphics snapshots | Wayland portal + PipeWire, or X11 |
+| App windows | Windows Graphics Capture, `PrintWindow` fallback | ScreenCaptureKit (12.3+) | X11 (Composite when present) |
+| Camera controls | `IAMCameraControl`, `IAMVideoProcAmp` | AVFoundation | V4L2 controls |
+| Audio | WASAPI | CoreAudio | ALSA + PulseAudio protocol |
+| Loopback | WASAPI loopback | CoreAudio process tap (14.2+) | Pulse or PipeWire monitor source |
+| Video device events | OS notifications + polling | Polling | `/dev` watch + polling |
+| Video polling | Screens 1 s, cameras 5 s | Screens 1 s, cameras 5 s | Screens 1 s, cameras 10 s |
+| Audio device events | `IMMNotificationClient` | CoreAudio listeners + 5 s polling | Sound-server events + `/dev/snd` watch |
+
+### Camera pixel formats
+
+| OS | Formats | Preference |
+|---|---|---|
+| Windows | NV12, I420, IYUV, YV12, YUY2, YUYV, UYVY, MJPG, RGB32, ARGB32, RGB24 | 4:2:0, then 4:2:2, MJPG, RGB |
+| macOS | NV12, BGRA | NV12 |
+| Linux | See the V4L2 table below | ➖ |
+
+<details>
+<summary><b>V4L2 pixel formats</b></summary>
+
+| Family | Formats |
+|---|---|
+| 4:2:0 planar and semi-planar | YU12, YV12, NV12, NV21 and their M variants |
+| 4:2:2 packed | YUYV, YVYU, UYVY, VYUY |
+| 4:2:2 semi-planar and planar | NV16, NV61 (and M), 422P, YM16, YM61 |
+| 4:4:4 semi-planar | NV24, NV42 |
+| RGB | 32-bit in 8 orders, RGB24, BGR24, RGB565 |
+| Compressed | MJPG, JPEG |
+| Grayscale | GREY, Y10, Y12, Y16, Y16 big-endian |
 
 </details>
 
 <details>
-<summary><b>macOS loopback capture</b></summary>
+<summary><b>Windows (OS) backends</b></summary>
 
-macOS loopback capture needs macOS 14.2 and the user's System Audio Recording permission, and taps only the first
-output stream of a device that has several. It reads the refusal through the private `TCC.framework`, the only query
-macOS has, and throws `MediaException.Unsupported`; before the user answers, opening (for a time the system bounds) and
-reads wait. An exclusive stream runs at
-the device's channel count, and the hog mode belongs to the process and the device, so an exclusive input and output
-of one device share a rate. A shared capture stops delivering while its device runs at another rate than it opened
-at, for example under an exclusive stream of the same process, and resumes when the rate returns; a loopback follows
-the change. Process taps and hog mode ran on the CI runners against BlackHole only, not on audio hardware or a device
-with several streams.
+- **App windows:** Windows Graphics Capture from Windows 10 1903, with the yellow border off where allowed; `PrintWindow` otherwise.
+- **Audio:** shared mode converts rate and channels in the audio engine; exclusive mode tries float, 32-, 24- and 16-bit.
+- **Audio thread:** each session's device thread joins the MMCSS "Pro Audio" class.
 
 </details>
 
 <details>
-<summary><b>Linux loopback capture</b></summary>
+<summary><b>macOS backends</b></summary>
 
-Linux loopback capture needs a PulseAudio or PipeWire sound server (bare ALSA has none); an ALSA device naming a
-card maps to the server's sink of that card through its `alsa.card` property, which the CI runners, without an
-ALSA card, test only against simulated server listings.
+- **Cameras:** one mode per format and frame-rate range, at its fastest rate.
+- **Screens:** sizes are in pixels and positions in points.
+- **Audio:** HAL output units; callbacks run on CoreAudio's I/O thread, not a session thread.
+- **Exclusive audio:** hog mode, at the stream's rate.
+- **Loopback:** a process tap of the device's first output stream.
+
+</details>
+
+<details>
+<summary><b>Linux backends</b></summary>
+
+- **Cameras:** `/dev/videoN`, single- and multi-planar, memory-mapped streaming.
+- **Interlaced cameras:** sequential and alternate fields are woven; single-field streams are line-doubled.
+- **Wayland screens:** chosen when `WAYLAND_DISPLAY` is set; shared memory preferred, linear DMA-BUF accepted.
+- **X11 screens:** RandR monitors of `DISPLAY`, read with MIT-SHM or `XGetImage`; pointer drawn through XFixes.
+- **Audio:** ALSA devices plus sound-server devices prefixed `pulse:`; the server's defaults become the defaults.
+- **Exclusive audio:** an ALSA device with no software resampling.
 
 </details>
