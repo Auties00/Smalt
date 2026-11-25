@@ -31,10 +31,9 @@ Jump to [Quick start](#quick-start) for code.
 > [!IMPORTANT]
 > Smalt is pre-`1.0`: expect breaking changes between releases until the API is frozen.
 
-**Contents:** [Install](#install) · [Pick your artifacts](#pick-your-artifacts) · [JVM flags](#jvm-flags) ·
-[Quick start](#quick-start) · [What it handles](#what-it-handles) · [Modules](#modules) · [Recipes](#recipes) ·
-[Performance](#performance) · [Documentation](#documentation) · [Contributing](#contributing) ·
-[Acknowledgments](#acknowledgments) · [Donations](#donations) · [License](#license)
+**Contents:** [Install](#install) · [Modules](#modules) · [JVM flags](#jvm-flags) · [Quick start](#quick-start) ·
+[What it handles](#what-it-handles) · [Performance](#performance) · [Documentation](#documentation) ·
+[Contributing](#contributing) · [Acknowledgments](#acknowledgments) · [Donations](#donations) · [License](#license)
 
 ## Install
 
@@ -96,36 +95,109 @@ dependencies {
 On the module path, add `requires com.github.auties00.smalt.<name>;` for each artifact (`smalt-image` is
 `com.github.auties00.smalt.image`). `smalt-core` is `com.github.auties00.smalt`, with no `.core`.
 
-## Pick your artifacts
+## Modules
 
-Add only the artifacts whose formats you need; a missing one throws `MediaException.Unsupported` naming it in
-`artifact()`.
+Add the artifacts for what you want to do. Each one brings `smalt-core` with it, and the BOM sets every version.
 
-| Artifact | What it adds | Depends on |
-|---|---|---|
-| [`smalt-core`](core/README.md) | The media model, the codec registries, every container, image and audio processing, loudness, subtitles, PCM, tag editing and XMP | none |
-| [`smalt-image`](image/README.md) | JPEG (and its lossless transforms), JPEG-LS, JPEG 2000, JPEG XL, JPEG XR, PNG and APNG, GIF, WebP, BMP, TIFF, ICO, ANI, ICNS, Netpbm, TGA, QOI, Radiance HDR, PSD, OpenEXR and DDS, EXIF and image metadata editing, Motion-JPEG, Motion JPEG 2000, PNG, TIFF and GIF video, HAP, and VP8 (lossy WebP is VP8) | core |
-| [`smalt-audio`](audio/README.md) | Opus, Vorbis, FLAC, ALAC, MP3 and MP2, Speex, WavPack, Monkey's Audio, Musepack, ATRAC9, DST, MACE, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10, and voice processing | core |
-| [`smalt-video`](video/README.md) | VP9, AV1, AVIF, ProRes, DNxHD/DNxHR, DV, Theora, FFV1, QuickTime Animation and CineForm | core |
-| [`smalt-mpeg`](mpeg/README.md) | H.264, HEVC, VVC, HEIC, MPEG-1 and MPEG-2 video, MPEG-4 Part 2, H.263, VC-1, JPEG XS, AAC, AMR, MPEG-4 CELP, TwinVQ and HVXC, AC-3, E-AC-3 and DTS, kept apart because many of them are patent-licensed | core |
-| [`smalt-capture`](capture/README.md) | Camera, screen, window and microphone capture, and speaker playback | core, image |
-| [`smalt-raw`](raw/README.md) | DNG and camera raw decoding: Canon, Nikon, Sony, Fujifilm, Olympus, Panasonic, Pentax, Samsung, Minolta, Sigma, Hasselblad, Phase One, Leaf, Mamiya, Kodak and Epson raw files, demosaicing and camera color rendering; DNG writing and raw to DNG conversion | core, image |
-| [`smalt-desktop`](desktop/README.md) | ImageIO readers and writers and Java Sound providers for the formats the other artifacts handle | core |
-| [`smalt-aot`](aot/README.md) | Training workloads for JDK ahead-of-time caches, used only in the training run | core, image, audio, video, mpeg, capture, raw |
-| [`smalt-bom`](bom/README.md) | Aligns the versions of every Smalt artifact | none |
+### Probe, remux, edit tags or convert subtitles
 
-| You want to | Add |
-|---|---|
-| Probe, remux, edit tags, read and write text subtitles | `smalt-core` |
-| Convert photos (JPEG, PNG, WebP) | `smalt-image` |
-| Decode a phone MP4 (H.264 or HEVC, AAC) | `smalt-mpeg` |
-| Write WebM (VP9, Opus) | `smalt-video` + `smalt-audio` |
-| Develop camera raw files | `smalt-raw` |
-| Use cameras, screens, microphones or speakers | `smalt-capture` |
-| Use ImageIO or Java Sound | `smalt-desktop` + the codec artifacts you need |
+`smalt-core` reads and writes every container, edits tags and converts text subtitles (SubRip, WebVTT, ASS,
+TTML and more). On its own it encodes only PCM audio and raw video. → [core](core/README.md)
 
-- `smalt-desktop` adds no codec: it serves the formats of the codec artifacts next to it.
-- See [Licensing](video/README.md#licensing) before you ship ProRes or DNxHD, and [Patents](mpeg/README.md#patents) for `smalt-mpeg`.
+```xml
+<dependency>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-core</artifactId>
+</dependency>
+```
+
+### Convert photos
+
+`smalt-image` decodes and encodes JPEG, PNG, WebP, GIF, TIFF, JPEG 2000, JPEG XL and other still image formats,
+and edits their metadata. → [image](image/README.md)
+
+```xml
+<dependency>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-image</artifactId>
+</dependency>
+```
+
+### Decode a phone video
+
+Phones record MP4 with H.264 or HEVC video and AAC audio. All three codecs are in `smalt-mpeg`, which also has
+HEIC photos. → [mpeg](mpeg/README.md)
+
+```xml
+<dependency>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-mpeg</artifactId>
+</dependency>
+```
+
+### Write WebM
+
+WebM usually means VP9 video and Opus audio: VP9 is in `smalt-video`, Opus in `smalt-audio`.
+→ [video](video/README.md), [audio](audio/README.md)
+
+```xml
+<dependency>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-video</artifactId>
+</dependency>
+<dependency>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-audio</artifactId>
+</dependency>
+```
+
+### Develop camera raw files
+
+`smalt-raw` reads DNG and the raw files of Canon, Nikon, Sony, Fujifilm and other cameras, and develops them
+into pictures. It brings `smalt-image` too. → [raw](raw/README.md)
+
+```xml
+<dependency>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-raw</artifactId>
+</dependency>
+```
+
+### Use cameras, screens, microphones or speakers
+
+`smalt-capture` records cameras, screens, windows and microphones, and plays to speakers, on Windows, macOS
+and Linux. See [JVM flags](#jvm-flags) for its native-access flag. → [capture](capture/README.md)
+
+```xml
+<dependency>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-capture</artifactId>
+</dependency>
+```
+
+### Use ImageIO or Java Sound
+
+`smalt-desktop` adds no codec of its own: it serves, through `javax.imageio` and `javax.sound.sampled`, the
+formats of the codec artifacts next to it. Add it together with those, here `smalt-image`.
+→ [desktop](desktop/README.md)
+
+```xml
+<dependency>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-desktop</artifactId>
+</dependency>
+<dependency>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-image</artifactId>
+</dependency>
+```
+
+> [!WARNING]
+> Read [Licensing](video/README.md#licensing) before you ship ProRes or DNxHD, and [Patents](mpeg/README.md#patents)
+> before you ship `smalt-mpeg`.
+
+[`smalt-aot`](aot/README.md) trains a JDK ahead-of-time cache for a faster start, and [`smalt-bom`](bom/README.md)
+keeps every artifact on one version.
 
 ## JVM flags
 
@@ -205,7 +277,7 @@ try (var source = MediaSource.of(Path.of("talk.mp4"));
 }
 ```
 
-More in [Recipes](#recipes).
+Every module README has more examples: start from [Modules](#modules).
 
 ## What it handles
 
@@ -281,189 +353,6 @@ Every container lives in core, so remuxing, probing and tag editing need no code
 | RTP payloads: H.264, VP8, VP9, AV1, Opus, AMR, AAC | ✅ | ✅ | [core](core/README.md#formats) |
 
 Smalt does not draw text into PGS or VobSub bitmaps; `SupMuxer` and `VobSubMuxer` only copy existing packets.
-
-## Modules
-
-How the code artifacts depend on each other; `smalt-bom` depends on none.
-
-```mermaid
-flowchart BT
-    core["smalt-core<br/>model, containers,<br/>processing, transcoder"]
-    image["smalt-image<br/>still images, VP8"]
-    audio["smalt-audio<br/>Opus, FLAC, MP3, voice"]
-    video["smalt-video<br/>VP9, AV1, AVIF, ProRes"]
-    mpeg["smalt-mpeg<br/>H.264, HEVC, AAC, AC-3"]
-    raw["smalt-raw<br/>DNG and camera raw"]
-    capture["smalt-capture<br/>camera, screen, microphone"]
-    desktop["smalt-desktop<br/>ImageIO, Java Sound"]
-    aot["smalt-aot<br/>AOT cache training"]
-
-    image --> core
-    audio --> core
-    video --> core
-    mpeg --> core
-    desktop --> core
-    raw --> image
-    capture --> image
-    raw --> core
-    capture --> core
-    aot --> core
-    aot --> image
-    aot --> audio
-    aot --> video
-    aot --> mpeg
-    aot --> raw
-    aot --> capture
-
-    classDef base fill:#1d57d1,stroke:#0b2a6f,stroke-width:2px,color:#ffffff
-    classDef codec fill:#0f766e,stroke:#134e4a,stroke-width:1px,color:#ffffff
-    classDef platform fill:#b45309,stroke:#7c2d12,stroke-width:1px,color:#ffffff
-    classDef tool fill:#7e22ce,stroke:#581c87,stroke-width:1px,color:#ffffff
-    class core base
-    class image,audio,video,mpeg,raw codec
-    class capture,desktop platform
-    class aot tool
-```
-
-Blue is the foundation, teal the codecs, amber the platform bridges, purple the build-time tooling.
-
-- [**core**](core/README.md): the media model, every container, streaming, subtitles, tags, processing, the transcoder.
-- [**image**](image/README.md): still images and their metadata, plus the image-based video codecs.
-- [**audio**](audio/README.md): audio codecs and voice processing for calls.
-- [**video**](video/README.md): royalty-free and professional video codecs, and AVIF.
-- [**mpeg**](mpeg/README.md): patent-pool video and audio codecs, and HEIC.
-- [**raw**](raw/README.md): DNG and camera raw files, developed like a raw converter; DNG writing.
-- [**capture**](capture/README.md): cameras, screens, windows, microphones and speakers on Windows, macOS and Linux.
-- [**desktop**](desktop/README.md): ImageIO and Java Sound providers, so existing desktop code reads Smalt's formats.
-- [**aot**](aot/README.md): training workloads for JDK ahead-of-time caches.
-- [**bom**](bom/README.md): the bill of materials that keeps every artifact on one version.
-
-`build` is the parent pom every published pom inherits. The `it`, `kernel-lint` and `tools` directories are
-build-only and never published.
-
-## Recipes
-
-One focused example per task, in the README of the module that owns it.
-
-<details>
-<summary><b>Files, tags and containers</b> (5)</summary>
-
-- [Probe a file](core/README.md#probe-a-file)
-- [Edit tags](core/README.md#edit-tags)
-- [Strip location data from a photo](image/README.md#strip-location-data-from-a-photo)
-- [Remux to MP4](core/README.md#remux-to-mp4)
-- [Convert subtitles](core/README.md#convert-subtitles)
-
-</details>
-
-<details>
-<summary><b>Transcoding</b> (4)</summary>
-
-- [Trim and re-encode a clip](core/README.md#trim-and-re-encode-a-clip)
-- [Transcode a video to HEVC](mpeg/README.md#transcode-a-video-to-hevc)
-- [Transcode to ProRes for editing](video/README.md#transcode-to-prores-for-editing)
-- [Transcode a file to FLAC](audio/README.md#transcode-a-file-to-flac)
-
-</details>
-
-<details>
-<summary><b>Images</b> (8)</summary>
-
-- [Convert a photo to WebP](image/README.md#convert-a-photo-to-webp)
-- [Convert a photo to AVIF](video/README.md#convert-a-photo-to-avif)
-- [Read a HEIC photo](mpeg/README.md#read-a-heic-photo)
-- [Save a picture as HEIC](mpeg/README.md#save-a-picture-as-heic)
-- [Rotate a JPEG losslessly](image/README.md#rotate-a-jpeg-losslessly)
-- [Recompress a JPEG into JPEG XL](image/README.md#recompress-a-jpeg-into-jpeg-xl)
-- [Turn an animated GIF into an animated WebP](image/README.md#turn-an-animated-gif-into-an-animated-webp)
-- [Split a multi-page TIFF into PNGs](image/README.md#split-a-multi-page-tiff-into-pngs)
-
-</details>
-
-<details>
-<summary><b>Camera raw</b> (6)</summary>
-
-- [Develop a camera raw file](raw/README.md#develop-a-camera-raw-file)
-- [Tune the rendering](raw/README.md#tune-the-rendering)
-- [Read camera and shot info](raw/README.md#read-camera-and-shot-info)
-- [Make a fast thumbnail](raw/README.md#make-a-fast-thumbnail)
-- [Convert a raw file to DNG](raw/README.md#convert-a-raw-file-to-dng)
-- [Read linear sensor data](raw/README.md#read-linear-sensor-data)
-
-</details>
-
-<details>
-<summary><b>Audio</b> (8)</summary>
-
-- [Read audio as PCM](core/README.md#read-audio-as-pcm)
-- [Decode a file to samples](audio/README.md#decode-a-file-to-samples)
-- [Read FLAC samples as exact integers](audio/README.md#read-flac-samples-as-exact-integers)
-- [Decode an AAC song](mpeg/README.md#decode-an-aac-song)
-- [Encode a WAV file to Opus](audio/README.md#encode-a-wav-file-to-opus)
-- [Encode MP3 packets at variable bitrate](audio/README.md#encode-mp3-packets-at-variable-bitrate)
-- [Encode a 7.1 mix to E-AC-3](mpeg/README.md#encode-a-71-mix-to-e-ac-3)
-- [Measure loudness](core/README.md#measure-loudness)
-
-</details>
-
-<details>
-<summary><b>Video</b> (4)</summary>
-
-- [Decode HEVC at 10 bits](mpeg/README.md#decode-hevc-at-10-bits)
-- [Decode 10-bit video at full depth](video/README.md#decode-10-bit-video-at-full-depth)
-- [Encode a video to AV1 in WebM](video/README.md#encode-a-video-to-av1-in-webm)
-- [Encode ProRes 4444 frame by frame](video/README.md#encode-prores-4444-frame-by-frame)
-
-</details>
-
-<details>
-<summary><b>Calls and real time</b> (3)</summary>
-
-- [Encode and decode Opus packets for a call](audio/README.md#encode-and-decode-opus-packets-for-a-call)
-- [Remove echo and noise from a call](audio/README.md#remove-echo-and-noise-from-a-call)
-- [Encode H.264 for a video call](mpeg/README.md#encode-h264-for-a-video-call)
-
-</details>
-
-<details>
-<summary><b>Capture</b> (9)</summary>
-
-- [List cameras, screens and microphones](capture/README.md#list-cameras-screens-and-microphones)
-- [Take a photo with the default camera](capture/README.md#take-a-photo-with-the-default-camera)
-- [Take a screenshot](capture/README.md#take-a-screenshot)
-- [Capture part of a window](capture/README.md#capture-part-of-a-window)
-- [Set a camera mode and white balance](capture/README.md#set-a-camera-mode-and-white-balance)
-- [React when a camera is plugged in](capture/README.md#react-when-a-camera-is-plugged-in)
-- [Record the microphone to WAV](capture/README.md#record-the-microphone-to-wav)
-- [Record what the speakers play](capture/README.md#record-what-the-speakers-play)
-- [Play a tone to the speakers](capture/README.md#play-a-tone-to-the-speakers)
-
-</details>
-
-<details>
-<summary><b>ImageIO and Java Sound</b> (7)</summary>
-
-- [Read and write images with ImageIO](desktop/README.md#read-and-write-images-with-imageio)
-- [Write lossless WebP](desktop/README.md#write-lossless-webp)
-- [Turn an animated WebP into a GIF](desktop/README.md#turn-an-animated-webp-into-a-gif)
-- [Read every page of a TIFF](desktop/README.md#read-every-page-of-a-tiff)
-- [Convert a Smalt picture to a BufferedImage](desktop/README.md#convert-a-smalt-picture-to-a-bufferedimage)
-- [Play an Opus file](desktop/README.md#play-an-opus-file)
-- [Convert MP3 to FLAC](desktop/README.md#convert-mp3-to-flac)
-
-</details>
-
-<details>
-<summary><b>Fast start-up</b> (6)</summary>
-
-- [Start fast with an AOT cache](aot/README.md#start-fast-with-an-aot-cache)
-- [Train from your own main](aot/README.md#train-from-your-own-main)
-- [Train only the real-time paths of two artifacts](aot/README.md#train-only-the-real-time-paths-of-two-artifacts)
-- [Add your own workload on synthetic media](aot/README.md#add-your-own-workload-on-synthetic-media)
-- [Add a workload whose setup can fail](aot/README.md#add-a-workload-whose-setup-can-fail)
-- [Generate synthetic inputs](aot/README.md#generate-synthetic-inputs)
-
-</details>
 
 ## Performance
 

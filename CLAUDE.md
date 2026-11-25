@@ -57,7 +57,7 @@ Cobalt's `cobalt-media` module and is consumed by Cobalt (`../Cobalt1`), which b
   missing oracle fail (`SMALT_TEST_REQUIRE_ORACLES`, `-Dsmalt.test.requireOracles=true` locally) and gates the
   skips of every job with `tools/testdata/skip-baseline.tsv` (`skips.py`); see `tools/testdata/README.md`.
 
-The root README's "Pick your artifacts" table is the single source of these descriptions; the pom `<description>`s copy it.
+The pom `<description>`s are the single source of these descriptions; each module README's tagline agrees with its pom.
 
 | Artifact | JPMS module | Contents |
 |---|---|---|
