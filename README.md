@@ -101,8 +101,8 @@ Add the artifacts for what you want to do. Each one brings `smalt-core` with it,
 
 ### Probe, remux, edit tags or convert subtitles
 
-`smalt-core` reads and writes every container, edits tags and converts text subtitles (SubRip, WebVTT, ASS,
-TTML and more). On its own it encodes only PCM audio and raw video. → [core](core/README.md)
+[`smalt-core`](core/README.md) reads and writes every container, edits tags and converts text subtitles (SubRip, WebVTT, ASS,
+TTML and more). On its own it encodes only PCM audio and raw video.
 
 ```xml
 <dependency>
@@ -113,8 +113,8 @@ TTML and more). On its own it encodes only PCM audio and raw video. → [core](c
 
 ### Convert photos
 
-`smalt-image` decodes and encodes JPEG, PNG, WebP, GIF, TIFF, JPEG 2000, JPEG XL and other still image formats,
-and edits their metadata. → [image](image/README.md)
+[`smalt-image`](image/README.md) decodes and encodes JPEG, PNG, WebP, GIF, TIFF, JPEG 2000, JPEG XL and other still image formats,
+and edits their metadata.
 
 ```xml
 <dependency>
@@ -125,8 +125,8 @@ and edits their metadata. → [image](image/README.md)
 
 ### Decode a phone video
 
-Phones record MP4 with H.264 or HEVC video and AAC audio. All three codecs are in `smalt-mpeg`, which also has
-HEIC photos. → [mpeg](mpeg/README.md)
+Phones record MP4 with H.264 or HEVC video and AAC audio. All three codecs are in [`smalt-mpeg`](mpeg/README.md), which also has
+HEIC photos.
 
 ```xml
 <dependency>
@@ -137,8 +137,7 @@ HEIC photos. → [mpeg](mpeg/README.md)
 
 ### Write WebM
 
-WebM usually means VP9 video and Opus audio: VP9 is in `smalt-video`, Opus in `smalt-audio`.
-→ [video](video/README.md), [audio](audio/README.md)
+WebM usually means VP9 video and Opus audio: VP9 is in [`smalt-video`](video/README.md), Opus in [`smalt-audio`](audio/README.md).
 
 ```xml
 <dependency>
@@ -153,8 +152,8 @@ WebM usually means VP9 video and Opus audio: VP9 is in `smalt-video`, Opus in `s
 
 ### Develop camera raw files
 
-`smalt-raw` reads DNG and the raw files of Canon, Nikon, Sony, Fujifilm and other cameras, and develops them
-into pictures. It brings `smalt-image` too. → [raw](raw/README.md)
+[`smalt-raw`](raw/README.md) reads DNG and the raw files of Canon, Nikon, Sony, Fujifilm and other cameras, and develops them
+into pictures. It brings `smalt-image` too.
 
 ```xml
 <dependency>
@@ -165,8 +164,8 @@ into pictures. It brings `smalt-image` too. → [raw](raw/README.md)
 
 ### Use cameras, screens, microphones or speakers
 
-`smalt-capture` records cameras, screens, windows and microphones, and plays to speakers, on Windows, macOS
-and Linux. See [JVM flags](#jvm-flags) for its native-access flag. → [capture](capture/README.md)
+[`smalt-capture`](capture/README.md) records cameras, screens, windows and microphones, and plays to speakers, on Windows, macOS
+and Linux. See [JVM flags](#jvm-flags) for its native-access flag.
 
 ```xml
 <dependency>
@@ -177,9 +176,8 @@ and Linux. See [JVM flags](#jvm-flags) for its native-access flag. → [capture]
 
 ### Use ImageIO or Java Sound
 
-`smalt-desktop` adds no codec of its own: it serves, through `javax.imageio` and `javax.sound.sampled`, the
+[`smalt-desktop`](desktop/README.md) adds no codec of its own: it serves, through `javax.imageio` and `javax.sound.sampled`, the
 formats of the codec artifacts next to it. Add it together with those, here `smalt-image`.
-→ [desktop](desktop/README.md)
 
 ```xml
 <dependency>
