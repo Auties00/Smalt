@@ -198,7 +198,7 @@ class CencVideoGoldenTest {
         var golden = golden();
         Track track;
         List<Packet> packets;
-        try (var source = MediaSource.of(Conformance.fetchListed(vector)); var demuxer = Containers.openDemuxer(source)) {
+        try (var source = MediaSource.of(Conformance.vector(vector)); var demuxer = Containers.openDemuxer(source)) {
             track = demuxer.tracks().stream().filter(candidate -> candidate.kind() == TrackKind.VIDEO).findFirst()
                     .orElseThrow();
             packets = EncryptedFixtures.packets(demuxer).get(track.id());

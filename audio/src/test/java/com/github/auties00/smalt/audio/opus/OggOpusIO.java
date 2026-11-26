@@ -29,7 +29,10 @@ final class OggOpusIO {
     private OggOpusIO() {
     }
 
-    /** Reads the first logical stream of an Ogg file. */
+    /**
+     * Reads the first logical stream of an Ogg file, skipping bytes between pages and a last page the file cuts
+     * short, as libogg does.
+     */
     static Stream read(byte[] file) {
         var packets = new ArrayList<byte[]>();
         var current = new ByteArrayOutputStream();
@@ -38,11 +41,25 @@ final class OggOpusIO {
         long granule = -1;
         while (offset + 27 <= file.length) {
             if (file[offset] != 'O' || file[offset + 1] != 'g' || file[offset + 2] != 'g' || file[offset + 3] != 'S') {
-                throw new IllegalStateException("lost Ogg sync at " + offset);
+                // as libogg does, skip bytes that are not a page up to the next capture pattern
+                offset++;
+                continue;
             }
             var pageSerial = readLe32(file, offset + 14);
             var segments = file[offset + 26] & 0xFF;
             var body = offset + 27 + segments;
+            var bodyLength = 0;
+            for (var s = 0; s < segments && offset + 27 + s < file.length; s++) {
+                bodyLength += file[offset + 27 + s] & 0xFF;
+            }
+            if (body + bodyLength > file.length) {
+                // a page cut short by the end of the file holds no complete packet
+                break;
+            }
+            if (!crcMatches(file, offset, body + bodyLength)) {
+                offset++;
+                continue;
+            }
             if (serial == -1) {
                 serial = pageSerial;
             }
@@ -68,6 +85,16 @@ final class OggOpusIO {
             throw new IllegalStateException("missing Opus headers");
         }
         return new Stream(packets.get(0), packets.get(1), List.copyOf(packets.subList(2, packets.size())), granule);
+    }
+
+    /** Returns whether the CRC field of the page at {@code [from, to)} matches its bytes. */
+    private static boolean crcMatches(byte[] file, int from, int to) {
+        var crc = 0;
+        for (var i = from; i < to; i++) {
+            var b = i >= from + 22 && i < from + 26 ? 0 : file[i];
+            crc = (crc << 8) ^ CRC_TABLE[((crc >>> 24) ^ (b & 0xFF)) & 0xFF];
+        }
+        return crc == readLe32(file, from + 22);
     }
 
     /**

@@ -1046,7 +1046,7 @@ class Mp4TtmlTest {
             var out = new ByteArrayOutputStream();
             for (var member : members) {
                 try {
-                    out.writeBytes(Files.readAllBytes(archive.fetch(member)));
+                    out.writeBytes(Files.readAllBytes(archive.member(member)));
                 } catch (IOException exception) {
                     throw new UncheckedIOException(exception);
                 }

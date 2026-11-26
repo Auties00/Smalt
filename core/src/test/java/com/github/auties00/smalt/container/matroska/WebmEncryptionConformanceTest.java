@@ -60,8 +60,8 @@ class WebmEncryptionConformanceTest {
     })
     @DisplayName("decrypts to the packets of the clear file")
     void decrypts(String encrypted, String clear) {
-        var expected = demux(Conformance.fetchListed("chromium-" + clear), DecryptionKeys.none());
-        var actual = demux(Conformance.fetchListed("chromium-" + encrypted), KEYS);
+        var expected = demux(Conformance.vector("chromium-" + clear), DecryptionKeys.none());
+        var actual = demux(Conformance.vector("chromium-" + encrypted), KEYS);
         assertEquals(expected.tracks().size(), actual.tracks().size(), "track count");
         for (var index = 0; index < expected.tracks().size(); index++) {
             var want = expected.tracks().get(index);
@@ -77,11 +77,11 @@ class WebmEncryptionConformanceTest {
     @DisplayName("decrypts the AV1 frames Shaka Packager encrypted from an MP4 file to that file's samples")
     void av1() {
         List<Packet> expected;
-        try (var source = MediaSource.of(Conformance.fetchListed("chromium-bear-av1.mp4"));
+        try (var source = MediaSource.of(Conformance.vector("chromium-bear-av1.mp4"));
              var demuxer = new Mp4Demuxer(source)) {
             expected = EncryptedFixtures.packets(demuxer).values().iterator().next();
         }
-        var actual = demux(Conformance.fetchListed("chromium-bear-av1-cenc.webm"), KEYS);
+        var actual = demux(Conformance.vector("chromium-bear-av1-cenc.webm"), KEYS);
         EncryptedFixtures.assertSameData("bear-av1-cenc.webm", expected, actual.packets().values().iterator().next());
     }
 
@@ -89,7 +89,7 @@ class WebmEncryptionConformanceTest {
     @DisplayName("decrypts partitioned VP9 frames that ffmpeg then decodes without an error")
     void partitioned() throws IOException {
         Oracle.assume(Oracle.Tool.FFMPEG);
-        var actual = demux(Conformance.fetchListed("chromium-bear-320x240-v-vp9_subsample_enc-v.webm"), KEYS);
+        var actual = demux(Conformance.vector("chromium-bear-320x240-v-vp9_subsample_enc-v.webm"), KEYS);
         var track = actual.tracks().getFirst();
         var file = Scratch.directory("webm-encryption").resolve("partitioned.ivf");
         try (var sink = MediaSink.of(file); var muxer = new IvfMuxer(sink)) {
@@ -112,12 +112,12 @@ class WebmEncryptionConformanceTest {
     @Test
     @DisplayName("rejects an encrypted file without keys, and a key it does not know")
     void keys() {
-        var file = Conformance.fetchListed("chromium-bear-320x240-av_enc-av.webm");
+        var file = Conformance.vector("chromium-bear-320x240-av_enc-av.webm");
         assertEquals("matroska encryption", assertThrows(MediaException.Unsupported.class,
                 () -> demux(file, DecryptionKeys.none())).format());
         assertEquals("matroska encryption", assertThrows(MediaException.Unsupported.class,
                 () -> demux(file, DecryptionKeys.of(new byte[16], KEY))).format());
-        var expected = demux(Conformance.fetchListed("chromium-bear-320x240.webm"), DecryptionKeys.none());
+        var expected = demux(Conformance.vector("chromium-bear-320x240.webm"), DecryptionKeys.none());
         var any = demux(file, DecryptionKeys.single(KEY));
         var tracks = new ArrayList<>(expected.packets().keySet());
         var actualTracks = new ArrayList<>(any.packets().keySet());

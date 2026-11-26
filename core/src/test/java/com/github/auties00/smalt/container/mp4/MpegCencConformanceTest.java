@@ -43,7 +43,7 @@ class MpegCencConformanceTest {
     private static final String KEY_C = "5544694d47473326622665665a396b35";
 
     private static List<Packet> demux(String name, DecryptionKeys keys) {
-        return demux(Conformance.fetchListed("mpegff-" + name), name, keys);
+        return demux(Conformance.vector("mpegff-" + name), name, keys);
     }
 
     private static List<Packet> demux(Path file, String name, DecryptionKeys keys) {
@@ -101,7 +101,7 @@ class MpegCencConformanceTest {
     // ffmpeg 7.1 decrypts the 10:1 pattern of the cens files otherwise than the cenc files' packets give
     @DisplayName("decrypts as ffmpeg does")
     void ffmpeg(String name, String key) {
-        var file = Conformance.fetchListed("mpegff-" + name);
+        var file = Conformance.vector("mpegff-" + name);
         var reference = EncryptedFixtures.ffmpegPacketHashes(file, HexFormat.of().parseHex(key), List.of());
         assertEquals(reference.get(0), EncryptedFixtures.md5s(demux(file, name, keys(key, false))), name);
     }
@@ -109,7 +109,7 @@ class MpegCencConformanceTest {
     @Test
     @DisplayName("needs the rolled key of the seig groups")
     void rolledKey() {
-        var file = Conformance.fetchListed("mpegff-video_cenc_roll.mp4");
+        var file = Conformance.vector("mpegff-video_cenc_roll.mp4");
         assertThrows(MediaException.Unsupported.class, () -> demux(file, "roll", keys(KEY_1, false)));
     }
 
@@ -124,7 +124,7 @@ class MpegCencConformanceTest {
         var keys = DecryptionKeys.ofHex(Map.of(KID_A, KEY_1, KID_C, KEY_C));
         EncryptedFixtures.assertSameData(name, reference, demux(name, keys));
         // the second key is needed as well
-        var file = Conformance.fetchListed("mpegff-" + name);
+        var file = Conformance.vector("mpegff-" + name);
         assertThrows(MediaException.Unsupported.class, () -> demux(file, name, keys(KEY_1, false)));
     }
 }

@@ -160,7 +160,7 @@ class MpegDrcConformanceTest {
     }
 
     private static byte[] read(Conformance.Archive archive, HashMap<String, String> members, String name) {
-        return name == null ? null : Fixtures.read(archive.fetch(members.get(name)));
+        return name == null ? null : Fixtures.read(archive.member(members.get(name)));
     }
 
     private static void run(Conformance.Archive archive, HashMap<String, String> members, String line) {

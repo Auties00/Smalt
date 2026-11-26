@@ -1,6 +1,6 @@
 package com.github.auties00.smalt.video.h264.encoder;
 
-import com.github.auties00.smalt.testkit.Skip;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -25,7 +25,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -452,10 +451,8 @@ class RealtimeEncoderTest {
         @MethodSource("naturalClips")
         @DisplayName("the first IDR access unit of natural video lands within 40 percent of its budget")
         void firstOnNaturalVideo(String clip, int width, int height, int bitrate) throws IOException {
-            var root = Path.of(System.getProperty("smalt.test.clips",
-                    Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips").toString()));
-            var file = root.resolve(clip);
-            Skip.unless(Files.isRegularFile(file), "data:clip", "clip " + clip + " is not cached");
+            var file = Conformance.clips().resolve(clip);
+            assertTrue(Files.isRegularFile(file), "clip " + clip + " is missing from " + Conformance.clips());
             var luma = width * height;
             var samples = new byte[luma * 3 / 2];
             try (var input = Files.newInputStream(file)) {

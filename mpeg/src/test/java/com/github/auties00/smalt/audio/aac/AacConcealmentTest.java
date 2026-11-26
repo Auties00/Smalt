@@ -178,7 +178,7 @@ class AacConcealmentTest {
         @Test
         @DisplayName("conceal AAC SSR blocks")
         void scalableSampleRate() {
-            check(AacTestSupport.parseMp4(Fixtures.read(AacObjectTypesConformanceTest.fetch("as00_48.mp4"))), 4, 60);
+            check(AacTestSupport.parseMp4(Fixtures.read(AacObjectTypesConformanceTest.file("as00_48.mp4"))), 4, 60);
         }
 
         @ParameterizedTest(name = "{0}")
@@ -186,7 +186,7 @@ class AacConcealmentTest {
                 "er_eld_sbr_e_2_48.mp4, 12, 6"})
         @DisplayName("conceal error resilient, low delay and enhanced low delay blocks")
         void errorResilient(String name, int recoveryPackets, double recoverySnr) {
-            check(AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(name))), recoveryPackets,
+            check(AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file(name))), recoveryPackets,
                     recoverySnr);
         }
 
@@ -194,7 +194,7 @@ class AacConcealmentTest {
         @CsvSource({"al_sbr_e_48_2, 12, 6", "al_sbr_cm_48_5.1, 12, 6", "al_sbr_ps_00, 12, 3"})
         @DisplayName("conceal HE-AAC and HE-AAC v2 blocks, the high band repeating its last envelope")
         void spectralBandReplication(String name, int recoveryPackets, double recoverySnr) {
-            check(AacTestSupport.parseMp4(Fixtures.read(HeAacConformanceTest.fetch(name))), recoveryPackets,
+            check(AacTestSupport.parseMp4(Fixtures.read(HeAacConformanceTest.file(name))), recoveryPackets,
                     recoverySnr);
         }
     }

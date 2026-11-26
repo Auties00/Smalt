@@ -72,10 +72,10 @@ class SkipTest {
         @Test
         @DisplayName("skip only when the condition fails, with the reason in the message")
         void skips() {
-            assertDoesNotThrow(() -> Skip.unless(true, "data:vector", "present"));
+            assertDoesNotThrow(() -> Skip.unless(true, "input:codec", "present"));
             assertDoesNotThrow(() -> Skip.when(false, "input:layout", "applies"));
-            var skipped = assertThrows(TestAbortedException.class, () -> Skip.unless(false, "data:vector", "absent"));
-            assertEquals("[data:vector] absent", skipped.getMessage());
+            var skipped = assertThrows(TestAbortedException.class, () -> Skip.unless(false, "input:codec", "absent"));
+            assertEquals("[input:codec] absent", skipped.getMessage());
             var when = assertThrows(TestAbortedException.class, () -> Skip.when(true, "input:layout", "n/a"));
             assertEquals("input:layout", Skip.reasonOf(when.getMessage()));
             var now = assertThrows(TestAbortedException.class, () -> {

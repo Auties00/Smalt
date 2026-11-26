@@ -71,4 +71,37 @@ class AvifDataReferenceTest {
         Files.write(work.resolve("frame.obu"), Arrays.copyOf(referenced, 90));
         assertThrows(MediaException.Malformed.class, () -> AvifDecoder.decode(MediaSource.of(file), options));
     }
+
+    /**
+     * libavif's idat files: the item stored in the meta box's idat, also with a meta box of size 0 (to the end of
+     * the file) and as a progressive two-layer item; each decodes to the same picture, close to its PNG original.
+     */
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"libavif-draw_points_idat_metasize0.avif",
+            "libavif-draw_points_idat_progressive.avif", "libavif-draw_points_idat_progressive_metasize0.avif"})
+    @DisplayName("an item in idat decodes like the same item in every storage variant, close to the original")
+    void idat(String vector) {
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var reference = AvifDecoder.decode(MediaSource.of(com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector("libavif-draw_points_idat.avif")))).picture();
+        var decoded = AvifDecoder.decode(MediaSource.of(com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector)))).picture();
+        AvifConformanceTest.assertPlanesEqual(AvifReference.Planes.of(reference), AvifReference.Planes.of(decoded),
+                vector);
+        var png = com.github.auties00.smalt.testkit.Oracle.decodeVideo(
+                com.github.auties00.smalt.testkit.Conformance.vector("libavif-draw_points.png"), "rgba", 1);
+        var rgba = com.github.auties00.smalt.image.ops.ImageOps.toRgba(decoded);
+        assertEquals(png.length, rgba.width() * rgba.height() * 4);
+        com.github.auties00.smalt.testkit.Tolerance.psnr(30).assertWithin(vector + " against draw_points.png", png,
+                Arrays.copyOf(rgba.pixels(), png.length));
+    }
+
+    @Test
+    @DisplayName("an item of two extents with a byte between them decodes as ffmpeg decodes the joined extents")
+    void extents() {
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector("libavif-arc_triomphe_extent1000_nullbyte_extent1310.avif"));
+        var decoded = AvifDecoder.decode(MediaSource.of(data),
+                ImageDecoderOptions.builder().highBitDepth(true).build()).picture();
+        AvifConformanceTest.assertPlanesEqual(AvifReference.primary(data), AvifReference.Planes.of(decoded),
+                "arc_triomphe");
+    }
 }

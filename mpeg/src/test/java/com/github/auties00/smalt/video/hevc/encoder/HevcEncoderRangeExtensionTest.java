@@ -595,4 +595,38 @@ class HevcEncoderRangeExtensionTest {
         }
         return 10 * Math.log10((double) max * max * count / Math.max(sse, 1e-9));
     }
+
+    /**
+     * Natural content ({@link com.github.auties00.smalt.video.hevc.encoder.NaturalVideo}): windows of the Xiph 4:2:2 and 4:4:4
+     * {@code ducks_take_off} frames and of Netflix's 10-bit 4:2:0 Sintel source (Main 10): Smalt and ffmpeg decode
+     * the stream alike, and the pictures keep their quality.
+     */
+    @Nested
+    @DisplayName("natural content")
+    class Natural {
+        @ParameterizedTest(name = "{0} {1}")
+        @org.junit.jupiter.params.provider.CsvSource({
+                "ducks_take_off_422_720p50-25f.y4m, MAIN_422_10, YUV422, 8",
+                "ducks_take_off_444_720p50-25f.y4m, MAIN_444, YUV444, 8",
+                "Sintel-Weapon_3840x1632_24fps_10bit_420-8f.yuv, MAIN_10, YUV420, 10"})
+        @DisplayName("lossy sequences decode identically in Smalt and ffmpeg and keep their quality")
+        void lossy(String vector, HevcProfile profile, ChromaFormat format, int depth) {
+            var width = 320;
+            var height = 192;
+            var pictures = vector.endsWith(".yuv")
+                    ? com.github.auties00.smalt.video.hevc.encoder.NaturalVideo.yuv420p10(vector, 3840, 1632, 4, 1600, 640, width,
+                    height)
+                    : com.github.auties00.smalt.video.hevc.encoder.NaturalVideo.y4m(vector, 4, 480, 256, width, height);
+            var options = HevcEncoderOptions.builder().profile(profile).chromaFormat(format).bitDepth(depth)
+                    .rateControl(HevcRateControl.CONSTANT_QUALITY).quality(27).bFrames(2).keyframeInterval(7)
+                    .pictureHash(HevcPictureHash.MD5).build();
+            var name = "natural-" + profile + "-" + format + "-" + depth;
+            var decoded = roundTrip(name, width, height, options, pictures);
+            for (var i = 0; i < decoded.size(); i++) {
+                assertTrue(chromaPsnr(decoded.get(i).picture(), pictures.get(i)) > 33, name + ": chroma PSNR of " + i);
+                assertTrue(HevcEncoderHarness.psnr(decoded.get(i).picture(), pictures.get(i)) > 33,
+                        name + ": luma PSNR of " + i);
+            }
+        }
+    }
 }

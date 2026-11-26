@@ -42,13 +42,7 @@ public class HeicDecoderBenchmark {
 
     @Setup
     public void setUp() throws Exception {
-        var sha = switch (file) {
-            case "tests/images/heif_other/pug.heic" -> "1ddce96766efbfa0f6bdf634bdab26bdeff831393df8d67f4cdc7b7a7afebc67";
-            default -> "cb5c7d9131931df4abd9bfe1c3de47617b68d1fae54a1c367fc5981ffea6aeed";
-        };
-        data = Files.readAllBytes(Conformance.fetch("heic-pillow-" + file.replace('/', '-'),
-                "https://raw.githubusercontent.com/bigcat88/pillow_heif/b16be1196dfa465a342d68894696e685ca3655cb/" + file,
-                sha));
+        data = Files.readAllBytes(Conformance.vector("heic-pillow-" + file.replace('/', '-')));
     }
 
     @Benchmark

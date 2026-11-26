@@ -346,4 +346,52 @@ class WavAdmLayoutTest {
     private static byte[] ascii(String text, int length) {
         return java.util.Arrays.copyOf(text.getBytes(StandardCharsets.US_ASCII), length);
     }
+
+    @Nested
+    @DisplayName("EBU libbw64 test files")
+    class Libbw64 {
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"libbw64-rect_16bit.wav", "libbw64-rect_24bit.wav",
+                "libbw64-rect_24bit_bext.wav", "libbw64-rect_24bit_rf64.wav", "libbw64-rect_32bit.wav",
+                "libbw64-noise_24bit_uneven_data_chunk_size.wav"})
+        @DisplayName("read the PCM of a WAVE, RF64 or BW64 file as ffmpeg does")
+        void valid(String name) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var probe = com.github.auties00.smalt.container.ContainerProbe.probe(file);
+            var codec = probe.streams().getFirst().codecName();
+            var expected = com.github.auties00.smalt.testkit.Oracle.run(
+                    com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(1),
+                    List.of("-v", "error", "-i", file.toString(), "-map", "0:a", "-c", "copy", "-f",
+                            codec.substring("pcm_".length()), "-"));
+            var ours = com.github.auties00.smalt.container.ContainerProbe.demux(file,
+                    com.github.auties00.smalt.container.Containers::openDemuxer);
+            var pcm = new ByteArrayOutputStream();
+            for (var packet : ours.order()) {
+                pcm.writeBytes(packet.data());
+            }
+            org.junit.jupiter.api.Assertions.assertArrayEquals(expected, pcm.toByteArray(), name);
+            var audio = (com.github.auties00.smalt.track.AudioTrack) ours.tracks().getFirst();
+            assertEquals(Integer.parseInt(probe.streams().getFirst().get("sample_rate")), audio.sampleRate());
+            assertEquals(Integer.parseInt(probe.streams().getFirst().get("channels")),
+                    audio.layout().orElseThrow().channels());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"libbw64-rect_24bit_nods64.wav",
+                "libbw64-rect_24bit_noriff.wav", "libbw64-rect_24bit_nowave.wav",
+                "libbw64-rect_24bit_wrong_fmt_size.wav"})
+        @DisplayName("reject a file without its ds64, RIFF or WAVE header or with a wrong fmt size as malformed")
+        void invalid(String name) {
+            try (var source = com.github.auties00.smalt.io.MediaSource.of(
+                    com.github.auties00.smalt.testkit.Conformance.vector(name))) {
+                org.junit.jupiter.api.Assertions.assertThrows(com.github.auties00.smalt.MediaException.class, () -> {
+                    try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(source)) {
+                        while (demuxer.read() != null) {
+                            // the whole file
+                        }
+                    }
+                });
+            }
+        }
+    }
 }

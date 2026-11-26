@@ -378,4 +378,15 @@ class OpusAmbisonicTest {
         }
         return -1;
     }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"chromium-bear-opus-4ch-channelmapping2.ogg", "chromium-bear-opus-11ch-channelmapping2.ogg"})
+    @DisplayName("decodes real family 2 files, first and second order with non-diegetic stereo, as libopus does")
+    void realFamily2(String name) {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var head = OpusHead.parse(OggOpusIO.read(Fixtures.read(file)).head(), com.github.auties00.smalt.MediaLimits.DEFAULT);
+        assertEquals(2, head.mappingFamily());
+        assertTrue(head.ambisonic());
+        OpusDecoderDifferentialTest.assertMatchesLibopus(file, 0);
+    }
 }

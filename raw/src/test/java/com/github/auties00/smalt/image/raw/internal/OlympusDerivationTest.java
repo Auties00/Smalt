@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * black-box oracle, and checks that every step selects the layout and the constants of
  * {@link OlympusDecoder}, which then reproduces the oracle exactly. The oracle files are the
  * uncompressed DNG files {@code tools/testdata/raw-oracle.py} writes into
- * {@code <conformance cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory);
+ * {@code <test cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory);
  * the tests are skipped without them. The witnesses mix a flat dark image (E-P5), one whose first
  * photosites are zero (E-P1), images with strong detail and large residuals (E-410, OM-1, TG-7),
  * one whose first photosite escapes (E-M1) and ordinary ones (E-M10, E-P3, E-PL6).
@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class OlympusDerivationTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     private static final List<RawSamples> WITNESSES = List.of(RawSamples.ORF_EP5, RawSamples.ORF_EP1, RawSamples.ORF_EM10,
             RawSamples.ORF_EP3, RawSamples.ORF_E410, RawSamples.ORF_OM1, RawSamples.ORF_TG7, RawSamples.ORF_EM1,
@@ -49,7 +49,7 @@ class OlympusDerivationTest {
                 samples = null;
                 return;
             }
-            samples.add(OlympusDerivation.load(witness.fetch(), dng));
+            samples.add(OlympusDerivation.load(witness.path(), dng));
         }
     }
 

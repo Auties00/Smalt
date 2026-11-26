@@ -612,4 +612,48 @@ class BitmapSubtitleDecoderTest {
             assertEquals(0, canvas[3]);
         }
     }
+
+    @Nested
+    @DisplayName("FATE samples")
+    class Fate {
+        /** The subtitles ffprobe decodes from a file: the number of rectangles of each, in order. */
+        static List<Integer> ffprobeRects(java.nio.file.Path file) {
+            var output = new String(com.github.auties00.smalt.testkit.Oracle.run(
+                    com.github.auties00.smalt.testkit.Oracle.Tool.FFPROBE, java.time.Duration.ofMinutes(1),
+                    List.of("-v", "error", "-select_streams", "s", "-show_frames", "-of", "compact", file.toString())),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            var rects = new ArrayList<Integer>();
+            for (var line : output.split("\r?\n")) {
+                var matcher = java.util.regex.Pattern.compile("num_rects=([0-9]+)").matcher(line);
+                if (line.startsWith("subtitle") && matcher.find()) {
+                    rects.add(Integer.parseInt(matcher.group(1)));
+                }
+            }
+            return rects;
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"fate-sub-pgs_sub.sup",
+                "fate-sub-dvbsubtest_filter.ts"})
+        @DisplayName("decode a PGS and a DVB subtitle stream into the displays ffmpeg's decoders find")
+        void displays(String name) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var demuxed = com.github.auties00.smalt.container.ContainerProbe.demux(file,
+                    com.github.auties00.smalt.container.Containers::openDemuxer);
+            var track = demuxed.tracks().stream().filter(candidate -> candidate.codec() == Codec.PGS
+                    || candidate.codec() == Codec.DVB_SUBTITLE).findFirst().orElseThrow();
+            var cues = decode(new BitmapSubtitleDecoder(track), demuxed.packetsOf(track));
+            var expected = ffprobeRects(file).stream().filter(count -> count > 0).toList();
+            assertTrue(!expected.isEmpty(), "ffmpeg decodes a display");
+            assertEquals(expected, cues.stream().map(cue -> cue.regions().size()).toList());
+            for (var cue : cues) {
+                assertTrue(cue.endMicros() > cue.startMicros(), cue.toString());
+                for (var region : cue.regions()) {
+                    assertTrue(region.x() >= 0 && region.y() >= 0
+                            && region.x() + region.picture().width() <= cue.canvasWidth()
+                            && region.y() + region.picture().height() <= cue.canvasHeight(), "region inside the canvas");
+                }
+            }
+        }
+    }
 }

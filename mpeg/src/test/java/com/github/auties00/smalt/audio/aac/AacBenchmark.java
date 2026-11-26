@@ -95,7 +95,7 @@ public class AacBenchmark {
 
         @Setup(Level.Trial)
         public void setUp() throws Exception {
-            stream = AacTestSupport.parseMp4(Files.readAllBytes(HeAacConformanceTest.fetch(name)));
+            stream = AacTestSupport.parseMp4(Files.readAllBytes(HeAacConformanceTest.file(name)));
             var seconds = stream.frames().size() * 1024.0 / stream.sampleRate();
             var loops = (int) Math.ceil(60 / seconds);
             var repeated = new java.util.ArrayList<Packet>();

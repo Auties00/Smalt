@@ -16,7 +16,8 @@ import java.util.Locale;
  *
  * <p>A MicroDVD file holds one cue per line, {@code {start}{end}text}, the times in frames and the lines of
  * the text separated by {@code |}; an empty end lasts until the next cue. A first cue at frame 0 or 1
- * whose text is a number gives the frame rate ({@code {1}{1}23.976}, the rates 23.976, 29.97 and 59.94
+ * whose text is a number, optionally followed by {@code fps}, gives the frame rate ({@code {1}{1}23.976},
+ * {@code {0}{}25.000 FPS}; the rates 23.976, 29.97 and 59.94
  * read as the NTSC rates 24000/1001, 30000/1001 and 60000/1001). Control codes at the start of a line
  * style that line when lowercase and every following line of the cue when uppercase: {@code {y:b,i,u,s}}
  * the styles, {@code {c:$BBGGRR}} the color, {@code {f:name}} the font and {@code {s:size}} the font size;
@@ -166,6 +167,10 @@ public final class MicroDvdText {
      * @return the rate, or {@code null} when the text is not a number from 0.001 to 1000
      */
     static Rational rate(String text) {
+        // some writers follow the number with its unit ({0}{}25.000 FPS)
+        if (text.regionMatches(true, Math.max(0, text.length() - 3), "fps", 0, 3)) {
+            text = text.substring(0, text.length() - 3).strip();
+        }
         if (text.isEmpty() || text.length() > 16) {
             return null;
         }

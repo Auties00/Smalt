@@ -403,4 +403,229 @@ class LoudnessMeterTest {
             assertThrows(IllegalArgumentException.class, () -> new LoudnessMeter(ChannelLayout.STEREO, 3_000_000));
         }
     }
+
+    @Nested
+    @DisplayName("reference signals")
+    class References {
+        /** A decoded signal: its layout, rate and planes. */
+        record Signal(ChannelLayout layout, int rate, float[][] planes) {
+        }
+
+        private static Signal decode(byte[] wav) {
+            try (var reader = com.github.auties00.smalt.audio.AudioReader.open(
+                    com.github.auties00.smalt.io.MediaSource.of(wav))) {
+                var blocks = new ArrayList<float[][]>();
+                var frames = 0;
+                AudioBuffer block;
+                while ((block = reader.read()) != null) {
+                    var copy = new float[block.channels()][];
+                    for (var channel = 0; channel < copy.length; channel++) {
+                        copy[channel] = java.util.Arrays.copyOf(block.plane(channel), block.frames());
+                    }
+                    blocks.add(copy);
+                    frames += block.frames();
+                }
+                var planes = new float[reader.layout().channels()][frames];
+                var at = 0;
+                for (var copy : blocks) {
+                    for (var channel = 0; channel < planes.length; channel++) {
+                        System.arraycopy(copy[channel], 0, planes[channel], at, copy[channel].length);
+                    }
+                    at += copy[0].length;
+                }
+                return new Signal(reader.layout(), reader.sampleRate(), planes);
+            }
+        }
+
+        private static byte[] member(String name) {
+            try (var zip = new java.util.zip.ZipFile(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "ebu-loudness-test-setv05.zip").toFile())) {
+                var entry = zip.getEntry(name);
+                assertTrue(entry != null, name + " is not in the EBU loudness test set");
+                try (var in = zip.getInputStream(entry)) {
+                    return in.readAllBytes();
+                }
+            } catch (java.io.IOException exception) {
+                throw new java.io.UncheckedIOException(exception);
+            }
+        }
+
+        /** Meters a signal in 10 ms steps, returning the meter and the largest momentary and short-term loudness. */
+        private static double[] meter(Signal signal, LoudnessMeter meter) {
+            var step = signal.rate() / 100;
+            var maxMomentary = Double.NEGATIVE_INFINITY;
+            var maxShortTerm = Double.NEGATIVE_INFINITY;
+            var frames = signal.planes()[0].length;
+            for (var offset = 0; offset < frames; offset += step) {
+                meter.accept(signal.planes(), offset, Math.min(step, frames - offset));
+                maxMomentary = Math.max(maxMomentary, meter.momentary());
+                maxShortTerm = Math.max(maxShortTerm, meter.shortTerm());
+            }
+            return new double[]{maxMomentary, maxShortTerm};
+        }
+
+        private static LoudnessMeter meter(Signal signal) {
+            return new LoudnessMeter(signal.layout(), signal.rate());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({
+                "seq-3341-1-16bit.wav, -23.0", "seq-3341-2-16bit.wav, -33.0", "seq-3341-3-16bit-v02.wav, -23.0",
+                "seq-3341-4-16bit-v02.wav, -23.0", "seq-3341-5-16bit-v02.wav, -23.0",
+                "seq-3341-6-5channels-16bit.wav, -23.0", "seq-3341-6-6channels-WAVEEX-16bit.wav, -23.0",
+                "seq-3341-7_seq-3342-5-24bit.wav, -23.0", "seq-3341-2011-8_seq-3342-6-24bit-v02.wav, -23.0",
+                "1kHz Sine -20 LUFS-16bit.wav, -20.0", "1kHz Sine -26 LUFS-16bit.wav, -26.0",
+                "1kHz Sine -40 LUFS-16bit.wav, -40.0",
+                "EBU-reference_listening_signal_pinknoise_500Hz_2kHz_R128.wav, -23.0"})
+        @DisplayName("measures the integrated loudness of the EBU Tech 3341 test set within 0.1 LU")
+        void integrated(String name, double expected) {
+            var signal = decode(member(name));
+            var meter = meter(signal);
+            meter(signal, meter);
+            assertEquals(expected, meter.integrated(), 0.1, name);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"seq-3342-1-16bit.wav, 10", "seq-3342-2-16bit.wav, 5", "seq-3342-3-16bit.wav, 20",
+                "seq-3342-4-16bit.wav, 15", "seq-3341-7_seq-3342-5-24bit.wav, 5",
+                "seq-3341-2011-8_seq-3342-6-24bit-v02.wav, 15"})
+        @DisplayName("measures the loudness range of the EBU Tech 3342 test set within 1 LU")
+        void loudnessRange(String name, double expected) {
+            var signal = decode(member(name));
+            var meter = meter(signal);
+            meter(signal, meter);
+            assertEquals(expected, meter.loudnessRange(), 1.0, name);
+        }
+
+        @Test
+        @DisplayName("keeps the short-term loudness of EBU Tech 3341 case 9 at -23 LUFS once 3 s have passed")
+        void constantShortTerm() {
+            var signal = decode(member("seq-3341-9-24bit.wav"));
+            var meter = meter(signal);
+            var step = signal.rate() / 100;
+            var frames = signal.planes()[0].length;
+            for (var offset = 0; offset < frames; offset += step) {
+                meter.accept(signal.planes(), offset, Math.min(step, frames - offset));
+                if (offset >= 3 * signal.rate()) {
+                    assertEquals(-23.0, meter.shortTerm(), 0.1, "at " + offset);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("keeps the momentary loudness of EBU Tech 3341 case 12 at -23 LUFS once 0.4 s have passed")
+        void constantMomentary() {
+            var signal = decode(member("seq-3341-12-24bit.wav"));
+            var meter = meter(signal);
+            var step = signal.rate() / 100;
+            var frames = signal.planes()[0].length;
+            for (var offset = 0; offset < frames; offset += step) {
+                meter.accept(signal.planes(), offset, Math.min(step, frames - offset));
+                if (offset >= signal.rate() * 4 / 10) {
+                    assertEquals(-23.0, meter.momentary(), 0.1, "at " + offset);
+                }
+            }
+        }
+
+        @ParameterizedTest(name = "case {0}")
+        @ValueSource(ints = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20})
+        @DisplayName("reaches a maximum short-term loudness of -23 LUFS in EBU Tech 3341 case 10 and a maximum "
+                + "momentary loudness of -23 LUFS in case 13")
+        void maxima(int index) {
+            var shortTerm = decode(member("seq-3341-10-" + index + "-24bit.wav"));
+            assertEquals(-23.0, meter(shortTerm, meter(shortTerm))[1], 0.1, "10-" + index);
+            var name = "seq-3341-13-" + index + "-24bit.wav" + (index <= 2 ? "" : ".wav");
+            var momentary = decode(member(name));
+            assertEquals(-23.0, meter(momentary, meter(momentary))[0], 0.1, name);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"seq-3341-15-24bit.wav.wav, -6.0", "seq-3341-16-24bit.wav.wav, -6.0",
+                "seq-3341-17-24bit.wav.wav, -6.0", "seq-3341-18-24bit.wav.wav, -6.0",
+                "seq-3341-19-24bit.wav.wav, 3.0", "seq-3341-20-24bit.wav.wav, 0.0", "seq-3341-21-24bit.wav.wav, 0.0",
+                "seq-3341-22-24bit.wav.wav, 0.0", "seq-3341-23-24bit.wav.wav, 0.0"})
+        @DisplayName("measures the true peak of the EBU Tech 3341 test set within +0.2 and -0.4 dB")
+        void truePeak(String name, double expected) {
+            var signal = decode(member(name));
+            var meter = meter(signal);
+            meter(signal, meter);
+            var peak = 20 * Math.log10(meter.truePeak());
+            assertTrue(peak >= expected - 0.4 && peak <= expected + 0.2, name + ": " + peak + " dBTP");
+        }
+
+        /** Reads a 16-bit little-endian PCM file of the ITU-T STL bs1770demo as planes of a layout. */
+        private static Signal stl(String vector, ChannelLayout layout) {
+            byte[] bytes;
+            try {
+                bytes = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+            } catch (java.io.IOException exception) {
+                throw new java.io.UncheckedIOException(exception);
+            }
+            var channels = layout.channels();
+            var frames = bytes.length / 2 / channels;
+            var planes = new float[channels][frames];
+            var words = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer();
+            for (var frame = 0; frame < frames; frame++) {
+                for (var channel = 0; channel < channels; channel++) {
+                    planes[channel][frame] = words.get() / 32768f;
+                }
+            }
+            return new Signal(layout, 48_000, planes);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"bs1770-stl-sine997_0dBFS.pcm, FIVE_ONE, -3.01",
+                "bs1770-stl-sine997_0dBFS.26LKFS.pcm, FIVE_ONE, -26.0",
+                "bs1770-stl-sine_noise_test.16LKFS.000L11.pcm, FIVE_ONE, -16.0",
+                "bs1770-stl-sine_noise_test.16LKFS.11L000.pcm, SURROUNDS_FIRST, -16.0"})
+        @DisplayName("measures the ITU-T STL bs1770demo signals at the loudness the reference tool normalized them to")
+        void stl(String vector, String layout, double expected) {
+            // bs1770demo's 48 kHz 16-bit files: six channels whose weights its -conf string gives ('0' a front
+            // channel, '1' a surround one weighted 1.41, 'L' the LFE, excluded)
+            var channels = layout.equals("FIVE_ONE") ? ChannelLayout.SURROUND_5_1
+                    : new ChannelLayout(List.of(Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.LOW_FREQUENCY,
+                    Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER));
+            var signal = stl(vector, channels);
+            var meter = meter(signal);
+            meter(signal, meter);
+            assertEquals(expected, meter.integrated(), 0.1, vector);
+        }
+
+        @Test
+        @DisplayName("moves the loudness of the STL ramp and noise by the gain the reference tool normalized them with")
+        void stlGains() {
+            // normalization is a gain: the gated loudness moves by it, measured between the files; the ramp normalized
+            // by RMS measures louder than the one normalized by gated loudness, whose gate leaves its quiet start out
+            var original = stl("bs1770-stl-sine_ramp.pcm", ChannelLayout.MONO);
+            var first = meter(original);
+            meter(original, first);
+            for (var name : List.of("bs1770-stl-sine_ramp.26LKFS.pcm", "bs1770-stl-sine_ramp.26LKFSrms.pcm")) {
+                var normalized = stl(name, ChannelLayout.MONO);
+                var second = meter(normalized);
+                meter(normalized, second);
+                var gain = 20 * Math.log10(peak(normalized) / peak(original));
+                assertEquals(first.integrated() + gain, second.integrated(), 0.1, name);
+            }
+            var gated = meter(stl("bs1770-stl-sine_ramp.26LKFS.pcm", ChannelLayout.MONO));
+            meter(stl("bs1770-stl-sine_ramp.26LKFS.pcm", ChannelLayout.MONO), gated);
+            var rms = meter(stl("bs1770-stl-sine_ramp.26LKFSrms.pcm", ChannelLayout.MONO));
+            meter(stl("bs1770-stl-sine_ramp.26LKFSrms.pcm", ChannelLayout.MONO), rms);
+            assertTrue(rms.integrated() > gated.integrated(), rms.integrated() + " vs " + gated.integrated());
+            var noise = stl("bs1770-stl-sine_noise_test.pcm", ChannelLayout.SURROUND_5_1);
+            var noiseMeter = meter(noise);
+            meter(noise, noiseMeter);
+            var weighted = stl("bs1770-stl-sine_noise_test.16LKFS.000L11.pcm", ChannelLayout.SURROUND_5_1);
+            assertEquals(-16.0, noiseMeter.integrated() + 20 * Math.log10(peak(weighted) / peak(noise)), 0.1);
+        }
+
+        private static double peak(Signal signal) {
+            var peak = 0.0;
+            for (var plane : signal.planes()) {
+                for (var sample : plane) {
+                    peak = Math.max(peak, Math.abs(sample));
+                }
+            }
+            return peak;
+        }
+    }
 }

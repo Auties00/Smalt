@@ -813,4 +813,16 @@ class Mp4ChapterTrackTest {
             Oracle.assertDecodesCleanly(file);
         }
     }
+
+    @Test
+    @DisplayName("reads the chapter track of a 5-hour LibriVox audiobook as ffprobe does, cover art left out")
+    void audiobook() {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("librivox-MobyDickOrTheWhalePart1_librivox.m4b");
+        var tags = TagEditor.read(file);
+        var expected = TagFixtures.ffprobeChapters(file);
+        assertEquals(11, expected.size());
+        assertFfprobeChapters(tags.chapters(), file);
+        // the chapter track's last chapter ends with the movie
+        assertEquals(expected.getLast().endMicros(), tags.chapters().getLast().endMicros(), 50_000);
+    }
 }

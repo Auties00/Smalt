@@ -1420,7 +1420,7 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "ape", "valid-s8-mono-tagged.ape", audio.resolve("ape/s8-mono-c3000.ape"));
         copy(DemuxerFuzzTest.class, "musepack", "valid-sv8-stereo.mpc", audio.resolve("musepack/stereo-short.mpc"));
         // the first frames of a Musepack SV7 file, its header announcing more
-        var sv7 = Files.readAllBytes(Conformance.fetchListed("fate-inside-mp7.mpc"));
+        var sv7 = Files.readAllBytes(Conformance.vector("fate-inside-mp7.mpc"));
         write(DemuxerFuzzTest.class, "musepack", "valid-sv7-head.mpc", Arrays.copyOf(sv7, 6000));
         var tone = DsdSamples.modulate(2_822_400, 2048, 0.5, 1000);
         var stereo = DsdSamples.modulate(2_822_400, 1024, 0.4, 1000, 1500);
@@ -1429,7 +1429,7 @@ class FuzzSeedWriter {
         write(DemuxerFuzzTest.class, "dsf", "valid-stereo-msb.dsf", DsdSamples.dsf(2_822_400, 2, stereo, false, null));
         write(DemuxerFuzzTest.class, "dsdiff", "valid-stereo-markers.dff", DsdSamples.dsdiff(2_822_400,
                 new String[]{"SLFT", "SRGT"}, stereo, 0, 4096));
-        copy(DemuxerFuzzTest.class, "dsdiff", "valid-dst.dff", Conformance.fetchListed("fate-dst-64fs44-2ch.dff"));
+        copy(DemuxerFuzzTest.class, "dsdiff", "valid-dst.dff", Conformance.vector("fate-dst-64fs44-2ch.dff"));
         var codecs = Arrays.stream(Codec.values()).filter(Codec::isDsd).toList();
         var dsf = Files.createTempFile("smalt-seed", ".dsf");
         var dff = Files.createTempFile("smalt-seed", ".dff");

@@ -195,6 +195,63 @@ class HdrCodecTest {
                     "gbrpf32le")), width, 4, 3);
             assertArrayEquals(theirs, keep(file).pixels());
         }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"image1", "rgbr4x4", "scale"})
+        @DisplayName("Smalt reads external Radiance files (adaptive run-length, EXPOSURE) as ffmpeg does")
+        void external(String name) throws java.io.IOException {
+            // image-rs's test files; ffmpeg decodes the stored RGBE values without applying EXPOSURE, as Smalt does
+            var file = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "hdr-imagers-" + name + ".hdr"));
+            var picture = keep(file);
+            var theirs = RasterFixtures.interleaveGbr(RasterFixtures.floatsLe(RasterFixtures.ffmpegDecode(file, "hdr",
+                    "gbrpf32le")), picture.width(), picture.height(), 3);
+            assertArrayEquals(theirs, RasterFixtures.tight(picture), name);
+        }
+
+        @Test
+        @DisplayName("Smalt reads an old run-length file as Radiance's oldreadcolrs does")
+        void externalOldRunLength() throws java.io.IOException {
+            // ffmpeg 8 reads this file's old run-length repeats wrongly (a zero where the repeated pixel is 64, 128,
+            // 192, 127), so the reference is Radiance's own algorithm (src/common/color.c, oldreadcolrs): a pixel
+            // 1, 1, 1, n repeats the previous pixel n << shift times, the shift growing by 8 for each such pixel in
+            // a row
+            var file = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "hdr-imagers-old-rle.hdr"));
+            var text = new String(file, StandardCharsets.ISO_8859_1);
+            var headerEnd = text.indexOf("\n\n") + 2;
+            var lineEnd = text.indexOf('\n', headerEnd);
+            assertEquals("-Y 276 +X 551", text.substring(headerEnd, lineEnd));
+            var width = 551;
+            var height = 276;
+            var expected = new float[width * height * 3];
+            var at = lineEnd + 1;
+            for (var y = 0; y < height; y++) {
+                var x = 0;
+                var shift = 0;
+                while (x < width) {
+                    var r = file[at] & 0xFF;
+                    var g = file[at + 1] & 0xFF;
+                    var b = file[at + 2] & 0xFF;
+                    var e = file[at + 3] & 0xFF;
+                    at += 4;
+                    if (r == 1 && g == 1 && b == 1) {
+                        for (var repeat = e << shift; repeat > 0 && x < width; repeat--, x++) {
+                            System.arraycopy(expected, (y * width + x - 1) * 3, expected, (y * width + x) * 3, 3);
+                        }
+                        shift += 8;
+                    } else {
+                        var scale = e == 0 ? 0 : Math.scalb(1f, e - 136);
+                        expected[(y * width + x) * 3] = r * scale;
+                        expected[(y * width + x) * 3 + 1] = g * scale;
+                        expected[(y * width + x) * 3 + 2] = b * scale;
+                        x++;
+                        shift = 0;
+                    }
+                }
+            }
+            assertArrayEquals(expected, RasterFixtures.tight(keep(file)));
+        }
     }
 
     @Nested

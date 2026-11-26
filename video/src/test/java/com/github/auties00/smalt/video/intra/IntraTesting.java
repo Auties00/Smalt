@@ -114,12 +114,51 @@ public final class IntraTesting {
     }
 
     public static byte[] ffmpegDecode(Path file, String pixelFormat, int frames) {
-        var arguments = new ArrayList<>(List.of("-v", "error", "-i", file.toString(), "-map", "0:v:0"));
+        return ffmpegDecode(file, List.of(), pixelFormat, frames);
+    }
+
+    /** Decodes a file with ffmpeg as {@link #ffmpegDecode(Path, String, int)} does, with input options. */
+    public static byte[] ffmpegDecode(Path file, List<String> inputArguments, String pixelFormat, int frames) {
+        var arguments = new ArrayList<>(List.of("-v", "error"));
+        arguments.addAll(inputArguments);
+        arguments.addAll(List.of("-i", file.toString(), "-map", "0:v:0"));
         if (frames > 0) {
             arguments.addAll(List.of("-frames:v", Integer.toString(frames)));
         }
         arguments.addAll(List.of("-f", "rawvideo", "-pix_fmt", pixelFormat, "-fps_mode", "passthrough", "-"));
         return Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), arguments);
+    }
+
+    /**
+     * Decodes one frame of a file with ffmpeg, picked by its index in output order, as raw video of a pixel format
+     * whose frames take {@code frameBytes}: ffmpeg decodes the frames up to it and only the last one is kept.
+     */
+    public static byte[] ffmpegDecodeFrame(Path file, List<String> inputArguments, String pixelFormat, int index,
+                                           int frameBytes) {
+        var arguments = new ArrayList<>(List.of("-v", "error"));
+        arguments.addAll(inputArguments);
+        arguments.addAll(List.of("-i", file.toString(), "-map", "0:v:0", "-frames:v", Integer.toString(index + 1),
+                "-f", "rawvideo", "-pix_fmt", pixelFormat, "-fps_mode", "passthrough", "-"));
+        var last = new byte[frameBytes];
+        var total = new long[1];
+        Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), arguments, new java.io.OutputStream() {
+            @Override
+            public void write(int b) {
+                write(new byte[]{(byte) b}, 0, 1);
+            }
+
+            @Override
+            public void write(byte[] data, int offset, int length) {
+                for (var i = 0; i < length; i++) {
+                    last[(int) (total[0]++ % frameBytes)] = data[offset + i];
+                }
+            }
+        });
+        if (total[0] != (long) frameBytes * (index + 1)) {
+            throw new AssertionError("ffmpeg decoded " + total[0] + " bytes, expected " + (index + 1) + " frames of "
+                    + frameBytes);
+        }
+        return last;
     }
 
     /** Returns the PSNR of two raw buffers of samples of the given byte width and peak value. */

@@ -273,4 +273,51 @@ class OpusDnnGoldenTest {
         }
         digest.update(out.array(), 0, out.position());
     }
+
+    /** One OSCE test bitstream decoded at one complexity, with libopus's result. */
+    record OsceCase(String bitstream, int complexity, String sha256, int samples) {
+        @Override
+        public String toString() {
+            return bitstream.substring(bitstream.lastIndexOf('/') + 1) + " at complexity " + complexity;
+        }
+    }
+
+    static Stream<OsceCase> osce() {
+        try (var in = OpusDnnGoldenTest.class.getResourceAsStream("osce-goldens.tsv")) {
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).lines()
+                    .filter(line -> !line.isBlank() && !line.startsWith("#"))
+                    .map(line -> line.split("\t"))
+                    .map(f -> new OsceCase(f[0], Integer.parseInt(f[1]), f[2], Integer.parseInt(f[3])))
+                    .toList().stream();
+        } catch (java.io.IOException exception) {
+            throw new java.io.UncheckedIOException(exception);
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("osce")
+    @DisplayName("decodes the OSCE test bitstreams of real speech as the libopus neural build does, LACE at 6 and NoLACE at 10")
+    void osceBitExact(OsceCase test) {
+        // the SILK wideband bitstreams of osce_testvectors_v0 (6, 12 and 24 kbit/s and switching, encoder
+        // complexity 0 and 10) carry the encoder's final range of every packet, which the decoder must reproduce
+        var file = com.github.auties00.smalt.testkit.Conformance.archive("opus-osce-v0-en-subset")
+                .member("osce_testvectors_v0/" + test.bitstream());
+        var packets = OpusVectors.readBit(file);
+        var decoder = new OpusDecoder(OpusDecoderOptions.builder().sampleRate(16000).channels(1)
+                .complexity(test.complexity()).build());
+        var max = 16 * 120;
+        var floats = new float[max];
+        var out = ByteBuffer.allocate(4 * max).order(ByteOrder.LITTLE_ENDIAN);
+        var digest = sha256();
+        var samples = 0;
+        for (var i = 0; i < packets.size(); i++) {
+            var packet = packets.get(i);
+            var n = decoder.decode(packet.data(), 0, packet.data().length, floats, 0, max);
+            assertEquals(packet.finalRange(), decoder.finalRange(), "final range of packet " + i);
+            write(out, digest, false, floats, null, 1, n);
+            samples += n;
+        }
+        assertEquals(test.samples(), samples, "samples");
+        assertEquals(test.sha256(), HexFormat.of().formatHex(digest.digest()), "decode of " + test);
+    }
 }

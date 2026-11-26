@@ -85,7 +85,7 @@ final class TsDtsTest {
             return read(Fixtures.tone("dts", 1000, 48000, 6, 1, List.of("-c:a", "dca", "-strict", "-2")));
         }
         if (!source.name().equals("express")) {
-            return read(Conformance.fetchListed("dts-" + source.name() + ".dtshd"));
+            return read(Conformance.vector("dts-" + source.name() + ".dtshd"));
         }
         var stream = new ByteArrayOutputStream();
         for (var index = 0; index < 40; index++) {

@@ -817,9 +817,7 @@ class TiffMetadataTest {
         @Test
         @DisplayName("edits every libtiff test image that it can read, keeping its pages")
         void libtiffPictures() {
-            Map<String, byte[]> pictures = RasterTesting.untarGz(Conformance.fetch("libtiff-pics-3.8.0.tar.gz",
-                    "http://download.osgeo.org/libtiff/pics-3.8.0.tar.gz",
-                    "e0e34732b61e1ce49eff2c7a079994c856d2a5f772f5228c84678272bc6829a9"));
+            Map<String, byte[]> pictures = RasterTesting.untarGz(Conformance.vector("libtiff-pics-3.8.0.tar.gz"));
             var edited = 0;
             for (var entry : pictures.entrySet()) {
                 var name = entry.getKey();

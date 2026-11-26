@@ -33,7 +33,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Measures ProRes 422 HQ and DNxHR HQ decoding and encoding of 1920x1080 frames of natural video
- * (the Xiph {@code parkrun} sequence upscaled, or a synthetic scene without it), per frame, on one
+ * (the Xiph {@code parkrun} sequence upscaled), per frame, on one
  * thread and on the shared pool. The ffmpeg streams it decodes come from prores_ks and dnxhd.
  */
 @State(Scope.Benchmark)
@@ -54,11 +54,7 @@ public class IntraBenchmark {
     private DnxhdEncoder dnxhdEncoder;
 
     static List<String> input() {
-        var parkrun = Path.of(Conformance.directory().toString(), "720p50_parkrun_ter.y4m");
-        if (Files.isRegularFile(parkrun)) {
-            return List.of("-i", parkrun.toString());
-        }
-        return List.of("-f", "lavfi", "-i", "mandelbrot=size=1920x1080:rate=25");
+        return List.of("-i", Conformance.vector("720p50_parkrun_ter.y4m").toString());
     }
 
     static Path encoded(List<String> codec) {

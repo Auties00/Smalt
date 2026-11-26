@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -21,9 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Checks every raw sample that has an Adobe DNG Converter oracle file in the coverage directory
  * against it, photosite for photosite: the compressed ORF and Panasonic RW2 version 4 samples of
  * {@code tools/testdata/vectors.tsv}, whose oracle files {@code tools/testdata/raw-oracle.py --coverage}
- * writes into {@code <conformance cache>/raw-oracle-coverage} ({@code -Dsmalt.test.rawCoverage}
- * overrides the directory). Each oracle file is matched with the sample of the same name in the
- * conformance cache; without oracle files the test is skipped. The converter may drop rows at the
+ * writes into {@code <test cache>/raw-oracle-coverage} ({@code -Dsmalt.test.rawCoverage}
+ * overrides the directory). Each oracle file is matched with the sample of the same name the test data lists;
+ * without oracle files the test is skipped. The converter may drop rows at the
  * bottom and columns on the right, so the oracle is compared at the top-left corner of the decoded
  * plane. Every photosite inside the image area (the decoder's default crop) must match; in
  * the padding columns right of it the converter fills a few zero photosites from fewer neighbors
@@ -36,7 +37,7 @@ class RawOracleCoverageTest {
     private static final String NONE = "no oracle files";
 
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawCoverage",
-            Conformance.directory().resolve("raw-oracle-coverage").toString()));
+            Conformance.cache("raw-oracle-coverage").toString()));
 
     static Stream<String> samples() throws IOException {
         if (!Files.isDirectory(ORACLE)) {
@@ -45,10 +46,22 @@ class RawOracleCoverageTest {
         try (var files = Files.list(ORACLE)) {
             List<String> names = files.map(path -> path.getFileName().toString())
                     .filter(name -> name.endsWith(".dng"))
+                    .filter(name -> raw(name).isPresent())
                     .sorted()
                     .toList();
             return names.isEmpty() ? Stream.of(NONE) : names.stream();
         }
+    }
+
+    /**
+     * Returns the name of the sample an oracle file was converted from, if the test data lists it.
+     */
+    private static Optional<String> raw(String oracleName) {
+        var base = oracleName.substring(0, oracleName.length() - 4);
+        return Stream.of(".orf", ".rw2", ".rwl")
+                .map(extension -> base + extension)
+                .filter(Conformance::listed)
+                .findFirst();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -56,12 +69,7 @@ class RawOracleCoverageTest {
     @DisplayName("the decoder reproduces every photosite the converter stores for the sample")
     void sample(String oracleName) {
         Skip.unless(!oracleName.equals(NONE), "data:raw-oracle-coverage", "no oracle files in " + ORACLE + "; run tools/testdata/raw-oracle.py --coverage");
-        var base = oracleName.substring(0, oracleName.length() - 4);
-        var raw = Stream.of(".orf", ".rw2", ".rwl")
-                .map(extension -> Conformance.directory().resolve(base + extension))
-                .filter(Files::isRegularFile)
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("no sample for " + oracleName));
+        var raw = Conformance.vector(raw(oracleName).orElseThrow(() -> new AssertionError("no sample for " + oracleName)));
         var oracle = NikonTableDerivation.oracle(ORACLE.resolve(oracleName));
         SensorPlane decoded;
         double[] crop;

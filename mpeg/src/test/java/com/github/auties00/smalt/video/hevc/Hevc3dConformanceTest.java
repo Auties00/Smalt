@@ -47,34 +47,48 @@ import static org.junit.jupiter.api.Assertions.fail;
  * depth picture's chroma mid-gray 4:2:0 planes) against the per-picture MD5s of the output of the
  * 3D-HEVC reference decoder HTM-16.3 kept with the test ({@code threeD/frame-md5.txt}, written by
  * {@code tools/testdata/hevc-3d/frame-md5.py}, whose whole-layer MD5s equal those the archives ship),
- * and the MD5 of each layer's whole output against the archive's. Each archive is pinned by its
- * SHA-256 and cached by {@link Conformance#fetch}.
+ * and the MD5 of each layer's whole output against the archive's. The common test streams
+ * ({@code 3DHC_C_*}) and the depth coding streams of the H.265.1 (10/2018) set ({@code 3DHC_D1_*}: wedgelet and
+ * contour modes, segment-wise DC coding and depth look-up tables; {@code 3DHC_D2_*}: inter-view motion prediction
+ * for depth) have no per-picture list yet (key {@code -} in the manifest): their layers are checked against the
+ * whole-layer MD5s of the archive only. Each archive is read from the hosted test data by {@link Conformance#vector}.
  */
 @DisplayName("HEVC 3D conformance bitstreams (ITU-T H.265.1, 3D-HEVC)")
 class Hevc3dConformanceTest {
-    private static final String BASE = "https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/3D-HEVC/";
-
     /**
-     * Name | key in the per-picture MD5 list | SHA-256 of the archive | bitstream entry.
+     * Name | key in the per-picture MD5 list | bitstream entry.
      */
     private static final String MANIFEST = """
-            3DHC_T_A_Qualcomm_3|A|1e9a1c0752db4f8a04c9fcc036dbecab039f4d423851fd4ee1c20cc9a0d3676f|3DHC_T_A_Qualcomm_3/3DHC_T_A.bit
-            3DHC_T_B_MediaTek_3|B|c7acbe5a2adcc61cea2b6512ec76152d36072bbe330e1a06ee06828ce18c4e7b|3DHC_T_B_MediaTek_3/3DHC_T_B.bit
-            3DHC_T_C_Sharp_3|C|0165b8cce3d6c5f00bd50c5efd9c363b8c153146b4caefbf9aa63730ac26ce96|3DHC_T_C_Sharp_3/3DHC_T_C.bit
-            3DHC_T_D_Sharp_3|D|fbb808616d3de98d0bdb8beceb01e29f665948dcf361d333fa960e2e34b6ad19|3DHC_T_D_Sharp_3/3DHC_T_D.bit
-            3DHC_T_E_HHI_3|E|bdb7a7f8d891aea19aef4fc752e0a91a7e7bc0b9135d92fece74b2c25c8854a6|3DHC_T_E.bit
-            3DHC_DT_A_MediaTek_3|DA|5d297a751acb27476e6174fd3189a595f8b379d231443daae3a88f41c19175f1|3DHC_DT_A.bit
-            3DHC_DT_B_NTT_3|DB|28e9b6a3bd87f9e70f01c82a9f68d3b5398dbdaa9a77b21e80f1fba7ced2f6d4|3DHC_DT_B.bit
-            3DHC_DT_C_Hisilicon_3|DC|c0100aae8edbac39155125f616fd88df76706a0e064086ba01216c0729295de0|3DHC_DT_C.bit
-            3DHC_DT_D_NTT_3|DD|f620440076f72beb6e7631b677a6c46515714d0f3f7486ad9ae0705e1c6dc6f8|3DHC_DT_D.bit
-            3DHC_TD_A_Qualcomm_3|TA|9ca38e438ea4ffd8e2e76c2943389534ddbd9d6a071f1af9dba227071f8b80a9|3DHC_TD_A_Qualcomm_3/3DHC_TD_A.bit
-            3DHC_TD_B_MediaTek_3|TB|c95d07e305d79ee2ef66696cd84cc857d1e0e864698bd995169ae3b398faa5f7|3DHC_TD_B_MediaTek_3/3DHC_TD_B.bit
-            3DHC_TD_C_MediaTek_3|TC|8b67a3f71475af469cedda80158d249008ded42f90134465b3090d274fc9b059|3DHC_TD_C.bit
-            3DHC_TD_D_HHI_3|TD|80c8ee929122b111792a13cdc6736c18e621cc7c810c015742a067d6e7ef418b|3DHC_TD_D.bit
-            3DHC_TD_E_HHI_3|TE|c1b738b3664cb587b17294e6a6c64b1027f2b61b8f80f9d4017a7e6845e287d3|3DHC_TD_E.bit
+            3DHC_T_A_Qualcomm_3|A|3DHC_T_A_Qualcomm_3/3DHC_T_A.bit
+            3DHC_T_B_MediaTek_3|B|3DHC_T_B_MediaTek_3/3DHC_T_B.bit
+            3DHC_T_C_Sharp_3|C|3DHC_T_C_Sharp_3/3DHC_T_C.bit
+            3DHC_T_D_Sharp_3|D|3DHC_T_D_Sharp_3/3DHC_T_D.bit
+            3DHC_T_E_HHI_3|E|3DHC_T_E.bit
+            3DHC_DT_A_MediaTek_3|DA|3DHC_DT_A.bit
+            3DHC_DT_B_NTT_3|DB|3DHC_DT_B.bit
+            3DHC_DT_C_Hisilicon_3|DC|3DHC_DT_C.bit
+            3DHC_DT_D_NTT_3|DD|3DHC_DT_D.bit
+            3DHC_TD_A_Qualcomm_3|TA|3DHC_TD_A_Qualcomm_3/3DHC_TD_A.bit
+            3DHC_TD_B_MediaTek_3|TB|3DHC_TD_B_MediaTek_3/3DHC_TD_B.bit
+            3DHC_TD_C_MediaTek_3|TC|3DHC_TD_C.bit
+            3DHC_TD_D_HHI_3|TD|3DHC_TD_D.bit
+            3DHC_TD_E_HHI_3|TE|3DHC_TD_E.bit
+            3DHC_C_A_HHI_3|-|3DHC_C_A.bit
+            3DHC_C_B_HHI_3|-|3DHC_C_B.bit
+            3DHC_C_C_Sharp_3|-|3DHC_C_C_Sharp_3/3DHC_C_C.bit
+            3DHC_D1_A_HHI_3|-|3DHC_D1_A.bit
+            3DHC_D1_B_HHI_3|-|3DHC_D1_B.bit
+            3DHC_D1_C_RWTH_3|-|3DHC_D1_C.bit
+            3DHC_D1_D_RWTH_3|-|3DHC_D1_D.bit
+            3DHC_D1_E_MediaTek_3|-|3DHC_D1_E_MediaTek_3/3DHC_D1_E.bit
+            3DHC_D1_F_MediaTek_3|-|3DHC_D1_F_MediaTek_3/3DHC_D1_F.bit
+            3DHC_D1_G_Hisilicon_3|-|3DHC_D1_G.bin
+            3DHC_D1_H_Hisilicon_3|-|3DHC_D1_H.bit
+            3DHC_D2_A_Samsung_3|-|3DHC_D2_A.bit
+            3DHC_D2_B_LGE_3|-|3DHC_D2_B.bit
             """;
 
-    record Vector(String name, String key, String sha256, String bitstream) {
+    record Vector(String name, String key, String bitstream) {
         @Override
         public String toString() {
             return name;
@@ -85,14 +99,13 @@ class Hevc3dConformanceTest {
         var result = new ArrayList<Vector>();
         for (var line : MANIFEST.strip().split("\n")) {
             var parts = line.strip().split("\\|");
-            result.add(new Vector(parts[0], parts[1], parts[2], parts[3]));
+            result.add(new Vector(parts[0], parts[1], parts[2]));
         }
         return result;
     }
 
     static ZipFile archive(Vector vector) throws IOException {
-        var file = Conformance.fetch("hevc-3dhevc-" + vector.name() + ".zip", BASE + vector.name() + ".zip",
-                vector.sha256());
+        var file = Conformance.vector("hevc-3dhevc-" + vector.name() + ".zip");
         return new ZipFile(file.toFile());
     }
 
@@ -311,13 +324,17 @@ class Hevc3dConformanceTest {
 
     static void assertPictures(Vector vector, int threads) throws IOException {
         var stream = stream(vector);
-        var expected = expectedPictures(vector);
+        var listed = !vector.key().equals("-");
         var layers = expectedLayers(vector);
-        assertFalse(expected.isEmpty(), "the list gives picture MD5s");
-        assertEquals(layers.keySet(), expected.keySet(), "the archive and the list name the same layers");
+        assertFalse(layers.isEmpty(), "the archive gives layer MD5s");
+        var expected = listed ? expectedPictures(vector) : null;
+        if (listed) {
+            assertFalse(expected.isEmpty(), "the list gives picture MD5s");
+            assertEquals(layers.keySet(), expected.keySet(), "the archive and the list name the same layers");
+        }
         var vps = HevcMultilayerConformanceTest.vps(stream);
-        var sets = outputLayerSets(vps, expected.keySet());
-        assertEquals(expected.keySet(), sets.keySet(), "an output layer set outputs every layer");
+        var sets = outputLayerSets(vps, layers.keySet());
+        assertEquals(layers.keySet(), sets.keySet(), "an output layer set outputs every layer");
         var decoded = new TreeMap<Integer, List<String>>();
         var whole = new TreeMap<Integer, String>();
         for (var ols : new java.util.TreeSet<>(sets.values()).descendingSet()) {
@@ -336,7 +353,7 @@ class Hevc3dConformanceTest {
             }
         }
         var mismatches = new StringBuilder();
-        for (var entry : expected.entrySet()) {
+        for (var entry : (listed ? expected : Map.<Integer, List<String>>of()).entrySet()) {
             var layer = entry.getKey();
             var actual = decoded.getOrDefault(layer, List.of());
             var wanted = entry.getValue();
@@ -363,10 +380,15 @@ class Hevc3dConformanceTest {
     @DisplayName("the default output layer set decodes the base texture view alone")
     void baseLayer(Vector vector) throws IOException {
         var stream = stream(vector);
-        var expected = expectedPictures(vector).get(0);
-        var output = decodePictures(stream, 0, 1, null);
+        var whole = new TreeMap<Integer, MessageDigest>();
+        var output = decodePictures(stream, 0, 1, whole);
         assertEquals(List.of(0), List.copyOf(output.keySet()), "only the base layer is output");
-        assertEquals(expected, output.get(0), vector + " base layer pictures");
-        assertTrue(expected.size() > 1);
+        assertTrue(output.get(0).size() > 1);
+        if (vector.key().equals("-")) {
+            assertEquals(expectedLayers(vector).get(0), HexFormat.of().formatHex(whole.get(0).digest()),
+                    vector + " base layer MD5");
+        } else {
+            assertEquals(expectedPictures(vector).get(0), output.get(0), vector + " base layer pictures");
+        }
     }
 }

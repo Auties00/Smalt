@@ -47,6 +47,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -103,7 +104,8 @@ import java.util.Set;
  * {@code PixelCrop} elements and in any known {@code DisplayUnit}, give its sample aspect ratio,
  * {@code FlagInterlaced} with {@code FieldOrder} its scan, {@code StereoMode} its stereo mode, and a
  * {@code Projection} of a spherical type, with its {@code ProjectionPrivate} and pose, its spherical
- * projection; the roll of a rectangular {@code Projection} is its orientation
+ * projection; the roll, yaw and pitch of a rectangular {@code Projection} are its orientation, a yaw or pitch of
+ * 180 degrees mirroring it
  * ({@link VideoTrack#sampleAspectRatio()}, {@link VideoTrack#interlacing()},
  * {@link VideoTrack#stereoMode()}, {@link VideoTrack#spherical()}). The {@code BlockAddIDExtraData} of an H.264,
  * HEVC or AV1 track's {@code BlockAdditionMapping} of type {@code dvcC}, {@code dvvC} or {@code dvwC} is its
@@ -246,6 +248,11 @@ public final class MatroskaDemuxer implements Demuxer {
      * The largest number of top-level elements walked before the first cluster.
      */
     private static final int MAX_HEADER_ELEMENTS = 1 << 16;
+
+    /**
+     * The largest number of further {@code SeekHead} elements followed from the first.
+     */
+    private static final int MAX_SEEK_HEADS = 8;
 
     /**
      * The deepest nesting of {@code SimpleTag} elements followed.
@@ -607,6 +614,16 @@ public final class MatroskaDemuxer implements Demuxer {
             this.segmentStart = segmentStart;
             var header = new SegmentHeader();
             var firstCluster = readSegmentHeader(header);
+            // a SeekHead may index a further SeekHead (written after the clusters) that indexes the rest
+            var visited = new HashSet<Long>();
+            for (var depth = 0; depth < MAX_SEEK_HEADS; depth++) {
+                var next = header.seeks.remove((long) EbmlIds.SEEK_HEAD);
+                if (next == null || !visited.add(next)
+                        || !ForwardOnlySource.isCheapToReach(source, segmentStart + next + READ_BUFFER)) {
+                    break;
+                }
+                readSeekTarget(header, segmentStart + next, EbmlIds.SEEK_HEAD);
+            }
             for (var id : new int[]{EbmlIds.INFO, EbmlIds.TRACKS, EbmlIds.TAGS, EbmlIds.CHAPTERS, EbmlIds.ATTACHMENTS}) {
                 var seek = header.seeks.get((long) id);
                 var seen = switch (id) {

@@ -16,13 +16,11 @@ import java.util.List;
 import java.util.zip.GZIPInputStream;
 
 /**
- * Loads the RFC 8251 Opus test vectors: downloads the official tarball once (pinned SHA-256),
- * unpacks it next to the cache, and parses the {@code opus_demo} bitstream format.
+ * Loads the RFC 8251 Opus test vectors: unpacks the hosted tarball once into the cache of derived files, and parses
+ * the {@code opus_demo} bitstream format.
  */
 final class OpusVectors {
     static final String TARBALL = "opus_testvectors-rfc8251.tar.gz";
-    static final String URL = "https://opus-codec.org/static/testvectors/opus_testvectors-rfc8251.tar.gz";
-    static final String SHA256 = "6b26a22f9ba87b2b836906a9bb7afec5f8e54d49553b1200382520ee6fedfa55";
 
     /** One packet of a {@code .bit} file. */
     record BitPacket(byte[] data, int finalRange) {
@@ -33,16 +31,17 @@ final class OpusVectors {
     private OpusVectors() {
     }
 
-    /** Returns the directory holding the unpacked vectors, downloading them when needed. */
+    /** Returns the directory holding the unpacked vectors, unpacking the hosted tarball when needed. */
     static synchronized Path directory() {
         if (directory != null) {
             return directory;
         }
-        var tarball = Conformance.fetch(TARBALL, URL, SHA256);
-        var target = tarball.resolveSibling("opus_testvectors-rfc8251");
+        var tarball = Conformance.vector(TARBALL);
+        var cache = Conformance.cache("opus");
+        var target = cache.resolve("opus_testvectors-rfc8251");
         if (!Files.isRegularFile(target.resolve("testvector12m.dec"))) {
             try {
-                var temporary = Files.createTempDirectory(tarball.getParent(), "opus-vectors-");
+                var temporary = Files.createTempDirectory(cache, "opus-vectors-");
                 try (var input = new GZIPInputStream(Files.newInputStream(tarball), 1 << 16)) {
                     untar(input, temporary);
                 }

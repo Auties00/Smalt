@@ -25,35 +25,25 @@ import java.util.List;
  * shared by the AC-3 tests.
  */
 final class Ac3TestSupport {
-    private static final String FATE = "https://fate-suite.ffmpeg.org/";
-
     /**
-     * The FATE samples: cache name, suite path, SHA-256.
+     * The FATE samples, by vector name.
      */
     static final List<Sample> SAMPLES = List.of(
-            new Sample("ac3-monsters_inc_2.0_192_small.ac3", "ac3/monsters_inc_2.0_192_small.ac3",
-                    "4df071457c23d1a39fe52322892bc9333921ad6dfc8f87ffa0797bdfb5101bae"),
-            new Sample("ac3-monsters_inc_5.1_448_small.ac3", "ac3/monsters_inc_5.1_448_small.ac3",
-                    "74fefeef070f663378a0864beb064cf88ee1186152f7ac320984af15be2f22db"),
-            new Sample("ac3-millers_crossing_4.0.ac3", "ac3/millers_crossing_4.0.ac3",
-                    "faa06c7b1ccbc5cf3c7897afb50004dd3d49feaa19d26bdeb03dc9bb4ec20802"),
-            new Sample("eac3-csi_miami_5.1_256_spx_small.eac3", "eac3/csi_miami_5.1_256_spx_small.eac3",
-                    "84f50317a49a98509bf174ace814b39860e6ab2a1d61bdbd10ada9081f2bb2b3"),
-            new Sample("eac3-csi_miami_stereo_128_spx_small.eac3", "eac3/csi_miami_stereo_128_spx_small.eac3",
-                    "adc397f12472353237f7dc8139c2223937abc23eff9cd80ac2e3471814a04c3a"),
-            new Sample("eac3-matrix2_commentary1_stereo_192_small.eac3", "eac3/matrix2_commentary1_stereo_192_small.eac3",
-                    "ea095d557bd6787266f4b7276a2be818a7fbc924997748be89d9ead962a3391c"),
-            new Sample("eac3-serenity_english_5.1_1536_small.eac3", "eac3/serenity_english_5.1_1536_small.eac3",
-                    "3d81c22610a2602b7799ec5e59c2677e8ab23e03e4abc03c2a16b683aa3d5f0a"),
-            new Sample("eac3-the_great_wall_7.1.eac3", "eac3/the_great_wall_7.1.eac3",
-                    "d698981ddc1c10e65d234dd6a02ff2b0f4c88787595c9d3e5adf7f097f2c9e50"));
+            new Sample("ac3-monsters_inc_2.0_192_small.ac3"),
+            new Sample("ac3-monsters_inc_5.1_448_small.ac3"),
+            new Sample("ac3-millers_crossing_4.0.ac3"),
+            new Sample("eac3-csi_miami_5.1_256_spx_small.eac3"),
+            new Sample("eac3-csi_miami_stereo_128_spx_small.eac3"),
+            new Sample("eac3-matrix2_commentary1_stereo_192_small.eac3"),
+            new Sample("eac3-serenity_english_5.1_1536_small.eac3"),
+            new Sample("eac3-the_great_wall_7.1.eac3"));
 
     private Ac3TestSupport() {
     }
 
-    record Sample(String name, String path, String sha256) {
-        Path fetch() {
-            return Conformance.fetch(name, FATE + path, sha256);
+    record Sample(String name) {
+        Path file() {
+            return Conformance.vector(name);
         }
 
         @Override

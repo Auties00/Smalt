@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Checks the Nikon HE and HE* decoder against Adobe DNG Converter as a black-box oracle, for every CC0 HE and HE*
  * sample of raw.pixls.us (Z 9, Z 8, Z f, Z 5II, Z 50II and Z 6III, every image area the cameras offer). The converter's
  * DNG file of each sample is kept as a {@code .windows} file, which {@code tools/testdata/raw-oracle.py} writes
- * into {@code <conformance cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory) next to its
+ * into {@code <test cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory) next to its
  * {@code .levels} file: the decoded photosites of the four corners, the center and the first and last rows must
  * equal the converter's, the sum of every position of the filter repeat over every band of 64 rows must be the
  * converter's, the SHA-256 of every photosite must be that of the converter's, and the size, filter pattern and black
@@ -44,7 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class NikonHighEfficiencyOracleTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     private static final Tolerance TOLERANCE = Tolerance.exact();
 
@@ -149,7 +149,7 @@ class NikonHighEfficiencyOracleTest {
     @DisplayName("the decoded photosites match those Adobe DNG Converter stores for the sample")
     void photosites(RawSamples sample) {
         var oracle = windows(sample);
-        var file = parse(read(sample.fetch()));
+        var file = parse(read(sample.path()));
         var sensor = file.sensor;
         assertTrue(sensor != null, file.unsupported);
         assertEquals(sample.name().contains("_HE_STAR") ? "Nikon HE*" : "Nikon HE", sensor.compression);
@@ -206,7 +206,7 @@ class NikonHighEfficiencyOracleTest {
     @DisplayName("the size, color filter pattern and black levels are the converter's")
     void levels(RawSamples sample) {
         var levels = levelsOf(sample);
-        var file = parse(read(sample.fetch()));
+        var file = parse(read(sample.path()));
         var sensor = file.sensor;
         assertTrue(sensor != null, file.unsupported);
         assertArrayEquals(levels.get("size"), new double[]{sensor.width, sensor.height});
@@ -223,7 +223,7 @@ class NikonHighEfficiencyOracleTest {
     @Test
     @DisplayName("a high-efficiency file cut short anywhere is rejected as malformed, not decoded")
     void truncated() {
-        var bytes = read(RawSamples.NEF_Z6III_HE_DX.fetch());
+        var bytes = read(RawSamples.NEF_Z6III_HE_DX.path());
         decode(parse(bytes));
         for (var keep : new double[]{0.999, 0.9, 0.6, 0.35}) {
             var cut = Arrays.copyOf(bytes, (int) (bytes.length * keep));

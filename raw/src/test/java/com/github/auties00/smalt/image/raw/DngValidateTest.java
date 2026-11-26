@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.testkit.Tolerance;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import java.io.IOException;
@@ -95,6 +97,49 @@ class DngValidateTest {
             this.dng = dng;
         }
     }
+
+    /**
+     * The decoder's linear image of camera-written DNG files and of the DNG SDK's own sample files is the SDK's stage
+     * 2 image: within one code of 16 bits, the rounding of the SDK's 32-bit floating-point normalization, or, for the
+     * lossy JPEG XL tiles of the SDK samples, whose inverse transform is not bit-exact between decoders, within one
+     * code in root mean square. The SDK's floating-point stage 2 images (the floating-point samples) are not compared
+     * here, nor are files whose opcodes leave the result to the implementation ({@code FixBadPixelsConstant}
+     * interpolates as each implementation chooses).
+     */
+    @Nested
+    @DisplayName("camera DNG files and the DNG SDK's sample files")
+    class Stage2 {
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(value = RawSamples.class, names = {"DNG_GALAXY_S23", "DNG_LEICA_M_MONOCHROM",
+                "DNG_PENTAX_K3III_MONOCHROME", "DNG_LEICA_M8", "DNG_SIGMA_FP_8", "DNG_SIGMA_FP_10", "DNG_PLUSTEK_8100",
+                "DNG_INSTA360_ONE_X"})
+        @DisplayName("camera DNG files decode to the SDK's stage 2 image")
+        void cameras(RawSamples sample) {
+            assertStage2(sample.name() + ".dng", sample.path(), Tolerance.offByOne());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({
+                "04_PGTM2_per_profile.dng, true", "05_PGTM2_unsigned8.dng, true", "06_PGTM2_unsigned16.dng, true",
+                "07_PGTM2_float16.dng, true", "08_PGTM2_float32.dng, true", "09_ImageSequenceInfo_1_of_3.dng, true",
+                "10_ImageSequenceInfo_2_of_3.dng, true", "11_ImageSequenceInfo_3_of_3.dng, true",
+                "12_ImageStats_WeightedAverage.dng, true", "13_ImageStats_Several.dng, true",
+                // lossy JPEG XL tiles: linear raw with MapPolynomial opcodes, and a Bayer image of interleaved columns
+                "01_jxl_linear_raw_integer.dng, false", "03_jxl_bayer_raw_integer.dng, false"
+        })
+        @DisplayName("the DNG SDK's sample files decode to its stage 2 image")
+        void sdkSamples(String member, boolean exact) {
+            var archive = Conformance.archive(SDK_SAMPLES);
+            var path = archive.member(SDK_SAMPLE_DIRECTORY + member);
+            assertStage2(member, path, exact ? Tolerance.offByOne() : Tolerance.rms(1));
+        }
+    }
+
+    /** The archive set of the sample files of the DNG SDK. */
+    static final String SDK_SAMPLES = "adobe-dng-sdk-1.7.1-sample_files";
+
+    /** The directory of the sample files within the SDK archive. */
+    static final String SDK_SAMPLE_DIRECTORY = "dng_sdk_1_7_1/sample_files/";
 
     @Nested
     @DisplayName("converted DNG files of Adobe DNG Converter")
@@ -311,6 +356,33 @@ class DngValidateTest {
         return UncompressedTiff.samples(read(base.resolveSibling(base.getFileName() + ".tif")));
     }
 
+    /**
+     * Returns the stage 2 image the SDK reads from a DNG file: its active area linearized, its black level subtracted
+     * and scaled to 16 bits, after opcode lists 1 and 2, row by row.
+     */
+    static short[] stage2(Path dng) {
+        var base = dng.resolveSibling(dng.getFileName() + "-stage2");
+        var run = validate(dng, "-2", base.toString());
+        assertEquals(0, run.exitCode(), run.output());
+        return UncompressedTiff.samples(read(base.resolveSibling(base.getFileName() + ".tif")));
+    }
+
+    /**
+     * Checks that the decoder's linear image of a DNG file, over its active area with opcode lists 1 and 2 applied,
+     * is the SDK's stage 2 image within a tolerance.
+     *
+     * @param name the name of the copy to validate
+     * @param source the DNG file
+     * @param tolerance the rule the two images keep
+     */
+    static void assertStage2(String name, Path source, Tolerance tolerance) {
+        var file = save(name, read(source));
+        var sdk = stage2(file);
+        var whole = RawDecoder.decodeRaw(MediaSource.of(read(file)), RawDecoderOptions.builder().defaultCrop(false)
+                .opcodes(true).build());
+        tolerance.assertWithin(name + " against the SDK's stage 2 image", sdk, whole.samples(), 16);
+    }
+
     /** Returns the SDK's 8-bit sRGB rendering of a DNG file. */
     static RgbaPicture sdkRendering(Path dng) {
         var base = dng.resolveSibling(dng.getFileName() + "-render");
@@ -358,7 +430,7 @@ class DngValidateTest {
             builder.first.ascii(50708, "Smalt Spec").raw(50740, 1, block.length, block);
             return builder.write();
         }),
-        IPHONE_PRORAW(List.of(), () -> read(RawSamples.DNG_IPHONE_12_PRO.fetch()));
+        IPHONE_PRORAW(List.of(), () -> read(RawSamples.DNG_IPHONE_12_PRO.path()));
 
         final List<String> profiles;
         final Supplier<byte[]> source;
@@ -434,7 +506,7 @@ class DngValidateTest {
         @EnumSource(Converted.class)
         @DisplayName("pass validation, hold the decoder's samples and render as their DNG source does")
         void converted(Converted converted) {
-            var source = converted.sample.fetch();
+            var source = converted.sample.path();
             var file = save(converted.name() + ".dng", DngEncoder.convert(MediaSource.of(read(source))));
             assertValid(file);
             var whole = RawDecoder.decodeRaw(MediaSource.of(read(file)), RawDecoderOptions.builder()

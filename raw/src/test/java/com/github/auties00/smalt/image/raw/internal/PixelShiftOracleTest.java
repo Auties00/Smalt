@@ -31,12 +31,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Checks the merged image of pixel-shift files (Pentax PEF files of the K-1 and K-3 Mark III, the DNG file a K-70
  * writes, and a Sony ARQ file of the A7R III) value for value against the linear DNG file Adobe DNG Converter, run
  * as a black box, merges their frames into, summarized by {@code tools/testdata/raw-lens-oracle.py} in
- * {@code <conformance cache>/raw-lens-oracle} ({@code -Dsmalt.test.rawLensOracle}): the SHA-256 of each sample's
+ * {@code <test cache>/raw-lens-oracle} ({@code -Dsmalt.test.rawLensOracle}): the SHA-256 of each sample's
  * values over the whole image and its first row. Skipped without the summaries.
  */
 class PixelShiftOracleTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawLensOracle",
-            Conformance.directory().resolve("raw-lens-oracle").toString()));
+            Conformance.cache("raw-lens-oracle").toString()));
 
     private static final List<String> SAMPLES = List.of(
             "rawpixls-pentax-k-1-14bit-3-2-pixel-shift.pef",
@@ -49,7 +49,9 @@ class PixelShiftOracleTest {
     @Test
     @DisplayName("the merged image equals the converter's, sample for sample")
     void merged() throws IOException, NoSuchAlgorithmException {
-        Skip.unless(Files.isDirectory(ORACLE), "data:raw-lens-oracle", "no pixel-shift oracle files in " + ORACLE);
+        // the test cache creates the directory on first use, so only the script's files tell that it ran
+        Skip.unless(Files.isRegularFile(ORACLE.resolve(SAMPLES.getFirst().substring(0, SAMPLES.getFirst().lastIndexOf('.'))
+                + ".merged")), "data:raw-lens-oracle", "no pixel-shift oracle files in " + ORACLE);
         for (var name : SAMPLES) {
             var stem = name.substring(0, name.lastIndexOf('.'));
             var values = new HashMap<String, String>();
@@ -61,7 +63,7 @@ class PixelShiftOracleTest {
                 }
             }
             var size = values.get("size").split(" ");
-            var path = Conformance.fetchListed(name);
+            var path = Conformance.vector(name);
             var file = RawDecoding.open(MediaSource.of(FileChannel.open(path, StandardOpenOption.READ)), LIMITS);
             var sensor = file.sensor;
             assertEquals(Integer.parseInt(size[0]), sensor.width, name);
@@ -86,7 +88,7 @@ class PixelShiftOracleTest {
     @Test
     @DisplayName("each frame of a Pentax file decodes alone as a color filter array image")
     void frames() throws IOException {
-        var path = Conformance.fetchListed("rawpixls-pentax-k-3-mark-iii-14bit-3-2-pixel-shift.pef");
+        var path = Conformance.vector("rawpixls-pentax-k-3-mark-iii-14bit-3-2-pixel-shift.pef");
         var data = Files.readAllBytes(path);
         assertEquals(4, RawDecoder.info(MediaSource.of(data), LIMITS).frameCount());
         var options = RawDecoderOptions.builder().limits(LIMITS);

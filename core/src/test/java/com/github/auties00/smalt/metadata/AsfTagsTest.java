@@ -164,7 +164,7 @@ class AsfTagsTest {
             "asf-samples-wma_with_ID3_APIC.wma"})
     @DisplayName("reads the tags of Windows Media files as exiftool does and their pictures as ffmpeg extracts them")
     void windowsMedia(String name, @TempDir Path directory) throws IOException {
-        var file = Conformance.fetchListed(name);
+        var file = Conformance.vector(name);
         var tags = TagEditor.read(file);
         var exif = exiftool(file);
         var names = Map.of("Title", StandardTag.TITLE, "Author", StandardTag.ARTIST, "AlbumTitle", StandardTag.ALBUM,

@@ -28,8 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LowDelayWindowDerivationTest {
     /** Fits the window of one stream. */
     private static double[] fit(String stream) {
-        var parsed = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(stream + "_ep0.mp4")));
-        var reference = AacTestSupport.readWav(Fixtures.read(ErrorResilientVectors.fetch(stream + ".wav")))[0];
+        var parsed = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file(stream + "_ep0.mp4")));
+        var reference = AacTestSupport.readWav(Fixtures.read(ErrorResilientVectors.file(stream + ".wav")))[0];
         return fit(parsed.config(), parsed.frames(), reference);
     }
 

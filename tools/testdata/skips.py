@@ -17,11 +17,11 @@ Skip class, and the disabledReason of JUnit's conditions). The reports are the s
 reason id, or with an unknown family, fails every command.
 
 The baseline, tools/testdata/skip-baseline.tsv, holds the accepted count per job, module, class and reason. A job
-names the operating system, the architecture, the SIMD leg and the data tier of a CI job, for example
+names the operating system, the architecture, the SIMD leg and the test set of a CI job, for example
 linux-x64-vector-smoke; CI passes it. check fails when any count is above the baseline, and lists the rows that
 can shrink; it compares only the modules that have reports, so a build of some modules checks those. update
 writes the lower counts and never raises one. accept also raises counts, for skips that a change adds on purpose
-(new tests whose data is outside the tier, new kernels the scalar leg skips), but it refuses to raise the
+(new opt-in tests, new kernels the scalar leg skips), but it refuses to raise the
 environment families (oracle, device, env), which CI provisions, unless --environment is given: a missing oracle
 or device is fixed in the workflow, not accepted. A reason of NEVER_ACCEPTED (oracle:ffmpeg-feature: every
 runner's ffmpeg has every component of tools/testdata/ffmpeg-oracle/features.tsv) is refused even with

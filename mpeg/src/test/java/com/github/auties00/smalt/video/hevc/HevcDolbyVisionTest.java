@@ -137,7 +137,7 @@ class HevcDolbyVisionTest {
     void mkvmerge() throws IOException {
         Stream stream;
         try (var demuxer = Containers.openDemuxer(MediaSource.of(Files.readAllBytes(
-                com.github.auties00.smalt.testkit.Conformance.fetchListed("dovi-tool-regular.mkv"))))) {
+                com.github.auties00.smalt.testkit.Conformance.vector("dovi-tool-regular.mkv"))))) {
             var track = (VideoTrack) demuxer.tracks().getFirst();
             var packets = new ArrayList<Packet>();
             for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {

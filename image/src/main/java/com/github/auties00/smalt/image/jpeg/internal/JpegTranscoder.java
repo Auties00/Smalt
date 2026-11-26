@@ -231,6 +231,11 @@ public final class JpegTranscoder {
                 case ICC -> marker == 0xE2;
                 case ALL -> true;
             };
+            // the secondary images after the source's end of image (gain maps, depth maps) are not carried over,
+            // so the Multi-Picture Format index that locates them would point past the output
+            if (marker == 0xE2 && segment.startsWith("MPF ")) {
+                copied = false;
+            }
             if (copied) {
                 markers.add(segment);
             }

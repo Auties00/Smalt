@@ -336,4 +336,119 @@ class TheoraDecoderTest {
             }
         }
     }
+
+    static Stream<org.junit.jupiter.params.provider.Arguments> hostedFiles() {
+        return Stream.of(
+                "chromium-bear.ogv", "chromium-blackwhite_yuv420p.ogv", "chromium-blackwhite_yuv422p.ogv",
+                "chromium-blackwhite_yuv444p.ogv", "chromium-sync2.ogv", "theora-samples-queens-444.ogv",
+                "theora-samples-uncoded_fragments_4mv.ogg", "theora-testsuite-320x240.ogg",
+                "theora-testsuite-320x240.ogv", "theora-testsuite-322x242_not-divisible-by-sixteen-framesize.ogg",
+                "theora-testsuite-chained_streams.ogg", "theora-testsuite-ducks_take_off_444_720p25.ogg",
+                "theora-testsuite-mobile_itu601_i_422.ogg", "theora-testsuite-multi2.ogg",
+                "theora-testsuite-offset_test.ogv", "theora-testsuite-pixel_aspect_ratio.ogg",
+                "theora-testsuite-sign_irene_cif-3qi-b.ogg", "theora-testsuite-stockholm-vfr.ogg",
+                "theora-testsuite-videotestsrc-720x576-16-15.ogg",
+                "theora-commons-Yeager_supersonic_flight_1947.ogv")
+                .map(org.junit.jupiter.params.provider.Arguments::of);
+    }
+
+    /**
+     * Real-world Ogg files read from the hosted test data: the Xiph Theora test suite (which a decoder must play in
+     * full: odd frame sizes, picture offsets, 4:2:2 and 4:4:4, pixel aspect ratios, variable frame rate, chained and
+     * multiplexed streams), Theora from third-party encoders and Wikimedia Commons, and the Chromium samples (one of
+     * them, {@code sync2.ogv}, carries VP8 in Ogg). Every picture must equal ffmpeg's decode, which is libtheora's.
+     */
+    @Nested
+    @DisplayName("hosted files")
+    class Hosted {
+        static Theora read(java.nio.file.Path file) {
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(com.github.auties00.smalt.testkit.Fixtures.read(file)))) {
+                var track = (VideoTrack) demuxer.tracks().stream().filter(VideoTrack.class::isInstance).findFirst()
+                        .orElseThrow();
+                var packets = new ArrayList<Packet>();
+                Packet packet;
+                while ((packet = demuxer.read()) != null) {
+                    if (packet.trackId() == track.id()) {
+                        packets.add(packet);
+                    }
+                }
+                return new Theora(track, packets);
+            }
+        }
+
+        static String pixelFormat(YuvPicture picture) {
+            return switch (picture.chromaFormat()) {
+                case YUV420 -> "yuv420p";
+                case YUV422 -> "yuv422p";
+                default -> "yuv444p";
+            };
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.video.theora.TheoraDecoderTest#hostedFiles")
+        @DisplayName("decodes every picture as ffmpeg does")
+        void matchesFfmpeg(String name) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var stream = read(file);
+            var formats = new java.util.LinkedHashSet<String>();
+            var ours = new ByteArrayOutputStream();
+            try (var decoder = VideoDecoders.create(stream.track(), com.github.auties00.smalt.video.VideoDecoderOptions.defaults())) {
+                for (var packet : stream.packets()) {
+                    // the empty packets of a variable frame rate stream repeat the previous picture, where ffmpeg
+                    // outputs one picture per coded frame: only the coded frames are compared
+                    var coded = packet.data().length > 0;
+                    decoder.decode(packet, frame -> {
+                        var picture = (YuvPicture) frame.picture();
+                        formats.add(pixelFormat(picture));
+                        if (coded) {
+                            ours.writeBytes(raw(picture));
+                        }
+                    });
+                }
+                decoder.flush(frame -> ours.writeBytes(raw((YuvPicture) frame.picture())));
+            }
+            assertEquals(1, formats.size(), name + " pixel formats " + formats);
+            var expected = com.github.auties00.smalt.video.intra.IntraTesting.ffmpegDecode(file, formats.getFirst(), 0);
+            assertEquals(expected.length, ours.size(), name + " decoded bytes");
+            com.github.auties00.smalt.testkit.Tolerance.exact().check(name,
+                    com.github.auties00.smalt.testkit.Tolerance.Difference.of(expected, ours.toByteArray()));
+        }
+
+        @Test
+        @DisplayName("places the picture of offset_test.ogv where the test suite's expected picture has it")
+        void pictureOffsets() {
+            // the suite's pass picture is a player's RGB rendering, not a bit-exact reference: ffmpeg's own decode
+            // measures 19.1 dB against it and the same decode moved by two columns 11.9 dB, so 17 dB tells a correctly
+            // placed picture from a misplaced one
+            var stream = read(com.github.auties00.smalt.testkit.Conformance.vector("theora-testsuite-offset_test.ogv"));
+            var first = new YuvPicture[1];
+            try (var decoder = VideoDecoders.create(stream.track(), com.github.auties00.smalt.video.VideoDecoderOptions.defaults())) {
+                decoder.decode(stream.packets().getFirst(), frame -> first[0] = (YuvPicture) frame.picture());
+            }
+            var picture = first[0];
+            assertEquals(512, picture.width());
+            assertEquals(512, picture.height());
+            var rgb = Oracle.run(Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(1), raw(picture), List.of("-v",
+                    "error", "-f", "rawvideo", "-pix_fmt", pixelFormat(picture), "-s", "512x512", "-i", "-",
+                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-"));
+            var pass = Oracle.run(Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(1), List.of("-v", "error", "-i",
+                    com.github.auties00.smalt.testkit.Conformance.vector("theora-testsuite-offset_test.pass.png").toString(),
+                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-"));
+            var difference = com.github.auties00.smalt.video.intra.IntraTesting.difference(pass, rgb, false, 255);
+            System.out.printf("offset_test against its pass picture: %s%n", difference);
+            com.github.auties00.smalt.testkit.Tolerance.psnr(17).check("offset_test", difference);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.CsvSource({"theora-testsuite-pixel_aspect_ratio.ogg,640,429",
+                "theora-testsuite-mobile_itu601_i_422.ogg,128,117", "theora-testsuite-sign_irene_cif-3qi-b.ogg,128,117",
+                "theora-testsuite-videotestsrc-720x576-16-15.ogg,16,15",
+                "theora-samples-uncoded_fragments_4mv.ogg,163,160"})
+        @DisplayName("reads the pixel aspect ratio of the identification header as ffprobe does")
+        void pixelAspectRatio(String name, long numerator, long denominator) {
+            var track = read(com.github.auties00.smalt.testkit.Conformance.vector(name)).track();
+            var aspect = track.sampleAspectRatio().orElseThrow().reduce();
+            assertEquals(new com.github.auties00.smalt.track.Rational(numerator, denominator), aspect, name);
+        }
+    }
 }

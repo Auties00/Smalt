@@ -28,6 +28,7 @@ import java.util.stream.Stream;
 import java.util.zip.ZipFile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -44,8 +45,6 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 @DisplayName("H.264 4:2:2 decoding")
 class H264Chroma422Test {
-    private static final String BASE = "https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/";
-
     private static final Map<String, List<String>> GOLDEN = loadGolden();
 
     private static Map<String, List<String>> loadGolden() {
@@ -70,7 +69,7 @@ class H264Chroma422Test {
     /**
      * An ITU-T H.264.1 4:2:2 conformance bitstream without a reference YUV in its archive.
      */
-    record Vector(String name, String sha256, String entry) {
+    record Vector(String name, String entry) {
         @Override
         public String toString() {
             return name;
@@ -79,35 +78,22 @@ class H264Chroma422Test {
 
     static Stream<Vector> conformance() {
         return Stream.of(
-                new Vector("Hi422FR1_SONY_A", "00160408cfcb21e3636d47d1f17833cf1ebe7a4b8dc2c8fadef897f509fc1d81",
-                        "Hi422FR1_SONY_A.jsv"),
-                new Vector("Hi422FR2_SONY_A", "8425a371fd15fad5c7b49db82100cd174886b3d524285b478bd3b988293e85b9",
-                        "Hi422FR2_SONY_A.jsv"),
-                new Vector("Hi422FR3_SONY_A", "797c2e759d9a0dc5bc10c03f942d7b7b481170d03ff0feeaab21d1f1a5a26c3c",
-                        "Hi422FR3_SONY_A/Hi422FR3_SONY_A.jsv"),
-                new Vector("Hi422FR4_SONY_A", "9924d9f90332ce83602047526e3283ac22a7dcfa39c33d46ba9d40267967f91a",
-                        "Hi422FR4_SONY_A.jsv"),
-                new Vector("Hi422FR6_SONY_A", "a2497e863383544c702404dff7bb208ecab6619f5281d25a09986f6043a7c9e3",
-                        "Hi422FR6_SONY_A.jsv"),
-                new Vector("Hi422FR7_SONY_A", "2020b3843df72faebfe9d08e6fd058cb16d88ef4e8a092ca992094d92f806ac0",
-                        "Hi422FR7_SONY_A.jsv"),
-                new Vector("Hi422FR8_SONY_A", "679f4fb8d70274621b12c103818d88bbf5bcdd6d1d52b94e5990642bc34c9d0f",
-                        "Hi422FR8_SONY_A/Hi422FR8_SONY_A.jsv"),
-                new Vector("Hi422FR9_SONY_A", "25affc58032d9e011db6f5e8996ead1b73e83a4cef3ca01b710f0ee3eb974968",
-                        "Hi422FR9_SONY_A.jsv"),
-                new Vector("Hi422FREXT16_SONY_A", "f736272b9e004aae95e55204979b1128959dd8e604d6d1817bff7950f942efcf",
-                        "Hi422FREXT16_SONY_A.264"),
-                new Vector("Hi422FREXT17_SONY_A", "d35bc82a321dbc66d1d80c540f6ad12b5b1f7d5334f92e9c240d050fa555fd2b",
-                        "Hi422FREXT17_SONY_A.264"),
-                new Vector("Hi422FREXT18_SONY_A", "9c8c604384afea8ffc3a1b73c852a6f9558c3854ddb72bf8cbdf469aeb5a9368",
-                        "Hi422FREXT18_SONY_A.264"),
-                new Vector("Hi422FREXT19_SONY_A", "92b16c31c1180a83ee9767991823ae156db0799729c25b58460729b8038ad3e2",
-                        "Hi422FREXT19_SONY_A.264"));
+                new Vector("Hi422FR1_SONY_A", "Hi422FR1_SONY_A.jsv"),
+                new Vector("Hi422FR2_SONY_A", "Hi422FR2_SONY_A.jsv"),
+                new Vector("Hi422FR3_SONY_A", "Hi422FR3_SONY_A/Hi422FR3_SONY_A.jsv"),
+                new Vector("Hi422FR4_SONY_A", "Hi422FR4_SONY_A.jsv"),
+                new Vector("Hi422FR6_SONY_A", "Hi422FR6_SONY_A.jsv"),
+                new Vector("Hi422FR7_SONY_A", "Hi422FR7_SONY_A.jsv"),
+                new Vector("Hi422FR8_SONY_A", "Hi422FR8_SONY_A/Hi422FR8_SONY_A.jsv"),
+                new Vector("Hi422FR9_SONY_A", "Hi422FR9_SONY_A.jsv"),
+                new Vector("Hi422FREXT16_SONY_A", "Hi422FREXT16_SONY_A.264"),
+                new Vector("Hi422FREXT17_SONY_A", "Hi422FREXT17_SONY_A.264"),
+                new Vector("Hi422FREXT18_SONY_A", "Hi422FREXT18_SONY_A.264"),
+                new Vector("Hi422FREXT19_SONY_A", "Hi422FREXT19_SONY_A.264"));
     }
 
     static byte[] bitstream(Vector vector) {
-        var archive = Conformance.fetch("h264-FRExt-" + vector.name() + ".zip",
-                BASE + "FRExt/" + vector.name() + ".zip", vector.sha256());
+        var archive = Conformance.vector("h264-FRExt-" + vector.name() + ".zip");
         try (var zip = new ZipFile(archive.toFile())) {
             return zip.getInputStream(zip.getEntry(vector.entry())).readAllBytes();
         } catch (IOException exception) {
@@ -251,6 +237,49 @@ class H264Chroma422Test {
             return H264HighBitDepthTest.serialize(wide);
         }
         return H264TestStreams.serialize((YuvPicture) picture);
+    }
+
+    /**
+     * The High 4:2:2 Intra streams of the Professional profiles set of ITU-T H.264.1 (CAVLC, IDR only, 10-bit, 720p
+     * frames and 1080i fields), which come without a reference YUV: every frame must match FFmpeg's decode, with one
+     * and four threads.
+     */
+    @Nested
+    @DisplayName("Professional profile High 4:2:2 Intra streams against FFmpeg")
+    class ProfessionalIntra {
+        @ParameterizedTest(name = "PPH422I{0}_Panasonic_A")
+        @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2, 3, 4, 5, 6, 7})
+        @DisplayName("decodes every frame as FFmpeg does")
+        void matchesFfmpeg(int index) throws IOException {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var name = "PPH422I" + index + "_Panasonic_A";
+            byte[] stream;
+            try (var zip = new ZipFile(Conformance.vector("h264-Professional_profiles-" + name + ".zip").toFile())) {
+                stream = zip.getInputStream(zip.getEntry(name + ".264")).readAllBytes();
+            }
+            var file = java.nio.file.Files.write(com.github.auties00.smalt.testkit.Scratch.directory("h264-pph422")
+                    .resolve(name + ".264"), stream);
+            for (var threads : new int[]{1, 4}) {
+                var actual = H264HighBitDepthTest.decodePictures(stream, wide(threads));
+                assertEquals(10, actual.size(), name + " frame count with " + threads + " threads");
+                var first = actual.getFirst();
+                var raw = Oracle.decodeVideo(file, List.of("-f", "h264"), "yuv422p10le", 0);
+                var size = 2 * (first.width() * first.height() + 2 * ((first.width() + 1) / 2) * first.height());
+                var expected = new ArrayList<byte[]>();
+                for (var at = 0; at + size <= raw.length; at += size) {
+                    expected.add(Arrays.copyOfRange(raw, at, at + size));
+                }
+                assertEquals(expected.size(), actual.size(), name + " frames FFmpeg decoded");
+                for (var i = 0; i < actual.size(); i++) {
+                    var picture = assertInstanceOf(Yuv16Picture.class, actual.get(i));
+                    assertEquals(ChromaFormat.YUV422, picture.chromaFormat(), name);
+                    assertEquals(10, picture.bitDepth(), name);
+                    if (!Arrays.equals(expected.get(i), serialize(picture))) {
+                        fail(name + ": frame " + i + " differs from FFmpeg with " + threads + " threads");
+                    }
+                }
+            }
+        }
     }
 
     @Nested

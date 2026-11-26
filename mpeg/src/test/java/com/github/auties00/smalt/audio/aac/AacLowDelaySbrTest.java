@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.audio.aac;
 
-import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
@@ -54,16 +53,16 @@ class AacLowDelaySbrTest {
 
     static Path libxaac() {
         return Path.of(System.getProperty("smalt.test.eldSbrOracle",
-                Conformance.directory().resolve("eld-sbr-oracle").toString()));
+                Conformance.cache("eld-sbr-oracle").toString()));
     }
 
     static Path fdk() {
         return Path.of(System.getProperty("smalt.test.eldSbrFdk",
-                Conformance.directory().resolve("eld-sbr-fdk").toString()));
+                Conformance.cache("eld-sbr-fdk").toString()));
     }
 
     static Path existing(Path file) {
-        Skip.unless(Files.isRegularFile(file), "data:eld-sbr-oracle", "no oracle file " + file + " (tools/testdata/eld-sbr-oracle.py)");
+        assertTrue(Files.isRegularFile(file), "no oracle file " + file + " (tools/testdata/eld-sbr-oracle.py)");
         return file;
     }
 
@@ -78,7 +77,7 @@ class AacLowDelaySbrTest {
     /** Parses a conformance stream, or an encoded stream of the oracle script when the name has no prefix. */
     static AacTestSupport.Stream parse(String name) {
         if (name.startsWith("er_")) {
-            return AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4")));
+            return AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file(name + ".mp4")));
         }
         var directory = libxaac().resolve("encoded");
         try {
@@ -230,6 +229,33 @@ class AacLowDelaySbrTest {
                 o += other[k];
             }
             return 10 * Math.log10(o / Math.max(s, 1e-30));
+        }
+    }
+
+    /**
+     * The 2nd edition of ISO/IEC 14496-26 ships reference waveforms for the AAC-ELD streams with low delay SBR
+     * ({@code add-opt/er_eld_sbr_*}): every channel must meet the 16-bit conformance criterion of
+     * {@link AacConformanceTest} against them.
+     */
+    @Nested
+    @DisplayName("against the ISO/IEC 14496-26 references")
+    class References {
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacLowDelaySbrTest#streams")
+        @DisplayName("every channel meets the conformance criterion against the reference waveform")
+        void conformance(String stream) {
+            var expected = AacTestSupport.readWav(com.github.auties00.smalt.testkit.Fixtures.read(
+                    Mpeg4AudioVectors.file(stream + ".wav")));
+            var parsed = parse(stream);
+            var decoded = AacTestSupport.decodeAll(parsed).planes();
+            assertEquals(expected.length, decoded.length, stream + " channels");
+            for (var c = 0; c < expected.length; c++) {
+                for (var i = 0; i < decoded[c].length; i++) {
+                    decoded[c][i] = Math.clamp(decoded[c][i], -1.0f, 8388607 / 8388608.0f);
+                }
+                AacConformanceTest.assertConformant(expected[c], decoded[c], frameLength(parsed),
+                        stream + " channel " + c);
+            }
         }
     }
 

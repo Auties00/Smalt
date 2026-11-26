@@ -27,15 +27,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 @DisplayName("VP8 decoder with several threads")
 class Vp8ThreadingTest {
     static Stream<String> vectors() {
-        return Vp8Vectors.SHA256.keySet().stream().filter(name -> name.endsWith(".ivf")).sorted();
+        return Vp8Vectors.NAMES.stream();
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("vectors")
     @DisplayName("every shown frame matches libvpx's MD5 for every thread count")
     void vector(String name) throws IOException {
-        var ivfPath = Conformance.fetch(name, Vp8Vectors.BASE_URL + name, Vp8Vectors.SHA256.get(name));
-        var md5Path = Conformance.fetch(name + ".md5", Vp8Vectors.BASE_URL + name + ".md5", Vp8Vectors.SHA256.get(name + ".md5"));
+        var ivfPath = Conformance.vector(name);
+        var md5Path = Conformance.vector(name + ".md5");
         var expected = new ArrayList<String>();
         for (var line : Files.readString(md5Path, StandardCharsets.US_ASCII).split("\n")) {
             var trimmed = line.trim();

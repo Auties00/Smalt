@@ -307,6 +307,177 @@ class DdsDecoderTest {
         }
     }
 
+    /**
+     * The DDS files of Pillow 13.0.0's test images ({@code dds-pillow-*}), written by real tools: each format ffmpeg
+     * decodes against ffmpeg's top level, BC6H and BC7 against bcdec on the file's own blocks, the palette and
+     * luminance formats against values computed from their definitions, and the malformed and unsupported files
+     * (Pillow's timeout and unimplemented cases) rejected with a media exception in bounded time.
+     */
+    @Nested
+    @DisplayName("Pillow files")
+    class Pillow {
+        private static final int HEADER = 128;
+        private static final int DX10_HEADER = 148;
+
+        private static byte[] read(String name) {
+            try {
+                return java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                        "dds-pillow-" + name + ".dds"));
+            } catch (java.io.IOException exception) {
+                throw new java.io.UncheckedIOException(exception);
+            }
+        }
+
+        private static int u32(byte[] file, int offset) {
+            return ByteBuffer.wrap(file, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"dxt1-rgb-4bbp-noalpha_MipMaps-1,3", "dxt3-argb-8bbp-explicitalpha_MipMaps-1,3",
+                "dxt5-argb-8bbp-interpolatedalpha_MipMaps-1,3", "dxt5-colorblock-alpha-issue-4142,3", "ati1,3",
+                "bc4_typeless,3", "bc4_unorm,3", "bc4u,3", "bc5_typeless,3", "bc5_unorm,3", "bc5s,3",
+                "DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,0", "hopper,0", "uncompressed_rgb,0", "bgr15,1"})
+        @DisplayName("agrees with ffmpeg on the top level")
+        void ffmpeg(String name, int tolerance) {
+            var file = read(name);
+            var ours = RasterTesting.tight(DdsDecoder.decode(MediaSource.of(file)).picture());
+            var theirs = RasterFixtures.ffmpegDecode(file, "dds", "rgba");
+            assertEquals(theirs.length, ours.length, "top level size");
+            if (name.startsWith("bc5")) {
+                // ffmpeg reconstructs the blue of a two-channel normal map; red and green must agree
+                for (var index = 0; index < ours.length; index += 4) {
+                    theirs[index + 2] = ours[index + 2];
+                }
+            }
+            // ffmpeg rounds the interpolated S3TC and RGTC values and widens 5-bit fields by bit replication, which
+            // differs from Smalt's exact rounding (checked bit for bit against bcdec above) by at most 3 and 1
+            Tolerance.maxAbs(tolerance).assertWithin(name, theirs, ours);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"bc5u,false", "ati2,true"})
+        @DisplayName("decodes the BC5U and ATI2 FourCCs as BC5_UNORM, ATI2 in the channel order of 3Dc")
+        void bc5FourCc(String name, boolean swapped) {
+            // the three files hold the same blocks; ffmpeg's decode of the DX10 BC5_UNORM one is the reference, as
+            // DirectXTex maps BC5U to BC5_UNORM; ATI2 is AMD's 3Dc (ATI2N), whose first block is the second channel
+            var reference = RasterFixtures.ffmpegDecode(read("bc5_unorm"), "dds", "rgba");
+            var file = read(name);
+            var ours = RasterTesting.tight(DdsDecoder.decode(MediaSource.of(file)).picture());
+            assertEquals(reference.length, ours.length);
+            var expected = reference.clone();
+            for (var index = 0; index < ours.length; index += 4) {
+                if (swapped) {
+                    expected[index] = reference[index + 1];
+                    expected[index + 1] = reference[index];
+                }
+                expected[index + 2] = ours[index + 2];
+            }
+            Tolerance.maxAbs(3).assertWithin(name, expected, ours);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"argb-32bpp_MipMaps-1"})
+        @DisplayName("decodes DXGI R8G8B8A8_UNORM texels in their defined byte order")
+        void rgba8(String name) {
+            // ffmpeg reads this file as BGRA; the DXGI format defines red in the first byte
+            var file = read(name);
+            var height = u32(file, 12);
+            var width = u32(file, 16);
+            assertEquals(28, u32(file, 128), "DXGI_FORMAT_R8G8B8A8_UNORM");
+            var ours = RasterTesting.tight(DdsDecoder.decode(MediaSource.of(file)).picture());
+            assertArrayEquals(java.util.Arrays.copyOfRange(file, DX10_HEADER, DX10_HEADER + width * height * 4), ours);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"bc1", "bc1_typeless", "bc5_snorm"})
+        @DisplayName("rejects a DX10 header of array size 0, as DirectXTex does")
+        void zeroArraySize(String name) {
+            // Microsoft's DDS loaders (DirectXTex DecodeDDSHeader, DDSTextureLoader) refuse arraySize 0 as invalid
+            // data; ffmpeg and Pillow read such files as one element
+            var file = read(name);
+            assertEquals(0, u32(file, 140), "arraySize");
+            assertThrows(MediaException.Malformed.class, () -> DdsDecoder.decode(MediaSource.of(file)));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"DXGI_FORMAT_BC7_UNORM_SRGB,bc7", "bc7-argb-8bpp_MipMaps-1,bc7"})
+        @DisplayName("decodes BC7 files bit for bit against bcdec")
+        void bc7(String name, String format) {
+            var file = read(name);
+            var height = u32(file, 12);
+            var width = u32(file, 16);
+            var blocks = java.util.Arrays.copyOfRange(file, DX10_HEADER, DX10_HEADER + blocks(width, height) * 16);
+            var ours = RasterTesting.tight(DdsDecoder.decode(MediaSource.of(file)).picture());
+            Tolerance.exact().assertWithin(name, bcdec(format, width, height, blocks), ours);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"bc6h,bc6h", "bc6h_sf,bc6hs"})
+        @DisplayName("decodes BC6H files bit for bit against bcdec")
+        void bc6h(String name, String format) {
+            var file = read(name);
+            var height = u32(file, 12);
+            var width = u32(file, 16);
+            var blocks = java.util.Arrays.copyOfRange(file, DX10_HEADER, DX10_HEADER + blocks(width, height) * 16);
+            var ours = assertInstanceOf(ChannelFloatPicture.class, DdsDecoder.decode(MediaSource.of(file),
+                    ImageDecoderOptions.builder().keepChannels(true).build()).picture());
+            var halves = ByteBuffer.wrap(bcdec(format, width, height, blocks)).order(ByteOrder.LITTLE_ENDIAN)
+                    .asShortBuffer();
+            var expected = new float[halves.remaining()];
+            for (var index = 0; index < expected.length; index++) {
+                expected[index] = Float.float16ToFloat(halves.get(index));
+            }
+            assertArrayEquals(expected, ours.pixels());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"palette", "uncompressed_l"})
+        @DisplayName("rejects pixel formats whose bit count or masks contradict the texel, as ffmpeg does")
+        void contradictoryFormats(String name) {
+            // palette: DDPF_PALETTEINDEXED8 with a bit count of 24; uncompressed_l: 8-bit luminance with the mask
+            // 0xFF000000; ffmpeg refuses both (unsupported palette bpp 24, unknown pixel format)
+            var file = read(name);
+            assertThrows(MediaException.class, () -> DdsDecoder.decode(MediaSource.of(file)));
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var path = RasterTesting.write("pillow-" + name + ".dds", file);
+            var result = Oracle.execute(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), null, List.of("-v", "error", "-i",
+                    path.toString(), "-f", "rawvideo", "-pix_fmt", "rgba", "-"));
+            assertNotEquals(0, result.exitCode(), "ffmpeg refuses " + name + " too");
+        }
+
+        @Test
+        @DisplayName("decodes a luminance-alpha file from its definition")
+        void luminanceAlpha() {
+            var file = read("uncompressed_la");
+            var ours = RasterTesting.tight(DdsDecoder.decode(MediaSource.of(file)).picture());
+            assertEquals(128 * 128 * 4, ours.length);
+            for (var texel = 0; texel < 128 * 128; texel++) {
+                var value = file[HEADER + 2 * texel];
+                assertArrayEquals(new byte[]{value, value, value, file[HEADER + 2 * texel + 1]},
+                        java.util.Arrays.copyOfRange(ours, 4 * texel, 4 * texel + 4), "texel " + texel);
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {
+                "timeout-041dd17dfde800360a47a172269df127af138c6b", "timeout-52d106579505547091ef69b58341351a37c23e31",
+                "timeout-755a4d204f4208e3597ac3391edebee196462bd0", "timeout-c60a3d7314213624607bfb3e38d551a8b24a7435",
+                "unimplemented_dxgi_format", "unimplemented_pfflags", "unimplemented_pixel_format",
+                "unsupported_bitcount", "zero_mask_totals"})
+        @DisplayName("rejects malformed and unsupported files cleanly")
+        void rejects(String name) {
+            var file = read(name);
+            assertTimeoutPreemptively(Duration.ofSeconds(30), () -> {
+                assertThrows(MediaException.class, () -> DdsDecoder.decode(MediaSource.of(file)));
+                try {
+                    DdsDecoder.probe(MediaSource.of(file));
+                } catch (MediaException expected) {
+                    // probing may reject the file too
+                }
+            });
+        }
+    }
+
     @Nested
     @DisplayName("malformed input")
     class Malformed {

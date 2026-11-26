@@ -35,9 +35,9 @@
  *       containers and the codecs read from them, {@code make-image-samples.sh} for images,
  *       {@code make-wav-samples.py} for files the encoder tools cannot write directly), commit them under
  *       {@code core/src/test/resources/samples} or {@code image/src/test/resources/samples}, and pin them with
- *       {@code python -I tools/testdata/behavior/pin-samples.py}. Smoke-tier vectors of
+ *       {@code python -I tools/testdata/behavior/pin-samples.py}. Vectors of
  *       {@code tools/testdata/vectors.tsv} may be used as well, through
- *       {@link com.github.auties00.smalt.testkit.Conformance#fetchListed(String)}.</li>
+ *       {@link com.github.auties00.smalt.testkit.Conformance#vector(String)}.</li>
  *   <li>A sample under {@code core/src/test/resources/samples} is picked up by {@code DemuxerBehaviorTest}
  *       and an image sample by {@code ImageDecoderBehaviorTest}; a codec's module adds its inputs to its own
  *       behavior test ({@code AudioDecoderBehaviorTest}, {@code VideoDecoderBehaviorTest},

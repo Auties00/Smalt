@@ -151,7 +151,7 @@ final class JpegLsVectors {
      * {@return an entry of the T.87 conformance data set}
      */
     static byte[] t87(String name) {
-        var archive = Conformance.fetchListed("itu-t87-data-set.zip");
+        var archive = Conformance.vector("itu-t87-data-set.zip");
         try (var zip = new ZipFile(archive.toFile())) {
             var entry = zip.getEntry(name);
             if (entry == null) {

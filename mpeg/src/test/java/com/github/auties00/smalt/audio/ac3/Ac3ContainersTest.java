@@ -242,7 +242,7 @@ class Ac3ContainersTest {
         @Test
         @DisplayName("demux the 7.1 E-AC-3 stream into access units of its core and dependent substream")
         void eac3() {
-            var stream = read(Ac3TestSupport.SAMPLES.get(7).fetch());
+            var stream = read(Ac3TestSupport.SAMPLES.get(7).file());
             var source = MediaSource.of(stream);
             assertEquals(Optional.of(ContainerFormat.AC3), Containers.detect(source));
             var track = firstTrack(MediaSource.of(stream));
@@ -257,7 +257,7 @@ class Ac3ContainersTest {
         @Test
         @DisplayName("skip garbage before the first frame and between frames")
         void resynchronizes() {
-            var stream = read(Ac3TestSupport.SAMPLES.get(0).fetch());
+            var stream = read(Ac3TestSupport.SAMPLES.get(0).file());
             var units = Ac3TestSupport.units(stream);
             var damaged = new java.io.ByteArrayOutputStream();
             damaged.writeBytes(new byte[]{1, 2, 3, 0x0B, 0x77, 9, 9});
@@ -281,7 +281,7 @@ class Ac3ContainersTest {
         @ValueSource(longs = {0, 500_000, 1_234_567, 3_000_000})
         @DisplayName("seek to the access unit holding the target")
         void seek(long micros) {
-            var stream = read(Ac3TestSupport.SAMPLES.get(0).fetch());
+            var stream = read(Ac3TestSupport.SAMPLES.get(0).file());
             try (var demuxer = Containers.openDemuxer(MediaSource.of(stream))) {
                 demuxer.seek(micros);
                 var packet = demuxer.read();
@@ -294,7 +294,7 @@ class Ac3ContainersTest {
         @Test
         @DisplayName("probe the Atmos flag, dialogue level, layout and bit rate")
         void probe() {
-            var info = Media.probe(MediaSource.of(read(Ac3TestSupport.SAMPLES.get(7).fetch())));
+            var info = Media.probe(MediaSource.of(read(Ac3TestSupport.SAMPLES.get(7).file())));
             assertEquals(ContainerFormat.AC3, info.container().orElseThrow());
             var audio = info.audioStreams().getFirst();
             assertEquals(Codec.EAC3, audio.codec());
@@ -303,7 +303,7 @@ class Ac3ContainersTest {
             var level = audio.dialogueLevel().orElseThrow();
             assertTrue(level >= -31 && level <= -1, "dialogue level " + level);
             assertTrue(audio.bitrate().orElseThrow() > 0);
-            var plain = Media.probe(MediaSource.of(read(Ac3TestSupport.SAMPLES.get(1).fetch()))).audioStreams().getFirst();
+            var plain = Media.probe(MediaSource.of(read(Ac3TestSupport.SAMPLES.get(1).file()))).audioStreams().getFirst();
             assertTrue(plain.profile().isEmpty());
             assertEquals(6, plain.channels());
             assertEquals(448000, plain.bitrate().orElseThrow());
@@ -381,7 +381,7 @@ class Ac3ContainersTest {
         @Test
         @DisplayName("write ec-3 with a dec3 box carrying the dependent substream and the Atmos extension")
         void eac3() {
-            var stream = read(Ac3TestSupport.SAMPLES.get(7).fetch());
+            var stream = read(Ac3TestSupport.SAMPLES.get(7).file());
             var packets = units(stream);
             var file = mux(track(Codec.EAC3, 48000, ChannelLayout.SURROUND_7_1), packets, Mp4Muxer::new);
             var track = firstTrack(MediaSource.of(file));
@@ -399,7 +399,7 @@ class Ac3ContainersTest {
         @DisplayName("read the stream ffmpeg remuxes, as its dec3 box describes it, and decode all of its channels")
         void foreign() {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var input = Ac3TestSupport.SAMPLES.get(7).fetch();
+            var input = Ac3TestSupport.SAMPLES.get(7).file();
             var output = directory.resolve("remuxed.mp4");
             Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-y", "-i", input.toString(), "-c", "copy",
                     output.toString()));
@@ -417,6 +417,31 @@ class Ac3ContainersTest {
                 assertEquals(8, channels[0]);
                 assertEquals(8, decoder.layout().channels());
             }
+        }
+    }
+
+    @Nested
+    @DisplayName("CMAF of a production encoder")
+    class Cmaf {
+        @Test
+        @DisplayName("demux the E-AC-3 stereo CMAF track as ffmpeg copies it out and decode it like its elementary stream")
+        void eac3() {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var data = com.github.auties00.smalt.audio.aac.StreamingVectors.cmaf("cta-wave-ceac-eac3-at1-2023-11-08.zip");
+            var file = write("cta-eac3.mp4", data);
+            var elementary = directory.resolve("cta-eac3.eac3");
+            Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-y", "-i", file.toString(),
+                    "-map", "0:a:0", "-c", "copy", "-f", "eac3", elementary.toString()));
+            var track = firstTrack(MediaSource.of(data));
+            assertEquals(Codec.EAC3, track.codec());
+            assertEquals(48000, track.sampleRate());
+            assertEquals(2, track.layout().orElseThrow().channels());
+            var packets = readAll(MediaSource.of(data));
+            var expected = units(read(elementary));
+            assertSamePayloads(expected, packets);
+            var decoded = decodeAll(track, packets);
+            var reference = decodeAll(track(Codec.EAC3, 48000, ChannelLayout.STEREO), expected);
+            assertSameDecode(reference, decoded, 2, reference[0].length);
         }
     }
 
@@ -480,7 +505,7 @@ class Ac3ContainersTest {
         @Test
         @DisplayName("decode the 7.1 E-AC-3 access units a transport stream carries to all eight channels")
         void transportStreamDecodes71() {
-            var stream = read(Ac3TestSupport.SAMPLES.get(7).fetch());
+            var stream = read(Ac3TestSupport.SAMPLES.get(7).file());
             var packets = units(stream);
             var file = mux(track(Codec.EAC3, 48000, ChannelLayout.SURROUND_7_1), packets, TsMuxer::new);
             var demuxed = firstTrack(MediaSource.of(file));
@@ -496,7 +521,7 @@ class Ac3ContainersTest {
         @ValueSource(strings = {"mkv", "ts"})
         @DisplayName("carry the 7.1 E-AC-3 access units unchanged")
         void eac3(String extension) {
-            var stream = read(Ac3TestSupport.SAMPLES.get(7).fetch());
+            var stream = read(Ac3TestSupport.SAMPLES.get(7).file());
             var packets = units(stream);
             Function<MediaSink, Muxer> factory = extension.equals("mkv") ? MatroskaMuxer::new : TsMuxer::new;
             var file = mux(track(Codec.EAC3, 48000, ChannelLayout.SURROUND_7_1), packets, factory);

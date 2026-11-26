@@ -110,7 +110,7 @@ class ErrorProtectionSpeechConformanceTest {
     }
 
     private static List<AacTestSupport.Stream> tracks(String name) {
-        return AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4")));
+        return AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.file(name + ".mp4")));
     }
 
     /** Returns an access unit of an instance track; a track whose access units are all empty may be left out. */

@@ -236,7 +236,7 @@ class WebpAlphaTest {
             "lossy_alpha4.webp", "big_endian_bug_393.webp"})
     @DisplayName("decodes the corpus ALPH chunks to dwebp's alpha planes")
     void corpus(String name) {
-        assertAlphaMatchesDwebp(LibwebpTestData.fetch(name));
+        assertAlphaMatchesDwebp(LibwebpTestData.vector(name));
     }
 
     @ParameterizedTest(name = "-alpha_filter {0} -m {1} -alpha_q {2}")

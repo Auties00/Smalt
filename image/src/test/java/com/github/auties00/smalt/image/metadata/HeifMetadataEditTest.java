@@ -111,6 +111,23 @@ class HeifMetadataEditTest {
         return heif.readItem(MediaSource.of(file), heif.primaryItem(), MediaLimits.DEFAULT);
     }
 
+    @Test
+    @DisplayName("edits a real HEIC whose Exif item data sits at the end of the file, keeping the image and Exif")
+    void exifAtEndOfFile() throws java.io.IOException {
+        // metadata-extractor-images: the Exif item's extent follows the mdat holding the coded image
+        var original = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                "mei-heic-exif-at-eof.heic"));
+        var before = ImageMetadata.read(MediaSource.of(original));
+        assertTrue(before.exifBytes().isPresent(), "the original's Exif");
+        var edited = ImageMetadataEditor.apply(original, icc(ColorProfile.displayP3()));
+        assertArrayEquals(primaryCodedData(original), primaryCodedData(edited), "the coded image is untouched");
+        var after = ImageMetadata.read(MediaSource.of(edited));
+        assertArrayEquals(before.exifBytes().orElseThrow(), after.exifBytes().orElseThrow(), "the Exif block");
+        var stripped = ImageMetadataEditor.stripLocation(original);
+        assertArrayEquals(primaryCodedData(original), primaryCodedData(stripped));
+        assertTrue(ImageMetadata.read(MediaSource.of(stripped)).exifBytes().isPresent(), "Exif kept without location");
+    }
+
     @Nested
     @DisplayName("ICC profiles")
     class Icc {

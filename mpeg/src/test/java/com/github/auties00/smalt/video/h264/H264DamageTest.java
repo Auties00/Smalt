@@ -237,9 +237,7 @@ class H264DamageTest {
         @MethodSource("com.github.auties00.smalt.video.h264.H264ConformanceTest#decodable")
         @DisplayName("conformance bitstreams decode bit-exactly with no frame reported damaged")
         void conformance(H264ConformanceTest.Vector vector) throws IOException {
-            var archive = com.github.auties00.smalt.testkit.Conformance.fetch("h264-" + vector.directory() + "-"
-                    + vector.archive(), "https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/"
-                    + vector.directory() + "/" + vector.archive(), vector.sha256());
+            var archive = H264ConformanceTest.archive(vector);
             byte[] stream;
             byte[] reference;
             try (var zip = new ZipFile(archive.toFile())) {

@@ -25,10 +25,10 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Times full decodes of 100-frame AV1 clips of natural Xiph sequences encoded by libaom: 720p50
- * "parkrun" with the real-time encoder (cpu-used 8, 1.5 Mbit/s, one tile), 720p50 "shields" with
- * the good-quality encoder (cpu-used 6, CRF 32, one tile), and "shields" upscaled to 1080p
- * (cpu-used 6, CRF 32, 2x2 tiles). Each clip is decoded on one thread and with the module's
+ * Times full decodes of 100-frame AV1 clips of the natural Xiph sequence 720p50 "parkrun" encoded by
+ * libaom: with the real-time encoder (cpu-used 8, 1.5 Mbit/s, one tile), with the good-quality encoder
+ * (cpu-used 6, CRF 32, one tile), and upscaled to 1080p with the good-quality encoder (cpu-used 6,
+ * CRF 32, 2x2 tiles). Each clip is decoded on one thread and with the module's
  * threads, with the Vector API kernels and with the scalar ones, so every ratio comes from one
  * invocation.
  *
@@ -41,8 +41,6 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
 public class Av1DecoderBenchmark {
-    private static final String XIPH = "https://media.xiph.org/video/derf/y4m/";
-
     @Param({"720p-realtime", "720p-good", "1080p-good-tiles"})
     public String stream;
 
@@ -51,17 +49,14 @@ public class Av1DecoderBenchmark {
 
     @Setup(Level.Trial)
     public void setUp() throws Exception {
-        var parkrun = Conformance.fetch("720p50_parkrun_ter.y4m", XIPH + "720p50_parkrun_ter.y4m",
-                "5a28e2b1e22877d6a8d8301a3e570100dee60c8071e5d2e352ba5cf3a45d848b");
-        var shields = Conformance.fetch("720p50_shields_ter.y4m", XIPH + "720p50_shields_ter.y4m",
-                "b5b09557dc76aec2a854dc34e0fe200bdb1ee5a2eee1dbb61cc1ec6861e6a742");
+        var parkrun = Conformance.vector("720p50_parkrun_ter.y4m");
         var file = switch (stream) {
             case "720p-realtime" -> Fixtures.ffmpeg("ivf", List.of("-i", parkrun.toString(), "-frames:v", "100"),
                     List.of("-c:v", "libaom-av1", "-usage", "realtime", "-cpu-used", "8", "-b:v", "1500k",
                             "-threads", "8"));
-            case "720p-good" -> Fixtures.ffmpeg("ivf", List.of("-i", shields.toString(), "-frames:v", "100"),
+            case "720p-good" -> Fixtures.ffmpeg("ivf", List.of("-i", parkrun.toString(), "-frames:v", "100"),
                     List.of("-c:v", "libaom-av1", "-cpu-used", "6", "-crf", "32", "-row-mt", "1", "-threads", "8"));
-            default -> Fixtures.ffmpeg("ivf", List.of("-i", shields.toString(), "-frames:v", "100",
+            default -> Fixtures.ffmpeg("ivf", List.of("-i", parkrun.toString(), "-frames:v", "100",
                             "-vf", "scale=1920:1080:flags=lanczos"),
                     List.of("-c:v", "libaom-av1", "-cpu-used", "6", "-crf", "32", "-tiles", "2x2", "-row-mt", "1",
                             "-threads", "8"));

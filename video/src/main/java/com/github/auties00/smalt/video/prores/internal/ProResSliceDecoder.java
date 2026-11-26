@@ -143,6 +143,11 @@ public final class ProResSliceDecoder {
         for (var batch = 0; batch < batches; batch++) {
             Arrays.fill(all[batch], 0f);
         }
+        if (start == end) {
+            // Apple's encoders code the chroma of a gray picture in no bytes at all: every coefficient is zero, so
+            // every sample is the mid level
+            return;
+        }
         var in = reader;
         in.reset(data, start, end);
         var first = ProResCodes.decode(in, ProResTables.FIRST_DC);

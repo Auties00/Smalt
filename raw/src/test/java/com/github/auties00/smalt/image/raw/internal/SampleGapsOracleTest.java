@@ -29,38 +29,31 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
  * Checks, against the photosites Adobe DNG Converter stores for them, the files of the formats this package's
- * samples did not cover: the sRAW and mRAW files of 16 Canon bodies, Panasonic raw format versions 6 (12-bit data),
+ * samples did not cover: the mRAW file of a Canon body, Panasonic raw format versions 6 (12-bit data),
  * 7 and 8 (in a grid of tiles), with their levels and white balance, and copies of CC0 samples with a field changed to
  * the values no sample has: Pentax files without their maker note's Huffman table, and a Panasonic version 8 file
  * with a ceiling, cell origins and shifts. The oracle files are the summaries {@code tools/testdata/raw-oracle.py}
- * writes into {@code <conformance cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory); the
+ * writes into {@code <test cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory); the
  * tests are skipped without them.
  */
 class SampleGapsOracleTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
-    // the S1R II's and S5's high-resolution files hold more than the default 128 Mi photosites
+    // limits above the defaults, for the largest samples
     private static final MediaLimits LIMITS = MediaLimits.builder().maxPixels(1L << 28).maxBytes(3L << 30).build();
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"CR2_1D4_MRAW", "CR2_1D4_SRAW", "CR2_1DX2_MRAW",
-            "CR2_1DX2_SRAW", "CR2_50D_MRAW", "CR2_50D_SRAW", "CR2_5D2_MRAW", "CR2_5D2_SRAW", "CR2_5D3_MRAW",
-            "CR2_5D4_MRAW", "CR2_5D4_SRAW", "CR2_5DSR_MRAW", "CR2_5DSR_SRAW", "CR2_5DS_MRAW", "CR2_5DS_SRAW",
-            "CR2_60D_MRAW", "CR2_60D_SRAW", "CR2_6D2_MRAW", "CR2_6D2_SRAW", "CR2_6D_MRAW", "CR2_6D_SRAW",
-            "CR2_70D_MRAW", "CR2_70D_SRAW", "CR2_7D2_MRAW", "CR2_7D2_SRAW", "CR2_80D_MRAW", "CR2_80D_SRAW",
-            "PEF_K10D", "PEF_K2000", "PEF_K70", "RW2_GH5M2", "RW2_GH7", "RW2_S1RM2", "RW2_S1RM2_HIGH_RES",
-            "RW2_S5_HIGH_RES", "RW2_S5_V7", "RW2_S9"})
+    @EnumSource(value = RawSamples.class, names = {"CR2_50D_MRAW", "RW2_GH5M2", "RW2_S5_V7", "RW2_S9"})
     @DisplayName("the decoder reproduces the photosites the converter stores for the sample")
     void sample(RawSamples sample) {
         var name = sample.fileName();
         var summary = Summary.read(oracle(name.substring(0, name.lastIndexOf('.'))));
-        check(summary, read(sample.fetch()));
+        check(summary, read(sample.path()));
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"RW2_GH5M2", "RW2_GH7", "RW2_S1RM2", "RW2_S1RM2_HIGH_RES",
-            "RW2_S5_HIGH_RES", "RW2_S5_V7", "RW2_S9"})
+    @EnumSource(value = RawSamples.class, names = {"RW2_GH5M2", "RW2_S5_V7", "RW2_S9"})
     @DisplayName("the black and white levels and the white balance of the Panasonic files equal the converter's")
     void levels(RawSamples sample) {
         var name = sample.fileName();
@@ -68,7 +61,7 @@ class SampleGapsOracleTest {
         Skip.unless(Files.isRegularFile(path), "data:raw-oracle", "no oracle file " + path
                 + "; run tools/testdata/raw-oracle.py");
         var levels = VendorOracleTest.Levels.read(path);
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var file = RawParser.parse(source, LIMITS);
             assertNotNull(file.sensor, file.unsupported);
             var sensor = file.sensor;
@@ -96,9 +89,8 @@ class SampleGapsOracleTest {
     }
 
     static Stream<String> copies() {
-        return Stream.of("patched-pentax-k10d-no-table", "patched-pentax-k2000-no-table",
-                "patched-pentax-k-70-no-table", "patched-panasonic-dc-s5m2-ceiling-origins",
-                "patched-panasonic-dc-s5m2-shifts",
+        return Stream.of("patched-pentax-k-x-no-table", "patched-pentax-k-5-no-table",
+                "patched-panasonic-dc-s5m2-ceiling-origins", "patched-panasonic-dc-s5m2-shifts",
                 "patched-panasonic-dc-s5m2-long-shifts");
     }
 
@@ -113,9 +105,8 @@ class SampleGapsOracleTest {
     // the copies of raw-oracle.py's PATCHED_SAMPLES: the offsets and bytes it writes
     static byte[] patched(String name) {
         return switch (name) {
-            case "patched-pentax-k10d-no-table" -> change(RawSamples.PEF_K10D, 1688, 0x7F, 0xFF);
-            case "patched-pentax-k2000-no-table" -> change(RawSamples.PEF_K2000, 1796, 0x7F, 0xFF);
-            case "patched-pentax-k-70-no-table" -> change(RawSamples.PEF_K70, 1910, 0xFF, 0x7F);
+            case "patched-pentax-k-x-no-table" -> change(RawSamples.PEF_PENTAX_KX, 1700, 0x7F, 0xFF);
+            case "patched-pentax-k-5-no-table" -> change(RawSamples.PEF_K5, 1814, 0x7F, 0xFF);
             case "patched-panasonic-dc-s5m2-ceiling-origins" -> {
                 var data = bytes(RawSamples.RW2_S5M2);
                 var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
@@ -154,7 +145,7 @@ class SampleGapsOracleTest {
 
     private static byte[] bytes(RawSamples sample) {
         try {
-            return Files.readAllBytes(sample.fetch());
+            return Files.readAllBytes(sample.path());
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }

@@ -215,7 +215,7 @@ class ApeDecoderTest {
     })
     @DisplayName("decodes the files of Monkey's Audio 3.80 to 3.99 as the reference library does, up to the cut")
     void legacy(String name, long samples, String md5) throws IOException {
-        var file = Conformance.fetchListed("fate-" + name);
+        var file = Conformance.vector("fate-" + name);
         try (var demuxer = new ApeDemuxer(MediaSource.of(Files.readAllBytes(file)))) {
             var track = (AudioTrack) demuxer.tracks().getFirst();
             try (var decoder = AudioDecoders.create(track)) {

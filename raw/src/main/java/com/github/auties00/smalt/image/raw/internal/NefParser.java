@@ -22,7 +22,13 @@ import java.util.regex.Pattern;
  * one per photosite row by row: each photosite is predicted from the previous one of the same
  * color in its row, the first two of a row from the first two of the row two above, and the
  * decoded value indexes the linearization curve. A lossy stream with a split row switches from
- * that row on to a second table whose codes leave the low bits of large differences out.
+ * that row on to a second table whose codes leave the low bits of large differences out. Tag
+ * {@code 0x0093} (in the files of the early Z-series firmware, a value of the block of tag {@code 0x0051})
+ * states how the data is stored: under Nikon's compression code some files store it
+ * uncompressed, the Z-series cameras' 12-bit and 14-bit data packed least significant bit first in
+ * little-endian order with each row padded to the strip's row size (values 6, 9 and 10) and the Coolpix
+ * NRW files' 12-bit samples in the high bits of 16-bit big-endian words (value 7); the small raw images
+ * (value 8) hold YCbCr samples rather than photosites and are not supported.
  *
  * @implNote This implementation follows the structure as the ExifTool tag documentation and Bill
  * Claff's description of NEF compression present it. The Huffman tables of
@@ -37,13 +43,49 @@ import java.util.regex.Pattern;
  * {@link NikonHighEfficiency}. The interlaced rows of the {@code E}-series Coolpix
  * models were found by matching the rows of three CC0 files (E5700, E8400, E8800) with
  * those the converter stores, and the place of their white balance by finding the as-shot
- * neutral the converter stores among the maker note's values (E8400, E8800).
+ * neutral the converter stores among the maker note's values (E8400, E8800). The packing of the data
+ * stored uncompressed under Nikon's compression code was found from CC0 files (Z 6, Z 7II, Coolpix P7800), and
+ * that of the uncompressed NRW files from the Coolpix B700's, against the photosites Adobe DNG Converter stores:
+ * of the candidate bit orders, only this one gives rows whose same-color neighbors are close and whose
+ * values lie between the maker note's black level and the bit depth's maximum.
  */
 final class NefParser {
     /**
      * The TIFF compression code of Nikon's compression.
      */
     private static final int NIKON_COMPRESSION = 34713;
+
+    /**
+     * The maker note tag of the storage of the sensor data (NEFCompression in the ExifTool tag documentation).
+     */
+    private static final int STORAGE = 0x0093;
+
+    /**
+     * The maker note tag of the block that holds the storage of the sensor data in the files of the early Z-series
+     * firmware, which have no tag {@link #STORAGE}.
+     */
+    private static final int STORAGE_BLOCK = 0x0051;
+
+    /**
+     * The offset of the 16-bit storage value in the block of tag {@link #STORAGE_BLOCK}.
+     */
+    private static final int STORAGE_BLOCK_OFFSET = 10;
+
+    /**
+     * The storage value of 12-bit samples in 16-bit big-endian words, high bits first ("Unpacked 12 bits").
+     */
+    private static final int UNPACKED_12 = 7;
+
+    /**
+     * The storage value of the small raw images, whose samples are YCbCr rather than photosites ("Small").
+     */
+    private static final int SMALL_RAW = 8;
+
+    /**
+     * The storage values of uncompressed data under Nikon's compression code: "Uncompressed (reduced to 12 bit)",
+     * "Unpacked 12 bits", "Packed 12 bits" and "Packed 14 bits".
+     */
+    private static final java.util.Set<Integer> PACKED = java.util.Set.of(6, UNPACKED_12, 9, 10);
 
     /**
      * The size of the Coolpix maker note block (tag {@code 0x0014}) that holds the white balance.
@@ -103,6 +145,16 @@ final class NefParser {
                 file.unsupported = exception.getMessage();
                 return;
             }
+        } else if (compression == NIKON_COMPRESSION && storage(note) == SMALL_RAW) {
+            file.unsupported = "NEF small raw images (NEFCompression 8, YCbCr samples) are not supported";
+            return;
+        } else if (compression == NIKON_COMPRESSION && PACKED.contains(storage(note))) {
+            try {
+                sensor.reader = packed(raw, sensor, storage(note) == UNPACKED_12);
+            } catch (MediaException.Unsupported exception) {
+                file.unsupported = exception.getMessage();
+                return;
+            }
         } else if (compression == NIKON_COMPRESSION) {
             Compressed compressed;
             try {
@@ -123,7 +175,7 @@ final class NefParser {
             sensor.white = new double[]{maximum};
         } else {
             try {
-                sensor.reader = uncompressed(raw, sensor);
+                sensor.reader = uncompressed(raw, sensor, !interlaced(file));
                 if (interlaced(file)) {
                     sensor.reader = interlaced(sensor.reader);
                 }
@@ -331,13 +383,16 @@ final class NefParser {
 
     /**
      * Describes an uncompressed NEF image: 16-bit words when the strips hold two bytes per
-     * photosite, little endian as Nikon writes them, and TIFF bit packing otherwise.
+     * photosite, little endian as Nikon writes them; in the little-endian files of the newer Coolpix
+     * models (the NRW files, not the {@code E}-series ones), 12-bit samples packed most significant bit
+     * first in a stream of little-endian 32-bit words; and TIFF bit packing otherwise.
      *
      * @param raw the image directory
      * @param sensor the sensor description to fill
+     * @param words whether packed 12-bit samples of a little-endian file fill 32-bit words
      * @return the reader
      */
-    private static Sensor.Reader uncompressed(Ifd raw, Sensor sensor) {
+    private static Sensor.Reader uncompressed(Ifd raw, Sensor sensor, boolean words) {
         var reader = TiffSamples.describe(raw, sensor);
         var counts = raw.longs(TiffSamples.STRIP_BYTE_COUNTS);
         var total = 0L;
@@ -345,6 +400,24 @@ final class NefParser {
             for (var count : counts) {
                 total += count;
             }
+        }
+        if (words && raw.reader().little() && sensor.bitsPerSample == 12 && sensor.samplesPerPixel == 1
+                && sensor.width % 8 == 0 && total == (long) sensor.width * sensor.height * 3 / 2) {
+            var blocks = TiffSamples.blocks(raw, sensor.width, sensor.height);
+            var source = raw.reader().source();
+            return (plane, limits) -> {
+                for (var block : blocks) {
+                    LimitChecks.checkAllocation(limits, block.length());
+                    var data = new byte[(int) Math.min(block.length(), Integer.MAX_VALUE - 16)];
+                    source.readFully(block.offset(), data, 0, data.length);
+                    var rows = Math.min(block.height(), plane.height - block.y());
+                    var stride = plane.width * 3 / 2;
+                    for (var row = 0; row < rows && (long) row * stride < data.length; row++) {
+                        Unpack.msbFirstWords(data, row * stride, Math.min(data.length, (row + 1) * stride), 12,
+                                plane.integers, (block.y() + row) * plane.width, plane.width);
+                    }
+                }
+            };
         }
         if (sensor.bitsPerSample > 8 && sensor.bitsPerSample < 16 && total >= (long) sensor.width * sensor.height * 2) {
             var blocks = TiffSamples.blocks(raw, sensor.width, sensor.height);
@@ -369,6 +442,80 @@ final class NefParser {
             };
         }
         return reader;
+    }
+
+    /**
+     * Returns the storage of the sensor data the maker note states: tag {@code 0x0093}, or, in the files of the
+     * early Z-series firmware, the 16-bit value at offset 10 of the block of tag {@code 0x0051}.
+     *
+     * @param note the maker note's directory, or {@code null}
+     * @return the storage value, or 0 when the maker note states none
+     */
+    private static int storage(Ifd note) {
+        if (note == null) {
+            return 0;
+        }
+        var stated = note.intValue(STORAGE, 0);
+        if (stated != 0) {
+            return stated;
+        }
+        var block = note.bytes(STORAGE_BLOCK);
+        return block != null && block.length >= STORAGE_BLOCK_OFFSET + 2
+                ? ByteArrays.u16(block, STORAGE_BLOCK_OFFSET, note.reader().little()) : 0;
+    }
+
+    /**
+     * Describes a NEF image stored uncompressed under Nikon's compression code: rows of samples packed least
+     * significant bit first in little-endian order (the 12-bit and 14-bit data of the Z-series cameras), each row
+     * padded to the strip's row size, or 16-bit big-endian words holding 12-bit samples in their high bits (the
+     * Coolpix NRW files).
+     *
+     * @param raw the image directory
+     * @param sensor the sensor description to fill
+     * @param words whether the samples are 16-bit words rather than packed
+     * @return the reader
+     * @throws MediaException.Malformed if the image dimensions do not match its strips
+     */
+    private static Sensor.Reader packed(Ifd raw, Sensor sensor, boolean words) {
+        var width = raw.intValue(TiffSamples.IMAGE_WIDTH, 0);
+        var height = raw.intValue(TiffSamples.IMAGE_LENGTH, 0);
+        var bits = raw.intValue(TiffSamples.BITS_PER_SAMPLE, 12);
+        if (width <= 0 || height <= 0 || (bits != 12 && bits != 14) || (words && bits != 12)) {
+            throw new MediaException.Malformed("invalid NEF raw image of " + width + "x" + height + "x" + bits);
+        }
+        var blocks = TiffSamples.blocks(raw, width, height);
+        var row = words ? 2L * width : ((long) width * bits + 7) / 8;
+        for (var block : blocks) {
+            if (block.height() <= 0 || block.length() / block.height() < row) {
+                throw new MediaException.Malformed("the NEF strips are shorter than their rows");
+            }
+        }
+        sensor.width = width;
+        sensor.height = height;
+        sensor.bitsPerSample = bits;
+        sensor.compression = "uncompressed";
+        var source = raw.reader().source();
+        return (plane, limits) -> {
+            for (var block : blocks) {
+                LimitChecks.checkAllocation(limits, block.length());
+                var data = new byte[(int) Math.min(block.length(), Integer.MAX_VALUE - 16)];
+                source.readFully(block.offset(), data, 0, data.length);
+                var stride = (int) (block.length() / block.height());
+                var rows = Math.min(block.height(), plane.height - block.y());
+                for (var y = 0; y < rows; y++) {
+                    var start = y * stride;
+                    var target = (block.y() + y) * plane.width;
+                    if (words) {
+                        Unpack.words(data, start, start + stride, false, 16, plane.integers, target, plane.width);
+                        for (var x = 0; x < plane.width; x++) {
+                            plane.integers[target + x] = (short) ((plane.integers[target + x] & 0xFFFF) >>> 4);
+                        }
+                    } else {
+                        Unpack.lsbFirst(data, start, start + stride, bits, plane.integers, target, plane.width);
+                    }
+                }
+            }
+        };
     }
 
     /**

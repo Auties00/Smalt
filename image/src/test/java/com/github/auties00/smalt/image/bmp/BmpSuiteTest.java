@@ -45,7 +45,7 @@ class BmpSuiteTest {
 
     static synchronized Map<String, byte[]> files() {
         if (files == null) {
-            files = unzip(Conformance.fetchListed("bmpsuite-2.8.zip"));
+            files = unzip(Conformance.vector("bmpsuite-2.8.zip"));
         }
         return files;
     }

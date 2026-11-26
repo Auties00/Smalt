@@ -43,10 +43,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("H.264 auxiliary coded pictures as alpha")
 class H264AuxiliaryAlphaTest {
-    private static final String BASE = "https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/FRExt/";
-
-    private static final String SHA256 = "a0a853f1b280b5d86e9d9f0834dec150488faad31ab26fe59a7ca1fa74ca71cd";
-
     private static final int WIDTH = 960;
 
     private static final int HEIGHT = 544;
@@ -63,7 +59,7 @@ class H264AuxiliaryAlphaTest {
 
     static synchronized Archive archive() throws IOException {
         if (archive == null) {
-            var file = Conformance.fetch("h264-FRExt-alphaconformanceG.zip", BASE + "alphaconformanceG.zip", SHA256);
+            var file = Conformance.vector("h264-FRExt-alphaconformanceG.zip");
             try (var zip = new ZipFile(file.toFile())) {
                 archive = new Archive(read(zip, "alphaconformanceG/alphaconformanceG.264"),
                         read(zip, "alphaconformanceG/test8b43.yuv"), read(zip, "alphaconformanceG/test7a43.yuv"));

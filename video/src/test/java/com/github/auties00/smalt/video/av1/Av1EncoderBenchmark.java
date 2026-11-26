@@ -59,8 +59,7 @@ public class Av1EncoderBenchmark {
         var height = size == 720 ? 720 : size == 480 ? 480 : 288;
         var name = size == 720 ? "johnny720.yuv" : size == 480 ? "johnny480.yuv" : "foreman.yuv";
         var clip = Vp9TestVideo.clip(name);
-        frames = clip != null ? Vp9TestVideo.read(clip, width, height, 0, 60)
-                : Vp9TestVideo.synthesize(width, height, 60);
+        frames = Vp9TestVideo.read(clip, width, height, 0, 60);
         var bitrate = size == 720 ? 1_200_000 : size == 480 ? 600_000 : 300_000;
         encoder = new Av1Encoder(width, height, Av1EncoderOptions.forRealtime().toBuilder().bitrate(bitrate)
                 .speed(Av1EncoderSpeed.valueOf(speed)).dropFrames(false).threads(threads)

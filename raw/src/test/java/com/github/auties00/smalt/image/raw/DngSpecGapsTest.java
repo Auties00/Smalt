@@ -598,9 +598,7 @@ class DngSpecGapsTest {
         @Test
         @DisplayName("a JPEG XL preview meets a hint, in one tile or two")
         void jpegXl() throws Exception {
-            var jxl = Conformance.fetch("jxl-conformance-patches_lossless.jxl",
-                    "https://raw.githubusercontent.com/libjxl/conformance/b1d0f990b03e57bf6d137c365cd5dc8b470b9191/testcases/patches_lossless/input.jxl",
-                    "2a47b6766264ac6243a43bbb85684688717591bb3bd9b4c2db56226192418b4e");
+            var jxl = Conformance.vector("jxl-conformance-patches_lossless.jxl");
             var stream = Files.readAllBytes(jxl);
             var expected = ImageOps.toRgba(JxlDecoder.decode(MediaSource.of(jxl)).picture());
             var width = expected.width();

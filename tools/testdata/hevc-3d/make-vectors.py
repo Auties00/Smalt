@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Writes the committed 3D-HEVC vectors of smalt-mpeg's Hevc3dVectorTest.
 
-The JCT-3V conformance streams of 3D-HEVC are fetched, never committed (their licence is unstated), so the tests also
+The JCT-3V conformance streams of 3D-HEVC come only from the hosted test data, never the repository (their licence is
+unstated), so the tests also
 decode short streams the 3D-HEVC reference encoder HTM (TAppEncoder, BSD-3-Clause, used as a black-box encoder) coded
 from a synthetic scene: two views of 128x128 pictures (HTM's encoder needs whole coding tree blocks), each with its
 depth view (layers 0 texture view 0, 1 depth view 0, 2 texture view 1, 3 depth view 1), random access with a GOP of 8. The texture of each view is a moving pattern

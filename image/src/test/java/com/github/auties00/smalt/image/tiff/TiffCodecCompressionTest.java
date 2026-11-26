@@ -601,24 +601,20 @@ class TiffCodecCompressionTest {
 
         static Stream<String[]> slides() {
             return Stream.of(
-                    new String[]{"openslide-aperio-cmu-1-jp2k-33005.svs", "3",
-                            "https://openslide.cs.cmu.edu/download/openslide-testdata/Aperio/CMU-1-JP2K-33005.svs",
-                            "9a1923cd9bcb260ba4d99d64f8d6e32550648c332ba48817f920662f3a513420"},
-                    new String[]{"openslide-aperio-jp2k-33003-1.svs", "3",
-                            "https://openslide.cs.cmu.edu/download/openslide-testdata/Aperio/JP2K-33003-1.svs",
-                            "6205ccf75a8fa6c32df7c5c04b7377398971a490fb6b320d50d91f7ba6a0e6fd"});
+                    new String[]{"openslide-aperio-cmu-1-jp2k-33005.svs", "3"},
+                    new String[]{"openslide-aperio-jp2k-33003-1.svs", "3"});
         }
 
         @ParameterizedTest(name = "{0}")
         @MethodSource("slides")
         @DisplayName("pyramid levels of public Aperio slides decode as OpenSlide renders them")
-        void slides(String name, String page, String url, String sha256) {
+        void slides(String name, String page) {
             var directory = Path.of(System.getProperty("smalt.test.svsOracle",
-                    Conformance.directory().resolve("svs-oracle").toString()));
+                    Conformance.cache("svs-oracle").toString()));
             var oracle = directory.resolve(name + "-page" + page + ".rgba");
             Skip.unless(Files.isRegularFile(oracle), "data:svs-oracle", "no OpenSlide rendering " + oracle
                     + " (tools/testdata/svs-oracle.py)");
-            var slide = Conformance.fetch(name, url, sha256);
+            var slide = Conformance.vector(name);
             byte[] expected;
             try {
                 expected = Files.readAllBytes(oracle);

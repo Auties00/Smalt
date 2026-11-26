@@ -67,8 +67,8 @@ python tools/fuzz/fuzz.py budget --time 60 --select shard=0/4
 ```
 
 `run` and `budget` build first (`--no-build` skips it) and gather extra seeds (`--no-seeds` skips it): the
-committed seeds, the saved findings, and the matching files of the conformance cache that
-`python tools/testdata/testdata.py fetch --tier smoke` fills, with the packets of every cached container track
+committed seeds, the saved findings, and the matching vectors of the hosted test data (`SMALT_TESTDATA`, pulled as
+`tools/testdata/README.md` describes), with the packets of every container track
 converted to `FuzzPackets` seeds of at most 32 packets. Each target keeps its corpus, its log and its findings
 under `target/fuzz/smalt_<module>_<Class>_<method>/`; `budget` prints one line per target and exits with 1 when
 one found something. libFuzzer's `slow-unit-*` files record inputs slower than 10 seconds and are reported but are
@@ -101,7 +101,7 @@ in the artifacts of a ClusterFuzzLite run (the `crash-*` files of the failed job
 
 Seeds are small: committed ones are a few kilobytes where the format allows it, and at most a few hundred
 kilobytes for camera raw files. The `FuzzSeedWriter` test of each module writes them, from ffmpeg-made files,
-committed test vectors, the conformance cache (vectors listed in `tools/testdata/vectors.tsv`) and Smalt's own
+committed test vectors, the hosted test data (vectors listed in `tools/testdata/vectors.tsv`) and Smalt's own
 writers; it runs only with `-Dsmalt.fuzz.writeSeeds=true`:
 
 ```

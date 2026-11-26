@@ -85,9 +85,7 @@ public class ColdStartBenchmark {
     @Setup
     public void setup() {
         System.setProperty("smalt.simd", mode.equals("SCALAR") ? "false" : "true");
-        var recording = Conformance.fetch("librivox-art_of_war_03-04_64kb.mp3",
-                "https://archive.org/download/art_of_war_librivox/art_of_war_03-04_sun_tzu_64kb.mp3",
-                "57e879fe7822578fd22010f1280185799a119a3482e025d9a71f49878ff45ba7");
+        var recording = Conformance.vector("librivox-art_of_war_03-04_64kb.mp3");
         switch (workload.split(":")[0]) {
             case "voicenote" -> input = Fixtures.read(Fixtures.ffmpeg("mp3",
                     List.of("-t", "60", "-i", recording.toString()),

@@ -359,7 +359,7 @@ class BmpVariantsTest {
         @Test
         @DisplayName("convert through an embedded CMYK profile on request and report it with the kept channels")
         void profile() throws IOException {
-            var swop = Files.readAllBytes(Conformance.fetchListed("skia-icc-misc-US_Web_Coated_SWOP_CMYK.icc"));
+            var swop = Files.readAllBytes(Conformance.vector("skia-icc-misc-US_Web_Coated_SWOP_CMYK.icc"));
             var data = BmpFiles.of(3, 2, 32).header(124).compression(11).pixels(stored32()).profile(swop).bytes();
             var kept = BmpDecoder.decode(MediaSource.of(data), KEEP);
             assertEquals(ProfileColorSpace.CMYK, kept.colorProfile().orElseThrow().colorSpace());

@@ -218,4 +218,23 @@ class TagEditorTest {
         assertEquals(2, read.pictures().size());
         assertEquals(AttachedPicture.Type.FRONT_COVER, read.pictures().getFirst().type());
     }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"fate-gapless-gapless-itunes.mp3",
+            "fate-cover_art-Owner-iTunes_9.0.3.15.m4a", "fate-cover_art-cover_art.flac",
+            "fate-cover_art-ogg_vorbiscomment_cover.opus", "fate-cover_art-Californication_cover.wma",
+            "fate-id3v2-id3v2_priv.mp3", "fate-id3v2-invalid-tags.mp3"})
+    @DisplayName("reads FATE's tagged files as ffprobe does and keeps their tags and cover art through a rewrite")
+    void fate(String name) {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var tags = TagLibCorpusTest.assertTags(file, name);
+        if (name.contains("cover")) {
+            // ffprobe lists cover art as a stream with the attached picture disposition
+            var probe = new String(Oracle.run(Oracle.Tool.FFPROBE, java.time.Duration.ofMinutes(1), List.of("-v",
+                    "error", "-show_entries", "stream_disposition=attached_pic", "-of", "csv=p=0", file.toString())),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            var pictures = probe.lines().filter(line -> line.strip().equals("1")).count();
+            assertEquals(pictures, tags.orElseThrow().pictures().size(), name + " cover art");
+        }
+    }
 }

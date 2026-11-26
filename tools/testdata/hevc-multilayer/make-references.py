@@ -199,7 +199,7 @@ def main():
         for name in ('multilayer001.heic', 'multilayer004.heic', 'multilayer005.heic'):
             path = os.path.join(directory, name)
             if not os.path.exists(path):
-                # the test kit's conformance cache names the files after their source
+                # the hosted test data names the files after their source
                 path = os.path.join(directory, 'heic-nokia-' + name)
             heif = Heif(path)
             for identifier, item_type in sorted(heif.items.items()):

@@ -3,7 +3,6 @@ package com.github.auties00.smalt.audio.aac;
 import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
 import com.github.auties00.smalt.audio.aac.internal.ep.EpFrameEncoder;
 import com.github.auties00.smalt.audio.aac.internal.ep.EpStreams;
-import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.Packet;
@@ -30,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class AacErrorProtectionTest {
     private static List<AacTestSupport.Stream> tracks(String name) {
-        return AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4")));
+        return AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.file(name + ".mp4")));
     }
 
     /** Decodes protected frames with the decoder built from a configuration, one access unit each. */
@@ -99,8 +98,7 @@ class AacErrorProtectionTest {
     @Test
     @DisplayName("decodes ER BSAC layers carried in several error protected elementary streams like epConfig 0")
     void bsacLayers() {
-        var sources = AacTestSupport.parseMp4Tracks(Fixtures.read(Conformance.fetchListed(
-                "mpeg4audio-er_bs02_08_ep0.mp4")));
+        var sources = AacTestSupport.parseMp4Tracks(Fixtures.read(Mpeg4AudioVectors.file("er_bs02_08_ep0.mp4")));
         assertTrue(sources.size() > 2, "er_bs02_08 carries its layers in several elementary streams");
         var built = new ArrayList<AacTestSupport.Stream>();
         for (var i = 0; i < sources.size(); i++) {

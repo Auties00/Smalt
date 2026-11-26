@@ -1,54 +1,96 @@
 # Test data
 
-Smalt's tests read two kinds of external data, both listed here with SHA-256 checksums:
+Smalt's tests read external data that the project hosts itself, and nothing else: no test and no tool downloads
+test data from the sources the manifests name, which are kept for provenance and licences only. Missing or
+corrupt data fails the test that needs it.
 
-- `vectors.tsv`: the conformance vectors and sample files the tests request through the test kit's
-  `Conformance.fetch` (ITU-T and ISO conformance streams, the libvpx, libaom, libwebp, Opus, Vorbis and
-  FLAC test vectors, PngSuite, Xiph sequences). They are cached in `~/.smalt/cache/conformance`
-  (`SMALT_CONFORMANCE_CACHE` or `-Dsmalt.conformance.cache` override it).
-- `clips.tsv`: raw 4:2:0 clips for the real-time VP8 and VP9 encoder tests, the AVIF and intra encoder
-  quality tests and the quality reports, derived with ffmpeg from Xiph sequences (300 frames, the 60 fps sources
-  halved to 30 fps, and a crop and scale for the 640x480 ones; three frames of `parkrun`; ffmpeg 7.1 on x86-64
-  reproduces every checksum, while swscale's arm64 kernels scale differently). They are cached in `~/.smalt/cache/clips` (`-Dsmalt.test.clips` for the tests,
-  `SMALT_TEST_CLIPS` for the script). Without them the encoder tests use synthetic video, except those whose
-  rate or quality assertions are calibrated on the clips' content, which skip (`data:clip`). CI derives the clips
-  once, on Linux x64 in the oracle tools job (`.github/workflows/oracle-tools.yml`), with `--strict`, which fails
-  on a clip that does not match its checksum, and keeps them in one Actions cache entry shared by every runner, so
-  that the encoder golden tests see the same input everywhere. The repository's 10 GB cache evicts that entry, and
-  the oracle data entries, when many branches run at once, so the nightly workflow also uploads the clips and the
-  oracle data files as artifacts of its run (`testdata-clips`, `oracle-data-*`), which its jobs download when
-  their cache entry is missing.
+## The hosted data
 
-- `archives.tsv`: sets of members of remote ZIP archives too large to download whole (the Argon AV1 coverage
-  streams, 6.4 GB of a 7 GB archive; the DASH-IF livesim-content representations), one row per set: tier, name,
-  size, the SHA-256 of the archive's central directory, URL, a regular expression selecting the members, and a
-  licence note. A set is read by HTTP range requests (the end of central directory record, the ZIP64 records, the
-  central directory, then each member, neighbors coalesced into one request), and each member is checked against
-  the CRC-32 and size of the pinned central directory. Members are cached under
-  `<conformance cache>/archives/<archive>-<digest prefix>/`; tests open a set with `Conformance.archive(name)`.
+The data lives in one directory, `SMALT_TESTDATA` (default `~/.smalt/testdata`, `-Dsmalt.testdata` for the
+tests), read-only to the tests:
+
+```
+vectors/<name>             one file per row of vectors.tsv
+archives/<set>.idx         the members of a row of archives.tsv, "path<TAB>size<TAB>crc32" lines
+archives/<id>/<member>     those members; <id> is the archive's file name without .zip, a dash and the first 12
+                           hex digits of the SHA-256 of its source URL
+clips/<name>               one file per row of clips.tsv
+```
+
+The manifests describe it:
+
+- `vectors.tsv`: the conformance vectors and sample files (ITU-T and ISO conformance streams, the libvpx, libaom,
+  libwebp, Opus, Vorbis and FLAC test vectors, PngSuite, Xiph sequences, camera raw samples), one row each: area,
+  name, size, SHA-256 and source. Tests read them with `Conformance.vector(name)`, which checks the file against
+  its row; `Conformance.vectors(prefix)` lists the names with a prefix.
+- `archives.tsv`: sets of members of large ZIP archives (the Argon AV1 coverage streams, the ISO/IEC 14496-26 and
+  23003 conformance packages, the DASH-IF livesim-content representations), one row per set: area, name, size, the
+  SHA-256 of the set's index, source, a regular expression selecting the members and a licence note. Each member is
+  checked against the size and CRC-32 of the index; tests open a set with `Conformance.archive(name)` and read a
+  member with `member(path)`.
+- `clips.tsv`: raw 4:2:0 clips for the real-time VP8 and VP9 encoder tests, the AVIF and intra encoder quality
+  tests and the quality reports, derived with ffmpeg from Xiph sequences (300 frames, the 60 fps sources halved to
+  30 fps, and a crop and scale for the 640x480 ones; three frames of `parkrun`; ffmpeg 7.1 on x86-64, whose
+  checksums the clips match, while swscale's arm64 kernels scale differently): name, size, SHA-256, source URL and
+  SHA-256, start, frames and ffmpeg filter. Tests find them in `Conformance.clips()`.
 - `licences.tsv`: the licence or terms of use of every source of `vectors.tsv` and `clips.tsv`, by URL prefix (the
-  archive sets carry their own). None of this data is committed or redistributed, and `testdata.py licences`,
-  which the comment lint job of CI runs, fails when a source has no note.
+  archive sets carry their own). The project hosts a copy of all this data publicly as its test data; nothing of it
+  is committed to the repository. `testdata.py licences`, which the comment lint job of CI runs, fails when a source
+  has no note.
+- `artifacts.tsv`: the published copy of each area (`containers`, `images`, `mpeg-audio`, `mpeg-video`,
+  `open-audio`, `open-video`, `raw` and `clips`), an OCI artifact on GHCR pinned by digest
+  (`ghcr.io/auties00/smalt-testdata@sha256:...`). Each artifact is a set of tar shards of about 1 GB whose paths are
+  those of the layout above, so extracting every shard of every area into `SMALT_TESTDATA` gives the whole
+  directory.
 
-Each entry belongs to a tier. `smoke` is small enough for the GitHub Actions cache and runs on every pull
-request; `full` (which includes `smoke`) runs nightly. A test whose data is absent is skipped.
+What the tests derive from the data (oracle outputs, extracted files) goes to a separate writable cache,
+`SMALT_CACHE` (default `~/.smalt/cache`, `-Dsmalt.cache` for the tests): `Conformance.cache(sub)` gives the tests
+`<cache>/<sub>`, and the oracle scripts of this directory write into the same `<cache>/<sub>` (`testdata.cache_dir`),
+so that the tests find their outputs by default. Below, `<cache>` is that directory and `<vectors>` the `vectors`
+directory of `SMALT_TESTDATA`; the scripts read the hosted data with `testdata.vector(name)` and
+`testdata.member(set, path)`.
 
-CI keeps the smoke tier, the clips, the oracle tools and the ffmpeg builds in Actions cache entries of the default
-branch, which `.github/workflows/warm-caches.yml` fills (when these files change there, and daily) and every other
-branch restores; the `pkg/*` snapshot branches never save copies of their own, except of an entry whose inputs they
-changed (`.github/scripts/cache-policy.sh`). The full tier does not fit in the 10 GB repository cache next to them,
-so the nightly downloads it every night.
+## Pulling the data
+
+Pull each artifact of `artifacts.tsv` with [oras](https://oras.land) (logged in to `ghcr.io` with a token that can
+read packages) and extract its shards into `SMALT_TESTDATA`:
 
 ```
-python tools/testdata/testdata.py fetch --tier smoke    # the vectors CI's pull request jobs use
-python tools/testdata/testdata.py fetch --tier full --clips-only   # and the clips they derive (needs ffmpeg)
-python tools/testdata/testdata.py fetch --tier full     # everything, clips included (needs ffmpeg)
-python tools/testdata/testdata.py size                  # the size of each tier
-python tools/testdata/testdata.py verify --tier full    # check the cache against the checksums
-python tools/testdata/testdata.py fetch --set 'argon-av1-profile0_core'   # one archive set, whatever its tier
-python tools/testdata/testdata.py archive NAME URL REGEX --tier full --licence TEXT   # pin a new archive set
-python tools/testdata/testdata.py licences              # every source has a licence note
+root="${SMALT_TESTDATA:-$HOME/.smalt/testdata}"; mkdir -p "$root"
+grep -v '^#' tools/testdata/artifacts.tsv | while IFS=$'\t' read -r area reference; do
+  oras pull "$reference" -o "$RUNNER_TEMP/$area"                  # or any scratch directory
+  for shard in "$RUNNER_TEMP/$area"/*.tar; do tar -x -C "$root" -f "$shard"; done
+done
+python tools/testdata/testdata.py verify                          # every file against the manifests
 ```
+
+Pulling one area (`--area` for `verify`) is enough for the tests that only read that area. CI does the same in
+`.github/actions/testdata`, which streams each shard into the directory (`oras blob fetch`) so that the runner's
+disk holds the data once; the jobs that pull it need the `packages: read` permission. CI keeps the oracle tools,
+the ffmpeg builds and the oracle data files in Actions cache entries of the default branch, which
+`.github/workflows/warm-caches.yml` fills (when these files change there, and daily) and every other branch
+restores; the `pkg/*` snapshot branches never save copies of their own, except of an entry whose inputs they
+changed (`.github/scripts/cache-policy.sh`). The test data itself is never cached: every job pulls the pinned
+artifacts.
+
+## Changing the data
+
+`testdata.py` checks and publishes the hosted data; it never downloads.
+
+```
+python tools/testdata/testdata.py verify [--area A]       # check the data directory against the manifests
+python tools/testdata/testdata.py size                    # the size of each area
+python tools/testdata/testdata.py licences                # every source has a licence note
+python tools/testdata/testdata.py add AREA FILE SOURCE [--name N]
+                                                          # copy a local file in and list it in vectors.tsv
+python tools/testdata/testdata.py pack [--area A] --out DIR   # write the tar shards of each area's artifact
+python tools/testdata/testdata.py push [--area A] --out DIR   # push them with oras and pin them in artifacts.tsv
+```
+
+To add a vector, fetch it yourself from its source, `add` it to its area with that source URL (and a
+`licences.tsv` note for a new source), read it in the test with `Conformance.vector(name)`, then `pack` and
+`push` the area (pushing needs `oras login ghcr.io` with a token that can write packages) and commit the manifests
+with the new digest in `artifacts.tsv`. Pack and push only from a data directory that `verify` passes.
 
 ## Oracle tools
 
@@ -113,7 +155,7 @@ capture device), `env` (a property of the machine or JVM), which CI provisions, 
 `simd`, `platform`, `opt-in` and `input`.
 
 `skips.py` reads the surefire reports and counts the skips per CI job (operating system, architecture, SIMD leg
-and data tier, for example `linux-x64-vector-smoke`), module, test class and reason; `skip-baseline.tsv` holds
+and test set, for example `linux-x64-vector-smoke`), module, test class and reason; `skip-baseline.tsv` holds
 the accepted counts.
 
 ```
@@ -139,7 +181,7 @@ python tools/testdata/skips.py cover outcomes-*.tsv --evidence nightly/outcomes-
 ```
 
 CI runs `check` after every test job and uploads the job's `report` as an artifact (`skips-<job>`). A change that
-adds skips on purpose (tests whose data is outside the smoke tier, kernels the scalar leg skips) runs `accept`
+adds skips on purpose (new opt-in tests, kernels the scalar leg skips) runs `accept`
 over that artifact (`--report <file>`) and commits the baseline; `accept` refuses to raise the `oracle`,
 `device` and `env` counts, which call for provisioning the tool or device instead (`--environment` overrides,
 for a new CI job), and a pull request whose baseline raises them fails (`shrink-only`).
@@ -159,7 +201,7 @@ desktop; on macOS BlackHole and the runner's display. `SMALT_TEST_AUDIO_LOOPBACK
 The raw module's `NikonTablesTest` re-derives the NEF Huffman tables from CC0 sample files against the
 values Adobe DNG Converter stores for them. `python tools/testdata/nef-oracle.py` (Windows) downloads Adobe
 DNG Converter 14.0 and innoextract 1.9 (both pinned by SHA-256), extracts the converter without installing
-it, and writes one uncompressed DNG per sample into `<conformance cache>/nef-oracle`
+it, and writes one uncompressed DNG per sample into `<cache>/nef-oracle`
 (`-Dsmalt.test.nefOracle` overrides the directory the test reads). Without them the oracle tests are
 skipped.
 
@@ -176,7 +218,7 @@ area, the linear relation of their layers to the converter's values and their re
 `python tools/testdata/raw-oracle.py` (Windows, with a Windows build of Python: under an MSYS2 Python the
 converter fails to open its input) downloads Adobe
 DNG Converter 18.0 and innoextract 1.9 (both pinned by SHA-256), extracts the converter without installing
-it, and writes one uncompressed DNG per sample into `<conformance cache>/raw-oracle`
+it, and writes one uncompressed DNG per sample into `<cache>/raw-oracle`
 (`-Dsmalt.test.rawOracle` overrides the directory the tests read); for the largest files (the GFX 50S, GFX100S and
 GFX100 II samples, 100 to 200 MB each) it keeps instead a `<stem>.photosites` summary, the size, filter array and,
 per sample of a pixel, the SHA-256 and first row of the stored image, which `RafOracleTest` checks the decoded
@@ -195,11 +237,11 @@ with shifts, a ceiling and cell origins); `CrwTablesTest` checks copies of CRW s
 of their table sets, which the script builds as the raw module's test-scope `CrwCodeCopies` does (both check the
 copies' SHA-256). Without them the oracle tests are
 skipped. With `--coverage` the script converts every ORF sample and every RW2 or RWL sample of version 4
-in `vectors.tsv` (about 6 GB of DNG files) into `<conformance cache>/raw-oracle-coverage` for
+in `vectors.tsv` (about 6 GB of DNG files) into `<cache>/raw-oracle-coverage` for
 `RawOracleCoverageTest` (`-Dsmalt.test.rawCoverage`).
 
 `python tools/testdata/raw-lens-oracle.py` (Windows, same converter) writes the oracle files of
-`LensCorrectionOracleTest` and `PixelShiftOracleTest` into `<conformance cache>/raw-lens-oracle`
+`LensCorrectionOracleTest` and `PixelShiftOracleTest` into `<cache>/raw-lens-oracle`
 (`-Dsmalt.test.rawLensOracle`): for Sony, Panasonic, Olympus, Fujifilm and Canon PowerShot samples a `<stem>.lens` file with the active
 area, the default crop and the opcode lists 2 and 3 of the converter's DNG file (the `WarpRectilinear` and
 `FixVignetteRadial` opcodes it derives from the maker note's lens corrections, or, on the PowerShot files, takes from its
@@ -405,7 +447,7 @@ pins them in `tiff/codecs.sha256`; the output is deterministic for those version
 single fields changed to values the cameras never write, with the digests in
 `raw/src/test/resources/com/github/auties00/smalt/image/raw/internal/srw-oracle.tsv`. `python tools/testdata/srw-oracle.py`
 (Windows, with a Windows build of Python) writes them from what Adobe DNG Converter 18.0, pinned by SHA-256 and run as a
-black box, stores; the test needs only the samples, so it runs wherever the full tier is. The copies are never stored:
+black box, stores; the test needs only the samples, so it runs wherever the hosted data is. The copies are never stored:
 the table holds their edits. The script's documentation says what each group of copies settles. The test's `exifHeight`
 cases hold, by hand, two more copies whose stored image crop the converter keeps when their EXIF height changes.
 
@@ -487,7 +529,7 @@ The decoders under `image/src/test/resources/com/github/auties00/smalt/image/int
 compliance data (`itu-t83-data-files.zip` of `vectors.tsv`: O1 and O2 Huffman, P1 and P2 arithmetic, with
 subsampled interleaved and one-scan-per-component frames) against the reference samples of the same archive, and
 B2 with the tables of B1, a baseline frame of 255 components. The archive is (c) ITU and ISO/IEC 1994 and comes
-with a disclaimer and no license, so it is fetched into the conformance cache and never committed.
+with a disclaimer and no license, so it is hosted test data and never committed to the repository.
 `image/src/test/resources/com/github/auties00/smalt/image/jpeg/lossless/variants/` holds small vectors of the
 other variants (arithmetic coding, several scans, five components, a `cjpeg -lossless -scans` file of
 libjpeg-turbo 3.1.3), pinned in `variants.sha256`; the test class `LosslessVectorWriter` writes them, from the
@@ -510,8 +552,8 @@ deterministic.
 ## JPEG-LS vectors
 
 `JpegLsConformanceTest` of `smalt-image` decodes the streams of the ITU-T T.87 | ISO/IEC 14495-1 conformance data
-set (`itu-t87-data-set.zip` of `vectors.tsv`, HP's images for "testing product conformance", fetched into the
-conformance cache and never committed): the lossless streams to their source images, the near-lossless ones within
+set (`itu-t87-data-set.zip` of `vectors.tsv`, HP's images for "testing product conformance", hosted test
+data, never committed to the repository): the lossless streams to their source images, the near-lossless ones within
 their bound of them, and all of them to the SHA-256 of the decode of CharLS or, for the subsampled T8SSE streams
 CharLS cannot decode, of the ISO/IEC 10918-7 reference software A (the two agree on every other stream).
 `image/src/test/resources/com/github/auties00/smalt/image/jpeg/jpegls/` holds CharLS's encodings of synthetic
@@ -629,7 +671,7 @@ records the SHA-256 of every file in `ycgcor.tsv`.
 `Av1LayersTest` of `smalt-video` decodes the libaom scalability vectors (`av1-1-b8-22-svc-*`, from `vectors.tsv`)
 at every operating point and with and without every spatial layer, against the size and MD5 of every frame
 aomdec writes for the same settings (`video/src/test/resources/com/github/auties00/smalt/video/av1/layers/layers.tsv`,
-written by `python -I tools/testdata/av1-layers/make-references.py <aomdec> <conformance cache> <that directory>`).
+written by `python -I tools/testdata/av1-layers/make-references.py <aomdec> <vectors> <that directory>`).
 `Av1AnnexBTest` decodes short streams libaom's aomenc wrote in the length-delimited format of Annex B
 (`.../av1/annexb/`, `python -I tools/testdata/av1-annexb/make-vectors.py <libaom build> <that directory>`, which
 records the SHA-256 of each stream and of `aomdec --annexb --rawvideo` in `annexb.tsv`). `Av1LargeScaleTileTest`
@@ -665,7 +707,7 @@ x265's depends on its version.
 ## HEVC screen content coding and separate color plane vectors
 
 `HevcSccConformanceTest` of `smalt-mpeg` decodes, next to the JCT-VC screen content coding conformance streams
-(`hevc-scc-*.zip` in `vectors.tsv`, fetched because their licence is unstated), short streams the HM-SCM reference
+(`hevc-scc-*.zip` in `vectors.tsv`, hosted, not committed, because their licence is unstated), short streams the HM-SCM reference
 encoder coded from ffmpeg's `testsrc` pattern (`mpeg/src/test/resources/com/github/auties00/smalt/video/hevc/scc/`):
 all intra and low delay 4:4:4 at 8 bits with palette mode (predictor initializers in the SPS and the PPS), intra
 block copy, the adaptive color transform, adaptive motion vector resolution, wavefronts and tiles; random access
@@ -714,7 +756,7 @@ own reconstruction also matches.
 ## HEVC multi-layer vectors
 
 `HevcMultilayerConformanceTest` of `smalt-mpeg` decodes the JCT-VC SHVC and JCT-3V MV-HEVC conformance streams
-(`hevc-shvc-*.zip` and `hevc-mvhevc-*.zip` in `vectors.tsv`, fetched because their licence is unstated) and compares
+(`hevc-shvc-*.zip` and `hevc-mvhevc-*.zip` in `vectors.tsv`, hosted, not committed, because their licence is unstated) and compares
 every output layer set with the archive's output picture log, or each layer's whole output with its MD5.
 `HevcMultilayerVectorTest` decodes short streams the SHM reference encoder of the scalable and multiview extensions
 coded from ffmpeg's `testsrc` pattern (`mpeg/src/test/resources/com/github/auties00/smalt/video/hevc/multilayer/`):
@@ -738,7 +780,7 @@ decoder cross-checking the views). It also builds `lhv1` items around the first 
 ## HEVC 3D vectors
 
 `Hevc3dConformanceTest` of `smalt-mpeg` decodes the JCT-3V 3D-HEVC conformance streams (`hevc-3dhevc-*.zip` in
-`vectors.tsv`, fetched because their licence is unstated) and compares the MD5 of every output picture of every
+`vectors.tsv`, hosted, not committed, because their licence is unstated) and compares the MD5 of every output picture of every
 layer with `mpeg/src/test/resources/com/github/auties00/smalt/video/hevc/threeD/frame-md5.txt`, which `python -I
 tools/testdata/hevc-3d/frame-md5.py` writes from the output of the 3D-HEVC reference decoder HTM-16.3 (BSD-3-Clause,
 compiled with `HEVC_EXT=2` and run as a black box), and each layer's whole output with the MD5 the archive ships.
@@ -766,7 +808,7 @@ archive sets `h264-SVC-*` of `archives.tsv`) are checked by `H264MvcConformanceT
 (`ldecod -p DecodeAllLayers=1`) for the two-view streams and of JMVC 8.5 (`H264AVCDecoderLibTestStatic <stream>
 <out> <views>`) for the others; the two agree on every view they both decode. Each SVC zip holds the sub-bitstream
 of every layer the stream defines and its reference decoding, whose MD5 the test pins; the archive set of each zip
-downloads only its sub-bitstreams, and the pinned MD5s were taken by streaming each reference decoding out of the
+holds only its sub-bitstreams, and the pinned MD5s were taken by streaming each reference decoding out of the
 zip with HTTP range requests. Where the reference decoding predates the deblocking rule of the Scalable Baseline
 profile for macroblocks with transform coefficients from the reference layer (ITU-T H.264 F.8.7.4.3, the
 `profile_idc` 83 condition), which changes a few samples by a few levels, the pinned MD5 is that of the JSVM 9.19.15
@@ -857,9 +899,9 @@ failed assertion on the wrapped streams of field pictures, which are therefore c
 
 The same test decodes a pyramid level of two Aperio slides of the OpenSlide test data
 (`openslide-aperio-cmu-1-jp2k-33005.svs`, CC0, and `openslide-aperio-jp2k-33003-1.svs`, free to use and
-distribute; both `full` tier) and compares it with OpenSlide's rendering and, for the 33005 slide, with the
+distribute; both hosted vectors) and compares it with OpenSlide's rendering and, for the 33005 slide, with the
 tiles as OpenJPEG decodes them. `python -I tools/testdata/svs-oracle.py` writes both into
-`<conformance cache>/svs-oracle` (`-Dsmalt.test.svsOracle` overrides the directory the test reads), running
+`<cache>/svs-oracle` (`-Dsmalt.test.svsOracle` overrides the directory the test reads), running
 OpenSlide 4.0.1 (openslide-bin 4.0.1.2) and imagecodecs as black boxes (`pip install openslide-python openslide-bin tifffile
 imagecodecs numpy`). CI writes them on Windows, whose imagecodecs wheel decodes the 33005 level as Smalt does; the
 OpenJPEG of the Linux wheel rounds the irreversible component transform of one sample otherwise. Without them the
@@ -873,7 +915,7 @@ packet. `opus-oracle/` regenerates those hashes: `python -I tools/testdata/opus-
 from an MSYS2 UCRT64 shell on Windows) downloads libopus 1.5.2 (pinned by SHA-256) and compiles it with
 `msenc.c`, a harness that drives `opus_encoder_create` or `opus_multistream_surround_encoder_create` with the
 tests' controls and silence padding; `python -I tools/testdata/opus-oracle/goldens.py
-<conformance cache>/opus_testvectors-rfc8251 <dir>/msenc.exe <dir>/io` writes the inputs (`gen.py` builds
+<cache>/opus/opus_testvectors-rfc8251 <dir>/msenc.exe <dir>/io` writes the inputs (`gen.py` builds
 them from the RFC 8251 vectors with the tests' integer operations) and prints one golden line per
 configuration. Its `check_` lines reproduce goldens of `OpusEncoderGoldenTest`, which validates the build; its
 `p` lines, coded with `opus_projection_ambisonics_encoder_create` and decoded with the projection decoder, are
@@ -881,9 +923,9 @@ the goldens of `OpusProjectionGoldenTest`.
 
 `build.py` also compiles `msdec.c`, which decodes a bitstream with the libopus multistream or projection
 decoder while dropping packets by a fixed rule, concealing them or rebuilding them from the next packet's
-in-band FEC: `python -I tools/testdata/opus-oracle/traces.py <conformance cache>/opus_testvectors-rfc8251 <dir>
+in-band FEC: `python -I tools/testdata/opus-oracle/traces.py <cache>/opus/opus_testvectors-rfc8251 <dir>
 <dir>/io` prints the goldens of `OpusPacketLossGoldenTest`. `python -I tools/testdata/opus-oracle/downmix.py
-<conformance cache>/opus_testvectors-rfc8251 <dir> <dir>/io` downloads libogg 1.3.5 and opusfile 0.12 (pinned by
+<cache>/opus/opus_testvectors-rfc8251 <dir> <dir>/io` downloads libogg 1.3.5 and opusfile 0.12 (pinned by
 SHA-256), compiles `ofdown.c`, which muxes libopus packets into Ogg with libogg and decodes them with
 opusfile's `op_read_float_stereo`, and prints the goldens of `OpusDownmixTest`.
 
@@ -894,7 +936,7 @@ without the x86 SIMD macros so that `vec.h` selects the generic C code Smalt por
 decodes at a complexity while dropping packets by `msdec.c`'s rule, concealing them, rebuilding the last one from
 in-band FEC, or rebuilding them from the DRED of the next packet as `opus_demo` does (`opus_dred_parse`,
 `opus_decoder_dred_decode`); `python -I tools/testdata/opus-oracle/dnn_goldens.py
-<conformance cache>/opus_testvectors-rfc8251 <dir> <dir>/dnn` prints the goldens of `OpusDnnGoldenTest` (traces below
+<cache>/opus/opus_testvectors-rfc8251 <dir> <dir>/dnn` prints the goldens of `OpusDnnGoldenTest` (traces below
 complexity 5 come from `msdec.c`, the build without the extensions). `dnnunit.c` runs each neural block (the
 activations, the LPCNet features, the Burg cepstrum, FARGAN, the deep PLC, the RDOVAE decoder, LACE and NoLACE) on
 deterministic inputs and writes `dnnunit <file>`, the self-generated `dnn-units.bin` of `OpusDnnUnitTest`
@@ -923,17 +965,18 @@ those of libxaac (Apache-2.0) and of the Fraunhofer FDK AAC library, both used a
 tools/testdata/eld-sbr-oracle.py <work directory> [--fdk [library]]` (with CMake, Ninja and gcc; on Windows from an
 MSYS2 UCRT64 shell, with a Windows Python 3.14 or later for `--fdk`) downloads libxaac at commit
 `2fbadd57bca46693b7a077bcf1513131106d960c` (pinned by SHA-256), builds its `xaacdec` and `xaacenc` test
-applications, and writes into `<conformance cache>/eld-sbr-oracle` (`-Dsmalt.test.eldSbrOracle` overrides the
+applications, and writes into `<cache>/eld-sbr-oracle` (`-Dsmalt.test.eldSbrOracle` overrides the
 directory the test reads):
 
-- one libxaac decode per conformance stream, fetching the streams first when the cache lacks them;
+- one libxaac decode per conformance stream, read from the archive set `mpeg4audio-ed2-streams-smoke` of the hosted
+  data;
 - in `encoded/`, streams of 480- and 512-sample frames that `xaacenc` codes from a synthetic signal the script
   computes (harmonic notes with attacks, a noise floor and noise bursts), as the AudioSpecificConfig followed by
   the access units (`.raw`) with their sizes (`.meta`), and their libxaac decodes.
 
 With `--fdk` it also encodes 480-sample streams with the FDK AAC encoder, at dual rate and downsampled (which
 `xaacenc` does not code), and decodes them and the conformance streams with the FDK AAC decoder into
-`<conformance cache>/eld-sbr-fdk` (`-Dsmalt.test.eldSbrFdk`); the dual-rate ones are decoded by libxaac too. On
+`<cache>/eld-sbr-fdk` (`-Dsmalt.test.eldSbrFdk`); the dual-rate ones are decoded by libxaac too. On
 Windows the library is the DLL of the MSYS2 package `mingw-w64-ucrt-x86_64-fdk-aac` 2.0.3-1 (pinned by SHA-256),
 downloaded unless `--fdk` names a library; elsewhere `--fdk` names the system's `libfdk-aac`. The encoded streams
 are deterministic for a build, and the script reports a stream whose digest differs from the reference build's.
@@ -990,7 +1033,7 @@ converted in buffers of 4096 lines rather than overrunning those of 2048, and a 
 bank is padded with zero lines to its slots at 128 subbands, as the long windows are, where the decoder converts it
 for 64 subbands and leaves the upper ones unwritten (nothing changes at 64 subbands or fewer), builds the
 decoder and encoder libraries with the frontend
-`mps-oracle/mpsref.c`, and writes into `<conformance cache>/mps-oracle`
+`mps-oracle/mpsref.c`, and writes into `<cache>/mps-oracle`
 (`-Dsmalt.test.mpsOracle` overrides the directory the test reads), for each case, the side information as
 length-prefixed blocks (`.bs`: the header, then one spatial frame per block), the downmix (`_dmx.wav`) and the
 reference decoder's upmix (`_ref.wav`, float):
@@ -1061,10 +1104,10 @@ AAC-ELD oracle above, and the committed files were written by a mingw-w64 gcc 15
 own decoder is not used as an oracle: with `-err_conceal:1` its output lags by two frames, a single lost frame is
 left out and two lost in a row bring about 45 frames of full-scale noise.
 
-## Conformance suites read from remote archives
+## Conformance suites read from archive sets
 
 - Argon AV1 coverage streams (AOMedia, version 2.1.1, licence unstated: used for testing only): 25 archive sets
-  `argon-av1-<group>` (`full` tier, never in the nightly's cache) for `Av1ArgonTest` (`smalt-video`, JUnit tag
+  `argon-av1-<group>` (area `open-video`) for `Av1ArgonTest` (`smalt-video`, JUnit tag
   `argon`, excluded unless `-Dsmalt.test.excludedGroups=none -Dgroups=argon`; `-Dsmalt.test.argon=<groups>` picks
   groups). Each stream must decode to its `md5_ref` (aomdec's raw output), to `md5_no_film_grain` without film
   grain, and to the reference of every operating point its sequence header declares; the error groups must decode
@@ -1082,8 +1125,8 @@ left out and two lost in a row bring about 45 frames of full-scale noise.
 (`mpegff-<file>_gpac.json`: sample sizes, decoding durations, composition offsets, sync samples) and with
 ffprobe; the files ffmpeg reads otherwise than the dump are listed with the deviation, those it cannot read are
 compared with the dump only, and the files with compressed boxes (`!mov`, `!mof`, `!six`, `!ssx`) are compared
-with ffprobe's reading of a copy whose compressed boxes are decompressed. The dumps of the smoke-tier files are in
-the smoke tier too, so that every pull request compares those files with both parsers.
+with ffprobe's reading of a copy whose compressed boxes are decompressed. The dumps are hosted with the files, so
+that every pull request compares the files with both parsers.
 
 ## Encryption fixtures
 
@@ -1105,8 +1148,9 @@ release binary) run as a black box, through committed golden files made by the s
 
 `HlsSampleAesStreamTest` compares the decryption of a presentation made by another packager with ffmpeg's: the first
 four segments of the lowest H.264 variant of Unified Streaming's public SAMPLE-AES demo, third-party content that is
-never committed. `python -I tools/testdata/sample-aes-stream.py <directory>` downloads its key and segments (pinned by
-SHA-256) and writes `local.m3u8` and ffmpeg's `ffmpeg-clear.ts`; `-Dsmalt.test.sampleAesStream=<directory>` enables
+hosted, never committed (the vectors `usp-tears-of-steel-sample-aes-{variant.m3u8,aes.key,s1.ts,...,s4.ts}`).
+`python -I tools/testdata/sample-aes-stream.py [<directory>]` copies its key and segments (pinned by SHA-256) into the
+directory (default `<cache>/sample-aes-stream`) and writes `local.m3u8` and ffmpeg's `ffmpeg-clear.ts`; `-Dsmalt.test.sampleAesStream=<directory>` enables
 the test, which the nightly opt-in job runs.
 
 ## MPEG-4 Visual reference decoder
@@ -1251,44 +1295,167 @@ and `al_sbr_gen_*_7.1Top` signal the same channels through configuration 14. The
 
 ## Adding a vector
 
-1. Call `Conformance.fetch(name, url, sha256)` from the test, with a cache name unique across suites.
-2. Run the tests that use it with `-Dsmalt.conformance.record=<absolute path>`; every requested vector is
-   appended to that file.
-3. `python tools/testdata/testdata.py record <that file>` adds the new entries to `vectors.tsv` in the
-   `full` tier; move a row to `smoke` by hand when it is small and worth checking on every pull request.
+1. Fetch the file from its source yourself and add it to its area: `python tools/testdata/testdata.py add AREA FILE
+   SOURCE [--name N]` (with a `licences.tsv` note when the source is new), choosing a name unique across suites.
+2. Read it in the test with `Conformance.vector(name)`.
+3. `pack` and `push` the area and commit `vectors.tsv`, `licences.tsv` and the new digest in `artifacts.tsv`
+   (see [Changing the data](#changing-the-data)).
 
-The nightly workflow records what the tests request and fails when `vectors.tsv` misses an entry.
+## Generated vectors
 
-## I/O behavior samples
+Files built from tools (never from upstream test data), listed with `testdata.py add`. Each entry gives the
+tool, its version and the exact command.
 
-The I/O behavior harnesses of the test kit (see the `testkit.io` package documentation) read small committed samples
-made from ffmpeg's synthetic lavfi sources: `behavior/make-samples.sh` writes the container samples of
-`core/src/test/resources/samples` (MP4, fragmented MP4, QuickTime with ProRes, DNxHR and H.263, Matroska and WebM,
-Ogg including a chained file, MPEG-TS and M2TS, AVI, WAVE, AIFF, MP3, MP2 with an ID3v1 tag, ADTS, AMR, AC-3,
-E-AC-3, IVF, FLAC, SubRip and WebVTT), and calls `behavior/make-wav-samples.py`, which wraps encoded streams into
-WAVE files with coded payloads (MPEG audio, AC-3, DTS, AAC in LOAS framing and as raw data blocks, FLAC frames, AMR
-frames, self-delimited Opus, and IEC 61937 bursts of AC-3 and AAC); `behavior/make-amr-mc-samples.py` interleaves
-the frames of the AMR samples into multichannel AMR-NB and AMR-WB storage files, which no common encoder writes
-(RFC 4867 section 5.2); `behavior/make-image-samples.sh` writes the
-image samples of `image/src/test/resources/samples` (GIF, BMP, ICO, TIFF with LZW, Deflate, PackBits, CCITT and JPEG
-compression, tiles and pages, animated WebP, APNG, 16-bit PNG, JP2 and JPEG). The scripts need ffmpeg 7.1 with
-libx264, libx265, libvpx, libaom, libopus, libvorbis, libmp3lame, opencore-amr and vo-amrwbenc, and libtiff's
-`tiffcp`.
+### Sol Levante ProRes cuts (open-video)
 
-The golden dumps are tied to the samples' exact bytes, which another ffmpeg build does not reproduce, so the
-committed files are the reference: `behavior/samples.tsv` pins each by size and SHA-256 (the behavior tests check
-it), and `python -I tools/testdata/behavior/pin-samples.py` rewrites it after a deliberate regeneration, together
-with the dumps (`-Dsmalt.test.updateDumps=true`).
+`prores-netflix-sollevante-sdr-422hq-uhd-f2400-12.mov` and `prores-netflix-sollevante-hdr10-4444xq-uhd-f2400-12.mov`
+are frames 2400-2411 (t = 100.0 s) of the Netflix Open Content *Sol Levante* masters (CC BY 4.0, attribution in
+`netflix-sollevante-license.txt`), stream-copied without re-encoding, video track only (no audio, no timecode track),
+with ffmpeg 7.1 (gyan.dev essentials build); ffmpeg range-reads only the moov and the 12 frames over HTTP:
 
-## Dolby Vision reconstruction fixture
+```
+ffmpeg -ss 100 -i https://s3.amazonaws.com/download.opencontent.netflix.com/SolLevante/sdr/SolLevante_SDR_UHD_24fps.mov \
+  -map 0:v:0 -frames:v 12 -c copy -write_tmcd 0 -fflags +bitexact prores-netflix-sollevante-sdr-422hq-uhd-f2400-12.mov
+ffmpeg -ss 100 -i https://s3.amazonaws.com/download.opencontent.netflix.com/SolLevante/hdr10/SolLevante_HDR10_r2020_ST2084_UHD_24fps_1000nit.mov \
+  -map 0:v:0 -frames:v 12 -c copy -write_tmcd 0 -fflags +bitexact prores-netflix-sollevante-hdr10-4444xq-uhd-f2400-12.mov
+```
 
-`behavior/make-dolby-vision-reconstruction.py` writes `mpeg/src/test/resources/dolbyvision`: a 10-bit profile 5 HEVC
-stream (libx265, RPUs of its own and dovi_tool's `profile5.bin` and `profile5-02.bin`) and what libplacebo makes of it
-(`gbrp16le`, gzip). libplacebo needs a Vulkan device, so CI compares against the committed output, pinned in
-`behavior/samples.tsv`. The fixture was made with BtbN's ffmpeg N-124279-g0f6ba39122 (winget's yt-dlp.FFmpeg package)
-run as a black box on Windows 11; the script's docstring has the procedure and the filter options.
+The SDR cut is Apple ProRes 422 HQ (`apch`) 3840x2160 BT.709, the HDR10 cut Apple ProRes 4444 XQ (`ap4x`) 3840x2160
+BT.2020 / ST 2084; the 12 packet sizes equal the master's samples 2400-2411 (SDR: 3602368 ... 3720240 bytes, 43248896 in
+all; HDR10: 8356000 ... 8390656 bytes, 100188384 in all).
 
-The hex constants `GENERATED_NAL` and `GENERATED_T35` of core's `DolbyVisionRpuReaderTest` are a profile 5 RPU written
-by the dolby_vision crate of dovi_tool (MIT, commit 41dae64): `DoviRpu::profile5_config` of a default `GenerateConfig`,
-through `write_hevc_unspec62_nalu` and `write_av1_rpu_metadata_obu_t35_complete`, in a small Rust program on that crate
-(`dovi_tool generate` runs the same function; its own binary needs a newer rustc than the machine had).
+### pygif references the curation deduplicated (images)
+
+`gif-pygif-animation.0.rgba`, `gif-pygif-max-width.rgba`, `gif-pygif-missing-pixels.rgba` and `gif-pygif-empty.xmp`
+are files the pygif suite's `.conf` files name (`GifConformanceTest`) whose bytes the curation hosted only under
+another name (`animation-fill.0.rgba`, `max-height.rgba`, `animation-erase.0.rgba`, `empty.icc`). The three `.rgba`
+files are rebuilt with the suite's own generator, `make-test-suite` of pygif at commit
+`741b282047e0dde112e5ac2df0c7f8f923cb5df6` (`https://github.com/robert-ancell/pygif`), run with CPython 3.12 and
+pypng 0.20220715.0 in an empty directory whose only inputs are the hosted `gif-pygif-test.xmp` and
+`gif-pygif-sRGB.icc`:
+
+```
+mkdir -p work/test-suite && cd work
+cp <pygif>/make-test-suite . && cp -r <pygif>/src/gif gif && touch test-suite/TESTS
+cp <vectors>/gif-pygif-test.xmp test-suite/test.xmp && cp <vectors>/gif-pygif-sRGB.icc test-suite/sRGB.icc
+PYTHONPATH=. python make-test-suite
+```
+
+Every `.gif` and `.rgba` it writes equals the hosted file of the same name byte for byte (and each `.conf` too, but
+for CRLF line ends on Windows), which checks the run. `empty.xmp` is not written by the generator: it is the XMP
+payload `make-test-suite` embeds in `xmp-data-empty.gif` (`write_xmp_data_extension('')`), a 0-byte file.
+
+### Sintel Blu-ray cut (mpeg-video)
+
+`bluray-sintel-cut-index.bdmv`, `bluray-sintel-cut-MovieObject.bdmv`, `bluray-sintel-cut-00000.mpls`,
+`bluray-sintel-cut-00000.clpi` and `bluray-sintel-cut-00000.m2ts` are the cut of the hosted Sintel Blu-ray disc image
+(`h264-blender-Sintel-Bluray.iso`, UDF 2.50) its curation row planned: the BDMV navigation files of the main title
+and the first 30 MiB (5120 aligned units of 6144 bytes) of the main clip, extracted with 7-Zip 24.03 (x64):
+
+```
+7z e -y h264-blender-Sintel-Bluray.iso BDMV/index.bdmv BDMV/MovieObject.bdmv BDMV/PLAYLIST/00000.mpls BDMV/CLIPINF/00000.clpi
+7z e -so h264-blender-Sintel-Bluray.iso BDMV/STREAM/00000.m2ts | head -c 31457280 > 00000-30MB.m2ts
+```
+
+The cut clip holds the BD H.264 High@4.1 1920x1080 video, the AC-3 audio and the PGS subtitle streams in 192-byte
+BDAV transport packets.
+
+### MPEG-2.5 12 kHz stereo stream (mpeg-audio)
+
+`mpeg25-12000-stereo.mp3` is MPEG-2.5 Layer III at 12 kHz, joint stereo, 24 kbit/s CBR (no real 12 kHz or stereo
+MPEG-2.5 file was found), two sines of 440 and 660 Hz for 4 s, coded by LAME 3.100 through ffmpeg 7.1 (gyan.dev
+essentials build); `-bitexact` keeps the encoder version out of the ID3v2 tag, so the command reproduces the bytes:
+
+```
+ffmpeg -f lavfi -i "sine=f=440:sample_rate=12000:d=4" -f lavfi -i "sine=f=660:sample_rate=12000:d=4" \
+  -filter_complex amerge=inputs=2 -c:a libmp3lame -b:a 24k -bitexact mpeg25-12000-stereo.mp3
+```
+
+`Mp3ConformanceTest` compares its decode with ffmpeg's `mp3float`.
+
+### Musepack stream version 7 vectors (open-audio)
+
+The 16 `musepack-sv7-*.mpc` files replace the two commercial SV7 tracks of samples.ffmpeg.org. They are coded by
+mppenc 1.16 (`https://files.musepack.net/source/mppenc-1.16.tar.bz2`, SHA-256
+`f90781856ca7b6ce1ec7033321fadbcd04fe264d0349c20b49ad05f7cb2655ad`, the last SV7 encoder, LGPL), built with MSYS2
+UCRT64 gcc 15.2 as its CMakeLists.txt defines it; `-fcommon` keeps its run-time filled `const` tables writable:
+
+```
+gcc -O2 -std=gnu89 -w -fcommon -DMPP_ENCODER -DFAST_MATH -DCVD_FASTLOG -o mppenc src/*.c -lm -lwinmm
+```
+
+The inputs are synthesized by ffmpeg 7.1 (16-bit WAVE, no metadata): `music-R-2` is two sines (220 and 440 Hz, one per
+channel) plus a 300 Hz to 9.3 kHz chirp and white noise at -26 dBFS (seed 7), `music-44100-1` its left channel alone,
+`noise-44100-2` pink noise (seed 11), `short-44100-2` the music for 10 ms:
+
+```
+ffmpeg -f lavfi -i "aevalsrc=0.3*sin(2*PI*220*t)+0.2*sin(2*PI*(300+3000*t)*t)|0.3*sin(2*PI*440*t)+0.2*sin(2*PI*(300+3000*t)*t):s=R:d=D" \
+  -f lavfi -i "anoisesrc=r=R:a=0.05:c=white:seed=7:d=D" \
+  -filter_complex "[1]aformat=channel_layouts=stereo[n];[0][n]amix=inputs=2:normalize=0" \
+  -c:a pcm_s16le -bitexact -map_metadata -1 music-R-2.wav
+ffmpeg -f lavfi -i "aevalsrc=0.3*sin(2*PI*220*t)+0.2*sin(2*PI*(300+3000*t)*t):s=44100:d=3" \
+  -f lavfi -i "anoisesrc=r=44100:a=0.05:c=white:seed=7:d=3" \
+  -filter_complex "[1]aformat=channel_layouts=mono[n];[0][n]amix=inputs=2:normalize=0" \
+  -c:a pcm_s16le -bitexact -map_metadata -1 music-44100-1.wav
+ffmpeg -f lavfi -i "anoisesrc=r=44100:a=0.3:c=pink:seed=11:d=2" -ac 2 -c:a pcm_s16le -bitexact -map_metadata -1 noise-44100-2.wav
+```
+
+with R and D 44100 and 3 (`music-44100-2`), 48000 and 2, 32000 and 2, and 44100 and 0.01 (`short-44100-2`). Each
+vector is `mppenc --silent <options> <input>.wav sv7-<name>.mpc`:
+
+| vector | input | options |
+|---|---|---|
+| `stereo-telephone`, `-thumb`, `-radio`, `-standard`, `-extreme`, `-insane`, `-braindead` | `music-44100-2` | the profile (`--telephone` ... `--braindead`) |
+| `stereo-ms0`, `-ms1`, `-ms3` | `music-44100-2` | `--radio --ms 0` (1, 3) |
+| `mono-standard` | `music-44100-1` | `--standard` |
+| `stereo-48k` | `music-48000-2` | `--extreme` |
+| `stereo-32k` | `music-32000-2` | `--radio` |
+| `stereo-pns` | `noise-44100-2` | `--quality 4 --pns 1` |
+| `stereo-short` | `short-44100-2` | `--standard` |
+| `stereo-tagged` | `music-44100-2` | `--standard --tag "Artist=Smalt Vectors" --tag "Title=Tagged Musepack SV7"` |
+
+mppenc writes the profiles below `--standard` and the `--ms` cases as stream version 7.1 (header byte `0x17`), the
+others as 7.0 (`0x07`). `MusepackDecoderTest` pins the MD5 of each vector's float decode by libmpcdec r475
+(`musepack-oracle/smalt-mpcdec.c`, built with `gcc -O2 -fcommon -Iinclude libmpcdec/*.c common/crc32.c
+smalt-mpcdec.c -lm` from `https://files.musepack.net/source/musepack_src_r475.tar.gz`) and compares the 7.0 vectors
+with ffmpeg's `mpc7` decoder.
+
+### Scale cases generated at run time (core)
+
+The `gen-*` scale cases of `out/missing.tsv` are not hosted: `ScaleContainersTest` (core) builds them on every run,
+from no input but a frame ffmpeg encodes, and deletes what it saves. Files past 4 GiB are mostly zero payload, held as
+their nonzero 64 KiB pages (`SparseMedia`) and saved as sparse files under `Conformance.cache("scale")` (the
+`StandardOpenOption.SPARSE` holes take no disk space) for ffprobe:
+
+- `gen-mp4-co64-over4gib.mov`, `gen-rf64-over4gib.wav`, `gen-w64-over4gib.w64`, `gen-matroska-over4gib.mkv`: Smalt's
+  `Mp4Muxer` (QuickTime brand), `WavMuxer` (RF64 automatic), `Wave64Muxer` and `MatroskaMuxer` writing 760 one-second
+  packets of 7.1 192 kHz `PCM_S32LE` (6 144 000 bytes each, 4.67 GB), each marked with its index at its start and
+  end; the QuickTime file is then retagged by `TagEditor` into a second sparse file.
+- `gen-caf-over4gib.caf`: `CafMuxer` writing 4 400 ALAC packets of 1 MiB plus 0 to 6 bytes (a 24-byte
+  `ALACSpecificConfig`, 4096 frames, 16 bits, 2 channels, 44.1 kHz), so that the `pakt` table counts 4 400 packets.
+- `gen-avi-opendml-over1gib.avi`: `AviMuxer` with `riffSize` 64 MiB writing 200 such PCM packets (1.2 GB), so that
+  the file holds an `AVIX` list per 64 MiB with OpenDML `indx`/`ix##` indexes.
+- `gen-ts-over4gib.ts`: every transport packet has a header, so this one is a full file in `Conformance.cache("scale")`,
+  kept between runs: `TsMuxer` writing a 1080p H.264 IDR frame encoded by ffmpeg 7.1 (`ffmpeg -f lavfi -i
+  testsrc2=size=1920x1080:rate=25,noise=alls=60:allf=t -frames:v 1 -c:v libx264 -qp 0 -pix_fmt yuv420p
+  h264-idr-1080p.mp4`) once every 3600 ticks until past 4 GiB plus 200 frames.
+- `gen-mp4-over1m-frames.mp4`, `gen-matroska-over1m-frames.mkv`, `gen-avi-over1m-frames.avi`,
+  `gen-flv-over1m-frames.flv`: the muxers writing 1 100 000 AAC frames of 4 bytes (an AAC-LC stereo 48 kHz
+  `AudioSpecificConfig`, the frame index in the payload); `gen-ivf-over1m-frames.ivf`: `IvfMuxer` writing 1 100 000
+  four-byte VP8 frames.
+- `gen-dv-over1m-frames.dv`: never stored; a `MediaSource` repeating 1 100 000 times one PAL DV frame of ffmpeg 7.1
+  (`ffmpeg -f lavfi -i testsrc2=size=720x576:rate=25 -frames:v 1 -pix_fmt yuv420p -f dv dv-pal-frame.dv`).
+- `gen-matroska-64-tracks.mkv`, `gen-mp4-64-tracks.mp4`: 64 AAC tracks of 20 three-byte frames each.
+- `gen-ts-16-programs.ts`: ffmpeg 7.1, one 1 s MP2 sine per program: `ffmpeg -f lavfi -i
+  sine=frequency=F:sample_rate=48000:duration=1` for F = 200, 250, ... 950, `-map N:a` for each, `-c:a mp2`, `-program
+  program_num=N+1:st=N` for each, `-f mpegts`.
+
+### OpenEXR sample image digests (images)
+
+Not a vector: `image/src/test/resources/.../image/exr/openexr-images.tsv`, read by `ExrSamplesTest`, records what the
+reference OpenEXR library decodes from the hosted `exr-openexr-images-*` files (per part and channel, the SHA-256 of
+the first level's float32 samples, deep parts flattened as `ExrDecoder` documents). It is written with the OpenEXR
+Python bindings 3.5.2 and numpy (CPython 3.12) by
+`python -I tools/testdata/behavior/exr-reference-digests.py <vectors>/exr-openexr-images-*.exr`, after a
+three-line `#` header. The Pillow 13.0.0 digests of `IcnsCodecTest.pillowFiles` are
+`hashlib.sha256(IcnsFile(f).getimage(size).convert("RGBA").tobytes())` for each size of `IcnsFile.itersizes()`.

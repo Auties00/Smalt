@@ -52,8 +52,6 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 @DisplayName("H.264 high bit depth decoding")
 class H264HighBitDepthTest {
-    private static final String BASE = "https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/";
-
     /**
      * The expected frame hashes by stream name, in output order.
      */
@@ -84,10 +82,9 @@ class H264HighBitDepthTest {
      * @param name the stream name in {@code frames.tsv}
      * @param directory the directory of the conformance site
      * @param archive the archive name
-     * @param sha256 the archive checksum
      * @param entry the bitstream entry of the archive
      */
-    record Vector(String name, String directory, String archive, String sha256, String entry) {
+    record Vector(String name, String directory, String archive, String entry) {
         @Override
         public String toString() {
             return name;
@@ -97,28 +94,25 @@ class H264HighBitDepthTest {
     static Stream<Vector> conformance() {
         return Stream.of(
                 new Vector("FREH10-1", "FRExt", "FREH10-1.zip",
-                        "c2f6747f507e08afda32b70f374dac2d0a8104ed38df9fad700b873cab11d946",
                         "WB_10bit_QP21_I-Only_1920x1088.264"),
                 new Vector("FREH10-2", "FRExt", "FREH10-2.zip",
-                        "248d32b6c449ae652bf6556b1413d23151fe211115f9beb20507edf710b22473",
                         "WB_10bit_QP21_1920x1088.264"),
-                pph10("1", "5bc720fd8e152fa9c1e10645b3bfddb0e32c74dad68bb6145922353a60f1beb0"),
-                pph10("2", "d1d18c66fdcadad1024abdaa8a5d3d64ab24b4208bb69d5abd7b990dfbf24281"),
-                pph10("3", "b36213833d6ac6d79490c5952c3e19af006e10ab34485819425997b75382dd06"),
-                pph10("4", "fd4dcdc6b61d5781c4271302c43976c81980a5311e10bd5e3344bcdc226717ee"),
-                pph10("5", "4115e3c9838c02d71f5ad86bea7b55ef7b24dc615babbcc1e6652566364f566e"),
-                pph10("6", "cfc57cfd5791fb122520bcb179a315c7a3b7e34f241bcb2f7d5cc9c5d83fe8a4"),
-                pph10("7", "81e441e22bc74d5ce7f0ab5ed256c7cf92eebd1a7cf37e2aa66107a4861b0525"));
+                pph10("1"),
+                pph10("2"),
+                pph10("3"),
+                pph10("4"),
+                pph10("5"),
+                pph10("6"),
+                pph10("7"));
     }
 
-    private static Vector pph10(String number, String sha256) {
+    private static Vector pph10(String number) {
         var name = "PPH10I" + number + "_Panasonic_A";
-        return new Vector(name, "Professional_profiles", name + ".zip", sha256, name + ".264");
+        return new Vector(name, "Professional_profiles", name + ".zip", name + ".264");
     }
 
     static byte[] bitstream(Vector vector) {
-        var archive = Conformance.fetch("h264-" + vector.directory() + "-" + vector.archive(),
-                BASE + vector.directory() + "/" + vector.archive(), vector.sha256());
+        var archive = Conformance.vector("h264-" + vector.directory() + "-" + vector.archive());
         try (var zip = new ZipFile(archive.toFile())) {
             return zip.getInputStream(zip.getEntry(vector.entry())).readAllBytes();
         } catch (IOException exception) {

@@ -357,6 +357,43 @@ class Mj2DifferentialTest {
                     ours.length / 4);
         }
 
+        /**
+         * Motion JPEG 2000 of other writers: a .mj2 file (metadata-extractor-images), a Lead LJ2K AVI, an MJ2C AVI
+         * and an mjp2 QuickTime file (ffmpeg's samples archive). The first frames are held to ffmpeg's decode
+         * within the rounding of the irreversible wavelet's float synthesis, as above.
+         */
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"mei-jpg2000-speedway.mj2",
+                "mj2-samples-WhatBox_MJ2k_720x480_PerfectQuality2.avi", "mj2-samples-mj2c.avi", "mj2-samples-mjp2.mov"})
+        @DisplayName("decode third-party files close to ffmpeg's decode")
+        void thirdParty(String name) {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var path = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var stream = Mj2Testing.demux(Fixtures.read(path));
+            assertEquals(Codec.JPEG2000, stream.track().codec());
+            var limit = Math.min(4, stream.packets().size());
+            var decoded = decodeAll(new Mj2Testing.Stream(stream.track(), stream.packets().subList(0, limit)), false);
+            assertEquals(limit, decoded.size());
+            var first = decoded.getFirst();
+            byte[] ours;
+            String format;
+            if (first instanceof com.github.auties00.smalt.image.YuvPicture yuv) {
+                format = switch (yuv.chromaFormat()) {
+                    case YUV420 -> "yuv420p";
+                    case YUV422 -> "yuv422p";
+                    case YUV444 -> "yuv444p";
+                    case MONOCHROME -> "gray";
+                    default -> throw new AssertionError(yuv.chromaFormat());
+                };
+                ours = raw(decoded);
+            } else {
+                format = "rgba";
+                ours = rgba(decoded);
+            }
+            var reference = Oracle.decodeVideo(path, format, limit);
+            Tolerance.maxAbs(1).and(Tolerance.psnr(60)).assertFrames(name, reference, ours, ours.length / limit);
+        }
+
         private static byte[] rgba(List<Picture> pictures) {
             var parts = new ArrayList<byte[]>();
             for (var picture : pictures) {

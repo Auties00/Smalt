@@ -28,7 +28,7 @@ class AacHeightConformanceTest {
             "b00:BACK_LEFT", "b01:BACK_RIGHT", "l00:LOW_FREQUENCY", "fh01:TOP_FRONT_LEFT", "fh02:TOP_FRONT_RIGHT");
 
     private static Path member(Conformance.Archive archive, String name) {
-        return archive.fetch(archive.members().stream().filter(path -> path.endsWith("/" + name)).findFirst()
+        return archive.member(archive.members().stream().filter(path -> path.endsWith("/" + name)).findFirst()
                 .orElseThrow(() -> new AssertionError(name + " is not in " + archive.name())));
     }
 

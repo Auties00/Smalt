@@ -223,4 +223,48 @@ class Av1EncoderScreenContentTest {
         assertEquals(Av1ScreenContent.DETECT, Av1EncoderOptions.defaults().screenContent());
         assertThrows(NullPointerException.class, () -> Av1EncoderOptions.builder().screenContent(null));
     }
+
+    /**
+     * Real screen captures from libvpx's and libaom's test data: {@code screendata.y4m} (640x480 4:2:0, a desktop with
+     * text) and {@code desktop_credits.y4m} (800x600 4:4:4, scrolling credits). With the screen content tools the
+     * encoder codes them in fewer bits without losing quality.
+     */
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({"screendata.y4m,YUV420", "desktop_credits.y4m,YUV444"})
+    @DisplayName("codes real screen content in fewer bits at the same quality with the tools than without them")
+    void realScreenContent(String vector, ChromaFormat format) {
+        var sources = new ArrayList<Picture>();
+        try (var source = com.github.auties00.smalt.io.MediaSource.of(
+                com.github.auties00.smalt.testkit.Conformance.vector(vector));
+             var reader = com.github.auties00.smalt.video.VideoReader.open(source)) {
+            while (sources.size() < 3) {
+                var frame = reader.read();
+                if (frame == null) {
+                    break;
+                }
+                sources.add(Av1EncoderPictureFormatTest.copy(frame.picture()));
+            }
+        }
+        assertEquals(3, sources.size());
+        var results = new java.util.EnumMap<Av1ScreenContent, Result>(Av1ScreenContent.class);
+        for (var mode : Av1ScreenContent.values()) {
+            var options = options(Av1EncoderUsage.GOOD_QUALITY, mode).toBuilder().pictureFormat(format, 8).build();
+            try (var encoder = new Av1Encoder(sources.getFirst().width(), sources.getFirst().height(), options)) {
+                var packets = Av1EncoderPictureFormatTest.encode(encoder, sources);
+                results.put(mode, new Result(packets, Av1EncoderPictureFormatTest.decode(encoder, packets)));
+            }
+        }
+        for (var entry : results.entrySet()) {
+            System.out.printf("%s %s: %d bits at %.2f dB%n", vector, entry.getKey(), entry.getValue().bits(),
+                    entry.getValue().psnr(sources, 8));
+        }
+        var with = results.get(Av1ScreenContent.ALWAYS);
+        var without = results.get(Av1ScreenContent.NEVER);
+        var psnrWith = with.psnr(sources, 8);
+        var psnrWithout = without.psnr(sources, 8);
+        assertTrue(psnrWith > 28, vector + " psnr " + psnrWith);
+        assertTrue(with.bits() < without.bits() && psnrWith > psnrWithout - 0.3,
+                "with the tools " + with.bits() + " bits at " + psnrWith + " dB, without " + without.bits()
+                        + " bits at " + psnrWithout + " dB");
+    }
 }

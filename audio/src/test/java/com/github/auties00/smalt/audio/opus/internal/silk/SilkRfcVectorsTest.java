@@ -25,14 +25,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * reference harness, at several API rates and channel counts.
  */
 class SilkRfcVectorsTest {
-    private static final String VECTORS_SHA256 = "6b26a22f9ba87b2b836906a9bb7afec5f8e54d49553b1200382520ee6fedfa55";
-
     private static Map<String, byte[]> vectors;
 
     private static synchronized Map<String, byte[]> vectors() throws IOException {
         if (vectors == null) {
-            var archive = Conformance.fetch("opus_testvectors-rfc8251.tar.gz",
-                    "https://opus-codec.org/static/testvectors/opus_testvectors-rfc8251.tar.gz", VECTORS_SHA256);
+            var archive = Conformance.vector("opus_testvectors-rfc8251.tar.gz");
             var found = new HashMap<String, byte[]>();
             try (var in = new GZIPInputStream(Files.newInputStream(archive), 1 << 16)) {
                 readTar(in, found);

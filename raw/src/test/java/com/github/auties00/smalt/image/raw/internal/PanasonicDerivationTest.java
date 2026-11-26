@@ -23,13 +23,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link PanasonicDecoder}: version 4 (DMC-LX3, DMC-GH1, DMC-GF6, DC-G9) for the block format, the
  * code rules, the missing-photosite markers and the converter's repair, and version 5 (DC-GH5S)
  * with version 4 for the chunk layout the two share. The oracle files are the uncompressed DNG
- * files {@code tools/testdata/raw-oracle.py} writes into {@code <conformance cache>/raw-oracle}
+ * files {@code tools/testdata/raw-oracle.py} writes into {@code <test cache>/raw-oracle}
  * ({@code -Dsmalt.test.rawOracle} overrides the directory); the tests are skipped without them.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PanasonicDerivationTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     private static final List<RawSamples> VERSION_4 = List.of(RawSamples.RW2_LX3, RawSamples.RW2_GH1, RawSamples.RW2_GF6,
             RawSamples.RW2_G9);
@@ -57,7 +57,7 @@ class PanasonicDerivationTest {
     private static PanasonicDerivation.Sample load(RawSamples witness) throws IOException {
         var name = witness.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
-        return Files.isRegularFile(dng) ? PanasonicDerivation.load(witness.fetch(), dng) : null;
+        return Files.isRegularFile(dng) ? PanasonicDerivation.load(witness.path(), dng) : null;
     }
 
     private List<PanasonicDerivation.Sample> version4() {

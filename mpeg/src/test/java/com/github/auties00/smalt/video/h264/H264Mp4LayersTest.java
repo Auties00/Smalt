@@ -42,7 +42,7 @@ class H264Mp4LayersTest {
     static byte[] file() throws IOException {
         var out = new ByteArrayOutputStream();
         for (var name : FILES) {
-            out.writeBytes(Files.readAllBytes(Conformance.fetchListed("mpegff-svc-" + name)));
+            out.writeBytes(Files.readAllBytes(Conformance.vector("mpegff-" + name)));
         }
         return out.toByteArray();
     }

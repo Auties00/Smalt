@@ -113,7 +113,7 @@ class HeAacContainersTest {
     @DisplayName("declares the extended output and decodes it within the conformance criterion")
     void remuxed(String name, String extension, int rate, int channels) {
         Oracle.assume(Oracle.Tool.FFMPEG);
-        var original = HeAacConformanceTest.fetch(name);
+        var original = HeAacConformanceTest.file(name);
         // ffmpeg writes no AAC in CAF, so Smalt's muxer writes those files
         var remuxed = extension.equals("mp4") ? Fixtures.read(original)
                 : extension.startsWith("caf") ? caf(Fixtures.read(original), extension.equals("caf"))
@@ -139,5 +139,71 @@ class HeAacContainersTest {
             assertTrue(rms <= AacConformanceTest.RMS_LIMIT, name + " channel " + c + ": RMS " + rms);
             assertTrue(peak <= AacConformanceTest.PEAK_LIMIT, name + " channel " + c + ": peak " + peak);
         }
+    }
+
+    /**
+     * Decodes a file through {@link Containers} and the registered decoder and requires the declared rate, the output
+     * channel count, and every channel within the 16-bit conformance criterion of ffmpeg's decode of the same file.
+     */
+    static float[][] assertLikeFfmpeg(String label, byte[] data, int rate, int channels) {
+        var file = StreamingVectors.write(label.replaceAll("[^A-Za-z0-9._-]", "_"), data);
+        var decoded = read(data);
+        assertEquals(rate, decoded.track().sampleRate(), label + " declared rate");
+        assertEquals(channels, decoded.planes().length, label + " channels");
+        var reference = Oracle.decodeAudio(file);
+        var frames = reference.length / channels;
+        // ffmpeg trims the priming and the padding an edit list or the fragments' durations name; the samples of
+        // the decode it keeps are found at the offset that matches them best, within four HE-AAC frames of 2048 samples
+        var extra = decoded.planes()[0].length - frames;
+        assertTrue(extra >= 0 && extra <= 8192, label + " decoded length " + decoded.planes()[0].length + " for "
+                + frames);
+        var offset = 0;
+        var best = Double.POSITIVE_INFINITY;
+        for (var candidate = 0; candidate <= extra; candidate++) {
+            double squared = 0;
+            for (var i = 0; i < Math.min(frames, 48000); i++) {
+                var d = (double) reference[i * channels] - decoded.planes()[0][i + candidate];
+                squared += d * d;
+            }
+            if (squared < best) {
+                best = squared;
+                offset = candidate;
+            }
+        }
+        for (var c = 0; c < channels; c++) {
+            double squared = 0;
+            double peak = 0;
+            for (var i = 0; i < frames; i++) {
+                var d = Math.abs((double) reference[i * channels + c] - decoded.planes()[c][i + offset]);
+                squared += d * d;
+                peak = Math.max(peak, d);
+            }
+            var rms = Math.sqrt(squared / frames);
+            assertTrue(rms <= AacConformanceTest.RMS_LIMIT, label + " channel " + c + ": RMS " + rms);
+            assertTrue(peak <= AacConformanceTest.PEAK_LIMIT, label + " channel " + c + ": peak " + peak);
+        }
+        return decoded.planes();
+    }
+
+    /**
+     * Streams of production encoders: HE-AAC v1 and v2 stereo and HE-AAC 5.1 CMAF of the CTA WAVE test content (the
+     * initialization segment followed by the media segments), and the Fraunhofer HE-AAC 5.1 and 7.1 (channel
+     * configuration 12) segments of the DASH-IF multichannel audio test vectors.
+     */
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            "cta-wave-caac-he_aac-at6-2023-04-27.zip, 48000, 2",
+            "cta-wave-caac-he_aac_v2-at7-2023-04-27.zip, 48000, 2",
+            "cta-wave-camc-he_aac-at12-2023-04-27.zip, 48000, 6",
+            "dashif-mca-fhg-heaac-6ch_ident_48kHz-en-11s-6-heaac-160000bps_seg.mp4, 48000, 6",
+            "dashif-mca-fhg-heaac-8chID-en-14s-8-heaac-256000bps_seg.mp4, 48000, 8",
+            "dashif-mca-fhg-heaac-ED-CM-5.1-DVD_length_fixed-en-653s-6-heaac-67000bps_seg.mp4, 48000, 6"
+    })
+    @DisplayName("decodes the fragmented MP4 of production encoders within the conformance criterion")
+    void production(String vector, int rate, int channels) {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var data = vector.endsWith(".zip") ? StreamingVectors.cmaf(vector)
+                : Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        assertLikeFfmpeg(vector.replace(".zip", ".mp4"), data, rate, channels);
     }
 }

@@ -81,13 +81,13 @@ class Jp2ConformanceTest {
 
         private void check(String input, String reference, int components, int reduction, String peaks,
                            String errors) {
-            var image = Jp2Decoder.decodeChannels(MediaSource.of(Jp2TestVectors.fetch(input)),
+            var image = Jp2Decoder.decodeChannels(MediaSource.of(Jp2TestVectors.vector(input)),
                     Jp2DecoderOptions.builder().reduction(reduction)
                             .limits(MediaLimits.builder().maxChannels(16384).build()).build());
             var peakLimits = peaks.split(":");
             var mseLimits = errors.split(":");
             for (var c = 0; c < components; c++) {
-                var expected = Jp2Testing.pgx(Jp2TestVectors.fetch(reference + "_" + c + ".pgx"));
+                var expected = Jp2Testing.pgx(Jp2TestVectors.vector(reference + "_" + c + ".pgx"));
                 var actual = image.channels().get(c);
                 assertEquals(expected.width(), actual.width(), "width of component " + c);
                 assertEquals(expected.height(), actual.height(), "height of component " + c);
@@ -285,10 +285,10 @@ class Jp2ConformanceTest {
         @ValueSource(ints = {1, 2, 3, 4, 5, 6, 7, 8, 9})
         @DisplayName("decode to the reference RGB within peak 4 and MSE 1")
         void file(int number) {
-            var decoded = Jp2Decoder.decode(MediaSource.of(Jp2TestVectors.fetch("input/conformance/file" + number + ".jp2")),
+            var decoded = Jp2Decoder.decode(MediaSource.of(Jp2TestVectors.vector("input/conformance/file" + number + ".jp2")),
                     ImageDecoderOptions.builder().convertToSrgb(true).build());
             var reference = TiffDecoder.decode(MediaSource.of(
-                    Jp2TestVectors.fetch("baseline/conformance/jp2_" + number + ".tif")));
+                    Jp2TestVectors.vector("baseline/conformance/jp2_" + number + ".tif")));
             var actual = (RgbaPicture) decoded.picture();
             var expected = (RgbaPicture) reference.picture();
             assertEquals(expected.width(), actual.width());
@@ -326,21 +326,21 @@ class Jp2ConformanceTest {
         void split() {
             for (var c = 0; c < 4; c++) {
                 compareChannels("input/conformance/a6_mono_colr.j2c",
-                        new Jp2Testing.Plane[]{Jp2Testing.pnm(Jp2TestVectors.fetch("baseline/conformance/a6_mono_colr_"
+                        new Jp2Testing.Plane[]{Jp2Testing.pnm(Jp2TestVectors.vector("baseline/conformance/a6_mono_colr_"
                                 + c + ".pgm"))[0]}, c, 4, 1);
             }
         }
 
         private void compare(String input, String reference, long peak, double mse) {
-            var expected = Jp2Testing.pnm(Jp2TestVectors.fetch(reference));
-            var image = Jp2Decoder.decodeChannels(MediaSource.of(Jp2TestVectors.fetch(input)));
+            var expected = Jp2Testing.pnm(Jp2TestVectors.vector(reference));
+            var image = Jp2Decoder.decodeChannels(MediaSource.of(Jp2TestVectors.vector(input)));
             if (image.colorSpace() != Jp2ColorSpace.SYCC) {
                 for (var c = 0; c < expected.length; c++) {
                     compareChannels(input, new Jp2Testing.Plane[]{expected[c]}, c, peak, mse);
                 }
                 return;
             }
-            var picture = (RgbaPicture) Jp2Decoder.decode(MediaSource.of(Jp2TestVectors.fetch(input))).picture();
+            var picture = (RgbaPicture) Jp2Decoder.decode(MediaSource.of(Jp2TestVectors.vector(input))).picture();
             for (var c = 0; c < expected.length; c++) {
                 var actual = Jp2Testing.channel(picture, c);
                 assertEquals(expected[c].width() * expected[c].height(), actual.length);
@@ -350,7 +350,7 @@ class Jp2ConformanceTest {
         }
 
         private void compareChannels(String input, Jp2Testing.Plane[] expected, int channel, long peak, double mse) {
-            var image = Jp2Decoder.decodeChannels(MediaSource.of(Jp2TestVectors.fetch(input)));
+            var image = Jp2Decoder.decodeChannels(MediaSource.of(Jp2TestVectors.vector(input)));
             var plane = expected[0];
             var actual = Jp2Testing.upsample(image, image.channels().get(channel), plane.width(), plane.height());
             assertEquals(plane.width() * plane.height(), actual.length);
@@ -358,6 +358,41 @@ class Jp2ConformanceTest {
             var m = Jp2Testing.mse(plane.samples(), actual);
             assertTrue(p <= peak, "peak " + p + " of channel " + channel);
             assertTrue(m <= mse, "MSE " + m + " of channel " + channel);
+        }
+    }
+
+    @Nested
+    @DisplayName("files of other writers")
+    class ThirdParty {
+        private static byte[] read(String name) {
+            try {
+                return java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(name));
+            } catch (java.io.IOException exception) {
+                throw new java.io.UncheckedIOException(exception);
+            }
+        }
+
+        @Test
+        @DisplayName("decodes a JPX (.jpf) file of a third-party writer as ffmpeg does, within the 9-7 rounding")
+        void jpf() {
+            com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+            var file = read("mei-jpg2000-balloon.jpf");
+            var ours = com.github.auties00.smalt.testkit.image.RasterTesting.tight(
+                    com.github.auties00.smalt.image.ops.ImageOps.toRgba(Jp2Decoder.decode(MediaSource.of(file))
+                            .picture()));
+            var theirs = com.github.auties00.smalt.image.raster.RasterFixtures.ffmpegDecode(file, "jp2", "rgba");
+            com.github.auties00.smalt.testkit.Tolerance.maxAbs(1).and(com.github.auties00.smalt.testkit.Tolerance
+                    .psnr(60)).assertWithin("balloon.jpf", theirs, ours);
+        }
+
+        @Test
+        @DisplayName("refuses a JPM compound document (ISO/IEC 15444-6) as unsupported, not as a broken JP2")
+        void jpm() {
+            var file = read("mei-jpg2000-balloon.jpm");
+            var exception = org.junit.jupiter.api.Assertions.assertThrows(
+                    com.github.auties00.smalt.MediaException.class, () -> Jp2Decoder.decode(MediaSource.of(file)));
+            org.junit.jupiter.api.Assertions.assertInstanceOf(com.github.auties00.smalt.MediaException.Unsupported.class,
+                    exception, exception.getMessage());
         }
     }
 }

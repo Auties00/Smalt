@@ -62,22 +62,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisplayName("H.263+ conformance streams")
 class H263ConformanceTest {
     private static final String ARCHIVE = "h263plus-Intel_Draft20.zip";
-    private static final String URL =
-            "https://www.itu.int/wftp3/av-arch/video-site/h263plus/bitstreams/Intel_Draft20.zip";
-    private static final String SHA256 = "d8c37e8b97f49a0fc4cecb4c81f5f178dfd3e4f7d9d7c57d20c738d9708d875b";
 
-    private static final String ANCHORS = "https://www.itu.int/wftp3/av-arch/video-site/h263plus/bitstreams/9807_anchors/";
     private static final String STREAMS = "h263plus-9807-foreman.streams.tar";
-    private static final String STREAMS_SHA256 = "8f6f98eb3b24ed505753a846ac8a93369707b44a3478bcbe75d8228e43fae31a";
     private static final String LOGS = "h263plus-9807-foreman.logs.tar.gz";
-    private static final String LOGS_SHA256 = "7cb3d93d10f47665731dc8d688820f2c03045733ce88a3a810e76ff577eb049b";
     private static final String SOURCE = "foreman_qcif.y4m";
-    private static final String SOURCE_URL = "https://media.xiph.org/video/derf/y4m/foreman_qcif.y4m";
-    private static final String SOURCE_SHA256 = "9b37e95ae2d06b3b173d6130965f450009216084bae12b2025248814baf057af";
     private static final String ANNEX_N = "h263plus-AnnexN_TUB_Oki.zip";
-    private static final String ANNEX_N_URL =
-            "https://www.itu.int/wftp3/av-arch/video-site/h263plus/bitstreams/AnnexN_TUB_Oki.zip";
-    private static final String ANNEX_N_SHA256 = "1f62e2183f04bad39589785ec8d82627be8bd606916a2f4a638aabbd7ca24415";
     private static final Pattern PICTURE_PSNR = Pattern.compile("Reading image no: (\\d+).*?SNR_Y\\s*:\\s*([0-9.]+)",
             Pattern.DOTALL);
 
@@ -100,7 +89,7 @@ class H263ConformanceTest {
     })
     @DisplayName("decodes every picture within the IDCT noise floor of the reference decode")
     void matchesReference(String stream, double minimumPsnr) throws IOException {
-        var archive = Conformance.fetch(ARCHIVE, URL, SHA256);
+        var archive = Conformance.vector(ARCHIVE);
         byte[] bitstream;
         byte[] reference;
         try (var zip = new ZipFile(archive.toFile())) {
@@ -140,9 +129,9 @@ class H263ConformanceTest {
     })
     @DisplayName("reaches the PSNR of the TMN10 encoder's reconstruction with overlapped motion compensation")
     void matchesReferenceEncoder(int quantizer, int tightPictures, double tightBound) throws IOException {
-        var streams = Conformance.fetch(STREAMS, ANCHORS + "foreman.streams.tar", STREAMS_SHA256);
-        var logs = Conformance.fetch(LOGS, ANCHORS + "foreman.logs.tar.gz", LOGS_SHA256);
-        var source = Conformance.fetch(SOURCE, SOURCE_URL, SOURCE_SHA256);
+        var streams = Conformance.vector(STREAMS);
+        var logs = Conformance.vector(LOGS);
+        var source = Conformance.vector(SOURCE);
         var name = "foreman_qcif_dfjit_" + quantizer;
         byte[] bitstream;
         try (var in = Files.newInputStream(streams)) {
@@ -193,7 +182,7 @@ class H263ConformanceTest {
     void matchesReferenceAnnexes(String stream, int pictures, double minimumPsnr) throws IOException {
         byte[] bitstream;
         byte[] reference;
-        try (var zip = new ZipFile(Conformance.fetch(ARCHIVE, URL, SHA256).toFile())) {
+        try (var zip = new ZipFile(Conformance.vector(ARCHIVE).toFile())) {
             bitstream = zip.getInputStream(zip.getEntry(stream + ".263")).readAllBytes();
             reference = zip.getInputStream(zip.getEntry(stream + ".dec")).readAllBytes();
         }
@@ -215,7 +204,7 @@ class H263ConformanceTest {
     void matchesReferenceBaseLayer(String stream, double minimumPsnr, int enhancementScale) throws IOException {
         byte[] bitstream;
         byte[] reference;
-        try (var zip = new ZipFile(Conformance.fetch(ARCHIVE, URL, SHA256).toFile())) {
+        try (var zip = new ZipFile(Conformance.vector(ARCHIVE).toFile())) {
             bitstream = zip.getInputStream(zip.getEntry(stream + ".263")).readAllBytes();
             reference = zip.getInputStream(zip.getEntry(stream + ".dec")).readAllBytes();
         }
@@ -238,7 +227,7 @@ class H263ConformanceTest {
     })
     @DisplayName("reaches the PSNR the Annex N encoders logged with Reference Picture Selection")
     void matchesReferencePictureSelection(String stream, int coded, int shown) throws IOException {
-        var archive = Conformance.fetch(ANNEX_N, ANNEX_N_URL, ANNEX_N_SHA256);
+        var archive = Conformance.vector(ANNEX_N);
         byte[] bitstream;
         String log;
         try (var zip = new ZipFile(archive.toFile())) {
@@ -257,7 +246,7 @@ class H263ConformanceTest {
         }
         assertEquals(shown, images.size(), "pictures in the encoder's log");
         assertEquals(coded, pictureStarts(bitstream).size(), "coded pictures");
-        var sources = y4mLuma(Files.readAllBytes(Conformance.fetch(SOURCE, SOURCE_URL, SOURCE_SHA256)));
+        var sources = y4mLuma(Files.readAllBytes(Conformance.vector(SOURCE)));
         var decoded = decode(bitstream);
         // The pictures the TUB encoder sends twice in Video Redundancy Coding are shown once.
         assertEquals(shown * FRAME, decoded.length, "decoded size");
@@ -277,7 +266,7 @@ class H263ConformanceTest {
     })
     @DisplayName("decodes every picture of the Annex N streams of Mother and Daughter")
     void decodesReferencePictureSelection(String stream, int coded, int shown) throws IOException {
-        var archive = Conformance.fetch(ANNEX_N, ANNEX_N_URL, ANNEX_N_SHA256);
+        var archive = Conformance.vector(ANNEX_N);
         byte[] bitstream;
         String log;
         try (var zip = new ZipFile(archive.toFile())) {

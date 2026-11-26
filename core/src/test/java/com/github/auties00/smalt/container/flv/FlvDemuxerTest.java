@@ -895,4 +895,24 @@ class FlvDemuxerTest {
             assertEquals("flv", demuxer.formatName());
         }
     }
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("FATE samples")
+    class Fate {
+        @org.junit.jupiter.api.Test
+        @DisplayName("reads a cut file up to the cut as ffprobe does")
+        void cut() {
+            com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe(
+                    "fate-flv-Enigma_Principles_of_Lust-part.flv", source -> new FlvDemuxer(source),
+                    com.github.auties00.smalt.container.ThirdPartyDemux.Options.DEFAULT.cutShort());
+        }
+
+        @org.junit.jupiter.api.Test
+        @DisplayName("fails on an enhanced RTMP multitrack file only with a MediaException")
+        void multitrack() {
+            // ffmpeg 7.1 identifies 2 of the 13 tracks of this file, so it is no oracle for the others
+            com.github.auties00.smalt.container.ThirdPartyDemux.assertRobust("fate-flv-multitrack.flv",
+                    source -> new FlvDemuxer(source));
+        }
+    }
 }

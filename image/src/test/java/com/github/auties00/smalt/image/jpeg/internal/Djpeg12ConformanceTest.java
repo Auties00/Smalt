@@ -189,6 +189,25 @@ class Djpeg12ConformanceTest {
     }
 
     @Test
+    @DisplayName("decodes libjpeg-turbo's 12-bit monkey12.jpg as djpeg -dct int does, with its ICC profile")
+    void monkey12() throws IOException {
+        // libjpeg-turbo 3.2.1's testimages/monkey12.jpg: 12-bit DCT with an embedded ICC profile
+        var data = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                "ljt-monkey12.jpg"));
+        var frame = new JpegReader(data, 0, data.length, MediaLimits.DEFAULT).readHeaders();
+        assertEquals(12, frame.precision);
+        var ours = DjpegEmulator.decode(data, 0);
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.DJPEG);
+        var input = com.github.auties00.smalt.testkit.image.RasterTesting.write("monkey12.jpg", data);
+        var icc = input.resolveSibling("monkey12.icc");
+        var theirs = com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.DJPEG,
+                java.time.Duration.ofMinutes(1), List.of("-dct", "int", "-icc", icc.toString(), input.toString()));
+        assertEquals(md5(theirs), md5(ours), "djpeg -dct int");
+        var image = JpegDecoder.decode(MediaSource.of(data));
+        assertArrayEquals(java.nio.file.Files.readAllBytes(icc), image.iccProfile().orElseThrow(), "ICC profile");
+    }
+
+    @Test
     @DisplayName("components no scan codes decode to mid-gray at both depths")
     void unscannedComponents() {
         var planes = new byte[][]{JpegStreamTest.plane(24, 16, 1), JpegStreamTest.plane(24, 16, 2), JpegStreamTest.plane(24, 16, 3)};

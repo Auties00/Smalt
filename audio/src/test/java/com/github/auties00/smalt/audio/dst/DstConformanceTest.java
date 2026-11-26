@@ -83,10 +83,10 @@ class DstConformanceTest {
 
     static void conformance(String set, String referenceSet, String member) throws IOException {
         var name = file(member);
-        var compressed = read(Files.readAllBytes(Conformance.archive(set).fetch(member)));
+        var compressed = read(Files.readAllBytes(Conformance.archive(set).member(member)));
         var referenceMember = Conformance.archive(referenceSet).members().stream()
                 .filter(m -> file(m).equals(name)).findFirst().orElseThrow();
-        var reference = read(Files.readAllBytes(Conformance.archive(referenceSet).fetch(referenceMember)));
+        var reference = read(Files.readAllBytes(Conformance.archive(referenceSet).member(referenceMember)));
         assertEquals(Codec.DST, compressed.track().codec());
         assertEquals(Codec.DST, reference.track().codec());
         assertEquals(compressed.track().sampleRate(), reference.track().sampleRate());
@@ -175,7 +175,7 @@ class DstConformanceTest {
     static Stream_ smokeStream(String name) throws IOException {
         var archive = Conformance.archive("mpeg4audio-dst-compressed-smoke");
         var member = archive.members().stream().filter(m -> file(m).equals(name)).findFirst().orElseThrow();
-        return read(Files.readAllBytes(archive.fetch(member)));
+        return read(Files.readAllBytes(archive.member(member)));
     }
 
     @Test
@@ -251,7 +251,7 @@ class DstConformanceTest {
     @Test
     @DisplayName("decodes FFmpeg's FATE DSDIFF file to PCM through AudioDecoders")
     void fate() throws IOException {
-        var data = Files.readAllBytes(Conformance.fetchListed("fate-dst-64fs44-2ch.dff"));
+        var data = Files.readAllBytes(Conformance.vector("fate-dst-64fs44-2ch.dff"));
         try (var demuxer = Containers.openDemuxer(MediaSource.of(data))) {
             assertEquals(ContainerFormat.DSDIFF, demuxer.format());
             var track = (AudioTrack) demuxer.tracks().getFirst();

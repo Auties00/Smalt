@@ -32,7 +32,7 @@ ff -f lavfi -i "testsrc2=size=32x32:rate=1:duration=1" -frames:v 1 -c:v png -pix
 
 # The animated cursor and the GIF with an ICC profile are assembled by assemble-samples.py from files ffmpeg
 # writes; the profile is the CC0 Display P3 profile of saucecontrol's Compact-ICC-Profiles (the smoke vector
-# compact-icc-DisplayP3-v4.icc of tools/testdata/vectors.tsv, fetched by testdata.py into the cache).
+# compact-icc-DisplayP3-v4.icc of tools/testdata/vectors.tsv, read from the hosted test data, SMALT_TESTDATA).
 here="$(dirname "$0")"
 icons="$(mktemp -d)"
 ff -f lavfi -i "testsrc2=size=32x32:rate=5:duration=1" -vf "trim=start_frame=0,setpts=PTS-STARTPTS" -frames:v 1 \
@@ -44,7 +44,7 @@ ff -f lavfi -i "testsrc2=size=32x32:rate=5:duration=1" -vf "trim=start_frame=4,s
 python -I "$here/assemble-samples.py" ani "$out/ico/animated.ani" --rate 6,3,9,3 --seq 0,1,2,1 --title "Smalt sample" \
     --artist "ffmpeg testsrc2" --hotspot 4,5 "$icons/0.ico" "$icons/1.ico" "$icons/2.ico"
 rm -rf "$icons"
-profile="${SMALT_CONFORMANCE_CACHE:-$HOME/.smalt/cache/conformance}/compact-icc-DisplayP3-v4.icc"
+profile="${SMALT_TESTDATA:-$HOME/.smalt/testdata}/vectors/compact-icc-DisplayP3-v4.icc"
 python -I "$here/assemble-samples.py" gif-icc "$out/gif/still.gif" "$profile" "$out/gif/icc.gif"
 
 ff -f lavfi -i "$still" -frames:v 1 -c:v tiff -compression_algo lzw -pix_fmt rgb24 "$out/tiff/lzw.tif"

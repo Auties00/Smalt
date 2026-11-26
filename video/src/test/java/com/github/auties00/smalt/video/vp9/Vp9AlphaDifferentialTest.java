@@ -305,4 +305,92 @@ class Vp9AlphaDifferentialTest {
         assertFalse(Vp9EncoderOptions.defaults().alpha());
         assertEquals(10, Vp9EncoderOptions.defaults().alphaQuality());
     }
+
+    /**
+     * Chromium's transparent WebM files: alpha at 8 and 10 bits in 4:2:0, 4:2:2 and 4:4:4, and at odd dimensions.
+     * The color planes of every frame equal the decode of ffmpeg's libvpx-vp9 decoder, and the alpha plane equals
+     * libvpx-vp9's decode of the alpha stream (the WebM BlockAdditional frames, rewrapped in IVF): ffmpeg reads the
+     * alpha stream itself only for 8-bit 4:2:0.
+     */
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({"chromium-bear-vp9a.webm,yuv420p",
+            "chromium-bear-vp9a-odd-dimensions.webm,yuv420p", "chromium-bear-vp9a-422.webm,yuv422p",
+            "chromium-bear-vp9a-444.webm,yuv444p", "chromium-bear-vp9a-420-10bit.webm,yuv420p10le",
+            "chromium-bear-vp9a-422-10bit.webm,yuv422p10le", "chromium-bear-vp9a-444-10bit.webm,yuv444p10le"})
+    @DisplayName("decodes Chromium's alpha files to libvpx-vp9's frames and alpha planes")
+    void chromiumFiles(String name, String pixelFormat) throws java.io.IOException {
+        Oracle.assumeEncoder("libvpx-vp9");
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var stream = com.github.auties00.smalt.video.intra.IntraTesting.demux(file);
+        assertTrue(stream.track().hasAlpha(), name);
+        var width = stream.track().width();
+        var height = stream.track().height();
+        var deep = pixelFormat.endsWith("le");
+        var colors = new ByteArrayOutputStream();
+        var alphas = new ArrayList<com.github.auties00.smalt.image.Picture>();
+        try (var decoder = VideoDecoders.create(stream.track(), VideoDecoderOptions.builder().highBitDepth(deep).build())) {
+            for (var packet : stream.packets()) {
+                decoder.decode(packet, frame -> {
+                    colors.writeBytes(com.github.auties00.smalt.video.intra.IntraTesting.raw(frame.picture(), false));
+                    alphas.add(frame.picture());
+                });
+            }
+            decoder.flush(frame -> {
+                colors.writeBytes(com.github.auties00.smalt.video.intra.IntraTesting.raw(frame.picture(), false));
+                alphas.add(frame.picture());
+            });
+        }
+        var expected = Oracle.run(Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(5), List.of("-v", "error", "-c:v",
+                "libvpx-vp9", "-i", file.toString(), "-f", "rawvideo", "-pix_fmt", pixelFormat, "-fps_mode",
+                "passthrough", "-"));
+        assertEquals(expected.length, colors.size(), name + " (" + alphas.size() + " frames)");
+        DECODE.assertFrames(name, expected, colors.toByteArray(), expected.length / alphas.size());
+
+        var ivf = new ByteArrayOutputStream();
+        var header = java.nio.ByteBuffer.allocate(32).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        header.put("DKIF".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putShort((short) 0).putShort((short) 32)
+                .put("VP90".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putShort((short) width)
+                .putShort((short) height).putInt(30).putInt(1).putInt(stream.packets().size()).putInt(0);
+        ivf.writeBytes(header.array());
+        var index = 0;
+        for (var packet : stream.packets()) {
+            var alpha = packet.sideData().alphaFrame().orElseThrow();
+            var frame = java.nio.ByteBuffer.allocate(12).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(alpha.length)
+                    .putLong(index++);
+            ivf.writeBytes(frame.array());
+            ivf.writeBytes(alpha);
+        }
+        var alphaFile = Scratch.directory("media-fixtures/vp9-alpha").resolve(name + ".alpha.ivf");
+        java.nio.file.Files.write(alphaFile, ivf.toByteArray());
+        var alphaFormat = new String(Oracle.run(Oracle.Tool.FFPROBE, java.time.Duration.ofMinutes(1), List.of("-v",
+                "error", "-select_streams", "v:0", "-show_entries", "stream=pix_fmt", "-of", "csv=p=0",
+                alphaFile.toString())), java.nio.charset.StandardCharsets.US_ASCII).strip();
+        // the alpha stream's luma plane is the alpha plane
+        var wide = alphaFormat.endsWith("le");
+        var lumas = Oracle.run(Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(5), List.of("-v", "error", "-c:v",
+                "libvpx-vp9", "-i", alphaFile.toString(), "-vf", "extractplanes=y", "-f", "rawvideo", "-fps_mode",
+                "passthrough", "-"));
+        assertEquals(alphas.size(), index, name + " alpha frames");
+        var planeBytes = width * height * (wide ? 2 : 1);
+        assertEquals((long) planeBytes * alphas.size(), lumas.length, name + " alpha " + alphaFormat);
+        for (var frame = 0; frame < alphas.size(); frame++) {
+            var picture = alphas.get(frame);
+            var theirs = java.util.Arrays.copyOfRange(lumas, frame * planeBytes, (frame + 1) * planeBytes);
+            var ours = wide ? plane16(((Yuv16Picture) picture).alpha(), ((Yuv16Picture) picture).alphaStride(), width,
+                    height) : AlphaClips.alpha(picture);
+            DECODE.assertFrames(name + " alpha frame " + frame, theirs, ours, theirs.length);
+        }
+    }
+
+    private static byte[] plane16(short[] plane, int stride, int width, int height) {
+        var out = new byte[width * height * 2];
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                var v = plane[y * stride + x];
+                out[2 * (y * width + x)] = (byte) v;
+                out[2 * (y * width + x) + 1] = (byte) (v >> 8);
+            }
+        }
+        return out;
+    }
 }

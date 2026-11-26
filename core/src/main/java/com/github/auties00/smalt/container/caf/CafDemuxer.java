@@ -68,7 +68,7 @@ import java.util.Objects;
  * at least one; packets of variable size become one packet each, sized and timed by the {@code pakt} chunk, which
  * also gives the frames of each packet when the {@code desc} chunk does not. Timestamps are in frames of the sampling
  * rate of the {@code desc} chunk, starting at zero; the priming frames of the packet table become
- * {@link AudioTrack#skipSamples()} (except for Opus, whose {@code OpusHead} pre-skip holds them) and its valid frames
+ * {@link AudioTrack#skipSamples()} (for Opus, those its {@code OpusHead} pre-skip does not hold) and its valid frames
  * {@link AudioTrack#duration()}, so the last packet keeps its full duration and a reader drops the remainder frames.
  * A {@code data} chunk of size {@code -1} extends to the end of the file. A seek lands on the requested frame for
  * linear PCM, A-law and mu-law, and otherwise on the packet that holds it, so that the packets read after it are those
@@ -213,7 +213,11 @@ public final class CafDemuxer implements Demuxer {
             var priming = header.priming;
             var config = config(codec, description, header.cookie, priming);
             if (codec == Codec.OPUS) {
-                priming = 0;
+                // the OpusHead pre-skip holds the priming frames up to its 16-bit range; the rest is skipped as for
+                // the other codecs
+                var preSkip = header.cookie != null && CafCookies.isOpusHead(header.cookie)
+                        ? AudioConfigs.opusPreSkip(header.cookie) : Math.min(priming, 0xFFFF);
+                priming = Math.max(0, priming - preSkip);
             }
             var size = source.size();
             var dataEnd = header.dataSize < 0 ? size : size < 0 ? header.dataStart + header.dataSize

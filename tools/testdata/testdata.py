@@ -1,64 +1,43 @@
 #!/usr/bin/env python3
-"""Fetches, checks and maintains the test data Smalt's tests read: conformance vectors, archive members and raw clips.
+"""Checks and publishes the test data Smalt's tests read: conformance vectors, archive members and raw clips.
 
-Four manifests live next to this script:
+The project hosts all of its test data, and the tests read nothing else: nothing here downloads from the
+sources the manifests name, which are kept for provenance and licences only. The data lives in one directory,
+SMALT_TESTDATA (default ~/.smalt/testdata), laid out as
 
-  vectors.tsv   tier, name, size, sha256, url
-                The files Conformance.fetch asks for. They land in the conformance cache, by default
-                ~/.smalt/cache/conformance (overridden by SMALT_CONFORMANCE_CACHE, as in the tests).
-  archives.tsv  tier, name, size, cdsha256, url, members, licence
-                Sets of members of large ZIP archives that Conformance.archive asks for (the Argon AV1
-                streams, the DASH-IF livesim content): each row names an archive by URL and the SHA-256 of its
-                central directory, and selects the members whose path matches the regular expression in
-                members. Only those members are downloaded, by HTTP range requests; each is checked against the
-                size and CRC-32 that the pinned central directory records. They land in
-                <conformance cache>/archives/<archive>-<cdsha256 prefix>/<member path>, the central directory
-                next to that directory as <archive>-<cdsha256 prefix>.cd. size is the members' total size.
-  clips.tsv     tier, name, size, sha256, source_url, source_sha256, start, frames, filter
-                Raw planar 4:2:0 clips the real-time encoder tests and reports read, derived with ffmpeg
-                from Xiph's test sequences. They land in ~/.smalt/cache/clips (SMALT_TEST_CLIPS
-                overrides it; the tests read the smalt.test.clips system property, same default).
-  licences.tsv  url prefix, licence note
-                The licence or terms of use of every source: each URL of vectors.tsv and clips.tsv must start
-                with one of the prefixes (archives.tsv carries its own licence column). None of this data is
-                committed to the repository.
+  vectors/<name>             one file per row of vectors.tsv
+  archives/<set>.idx         the members of a row of archives.tsv, "path<TAB>size<TAB>crc32" lines
+  archives/<id>/<member>     those members; <id> is the archive's file name without .zip, a dash and the first 12
+                             hex digits of the SHA-256 of its source URL
+  clips/<name>               one file per row of clips.tsv
 
-Tiers nest: "smoke" (small enough for the GitHub Actions cache) is part of "full". A test whose data
-is absent skips, so any subset of the manifests is a valid cache.
+and is published as one OCI artifact per area on GHCR, pinned in artifacts.tsv. CI pulls the pinned artifacts
+into SMALT_TESTDATA before the tests run.
+
+Manifests:
+  vectors.tsv    area, name, size, sha256, source
+  archives.tsv   area, name, size, index_sha256, source, members, licence
+  clips.tsv      name, size, sha256, source_url, source_sha256, start, frames, filter
+  licences.tsv   prefix, licence: the terms of every source of vectors.tsv and clips.tsv, by URL prefix
+  artifacts.tsv  area, reference: the published artifact of each area, by digest
 
 Commands:
-  fetch [--tier smoke|full] [--no-clips]   downloads what the tier needs and is missing or corrupt
-        [--clips-only] [--host H]...      only the clips; only (or with --exclude-host, all but) the
-        [--exclude-host H]...             vectors downloaded from host H, so that CI can cache a part of
-                                          a tier in one entry and download the rest
-        [--no-archives] [--set GLOB]...   no archive sets; only the sets whose name matches GLOB
-        [--exclude-set GLOB]...           (with --set, nothing but those sets); not the matching sets
-  verify [--tier ...]                      checks the cached files against the manifests
-  size                                     prints the size of each tier
-  record FILE... [--check]                 merges the vectors that tests requested with
-                                           -Dsmalt.conformance.record=FILE into vectors.tsv (new
-                                           ones join the full tier); --check only fails when the
-                                           manifest misses one, which is how CI catches drift
-  archive NAME URL REGEX --tier T --licence TEXT
-                                           pins an archive set: reads the archive's central directory, writes
-                                           its SHA-256 and the size of the matching members into archives.tsv
-  licences                                 fails when a vector, clip or archive set has no licence note
+  verify [--area A]...          checks the data directory against the manifests
+  size                          prints the size of each area
+  licences                      fails when a vector or clip has no licence note
+  add AREA FILE SOURCE [--name N]
+                                copies a local file into the data directory and lists it in vectors.tsv
+  pack [--area A]... --out DIR  writes the tar shards of each area's artifact into DIR/<area>/
+  push [--area A]... --out DIR  pushes the packed shards with oras and pins the digests in artifacts.tsv
 """
 import argparse
-import collections
-import concurrent.futures
-import fnmatch
 import hashlib
 import os
 import re
 import shutil
-import struct
 import subprocess
 import sys
-import tempfile
-import time
-import urllib.parse
-import urllib.request
+import tarfile
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -66,26 +45,58 @@ VECTORS = os.path.join(HERE, 'vectors.tsv')
 ARCHIVES = os.path.join(HERE, 'archives.tsv')
 CLIPS = os.path.join(HERE, 'clips.tsv')
 LICENCES = os.path.join(HERE, 'licences.tsv')
-TIERS = ['smoke', 'full']
-VECTOR_COLUMNS = ['tier', 'name', 'size', 'sha256', 'url']
-ARCHIVE_COLUMNS = ['tier', 'name', 'size', 'cdsha256', 'url', 'members', 'licence']
-CLIP_COLUMNS = ['tier', 'name', 'size', 'sha256', 'source_url', 'source_sha256', 'start', 'frames', 'filter']
+ARTIFACTS = os.path.join(HERE, 'artifacts.tsv')
+VECTOR_COLUMNS = ['area', 'name', 'size', 'sha256', 'source']
+ARCHIVE_COLUMNS = ['area', 'name', 'size', 'index_sha256', 'source', 'members', 'licence']
+CLIP_COLUMNS = ['name', 'size', 'sha256', 'source_url', 'source_sha256', 'start', 'frames', 'filter']
 LICENCE_COLUMNS = ['prefix', 'licence']
-USER_AGENT = 'smalt-testdata/1 (+https://github.com/Auties00/Smalt)'
-# Pauses between attempts: hosts of conformance vectors answer 5xx for minutes at a time.
-PAUSES = (10, 30, 60, 90, 120, None)
+ARTIFACT_COLUMNS = ['area', 'reference']
+REPOSITORY = 'ghcr.io/auties00/smalt-testdata'
+SHARD = 1 << 30
+LAYER = 'application/vnd.oci.image.layer.v1.tar'
+ARTIFACT_TYPE = 'application/vnd.smalt.testdata.v1'
 
 
-def conformance_dir():
-    configured = os.environ.get('SMALT_CONFORMANCE_CACHE', '').strip()
-    if configured:
-        return configured
-    return os.path.join(os.path.expanduser('~'), '.smalt', 'cache', 'conformance')
+def data_dir():
+    configured = os.environ.get('SMALT_TESTDATA', '').strip()
+    return configured or os.path.join(os.path.expanduser('~'), '.smalt', 'testdata')
 
 
-def clips_dir():
-    configured = os.environ.get('SMALT_TEST_CLIPS', '').strip()
-    return configured or os.path.join(os.path.expanduser('~'), '.smalt', 'cache', 'clips')
+def vector(name):
+    """Returns the hosted copy of a vector of vectors.tsv, for the oracle scripts; exits when it is not there."""
+    path = os.path.join(data_dir(), 'vectors', name)
+    if not os.path.isfile(path):
+        sys.exit(f'{name} is not in {data_dir()}: pull the hosted test data (see tools/testdata/README.md)')
+    return path
+
+
+def member(set_name, path):
+    """Returns the hosted copy of a member of an archive set of archives.tsv, for the oracle scripts: the member
+    named path, or ending in /path; exits when it is not there."""
+    for row in read_tsv(ARCHIVES, ARCHIVE_COLUMNS):
+        if row['name'] != set_name:
+            continue
+        if not os.path.isfile(os.path.join(data_dir(), 'archives', set_name + '.idx')):
+            break
+        for candidate, _, _ in index(row):
+            if candidate == path or candidate.endswith('/' + path):
+                file = os.path.join(data_dir(), 'archives', archive_id(row['source']), *storage(candidate).split('/'))
+                if not os.path.isfile(file):
+                    break
+                return file
+        sys.exit(f'{path} of {set_name} is not in {data_dir()}: pull the hosted test data (see tools/testdata/README.md)')
+    sys.exit(f'{set_name} is not an archive set of archives.tsv, or is not in {data_dir()}')
+
+
+def cache_dir(name):
+    """Returns a directory of the writable cache, created if needed: SMALT_CACHE (default ~/.smalt/cache)/<name>.
+
+    It is the directory Conformance.cache(name) gives the tests, so oracle outputs written here are where the
+    tests look for them."""
+    configured = os.environ.get('SMALT_CACHE', '').strip()
+    path = os.path.join(configured or os.path.join(os.path.expanduser('~'), '.smalt', 'cache'), name)
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def read_tsv(path, columns):
@@ -104,578 +115,254 @@ def read_tsv(path, columns):
     return rows
 
 
-def line_ending(path):
-    """Returns the line ending a manifest uses, so that a rewrite keeps it."""
-    if os.path.exists(path):
-        with open(path, 'rb') as source:
-            if b'\r\n' in source.read(4096):
-                return '\r\n'
-    return '\n'
+def header_of(path):
+    with open(path, encoding='utf-8') as source:
+        return ''.join(line for line in source if line.startswith('#'))
 
 
-def write_rows(path, header, columns, rows):
-    newline = line_ending(path)
-    with open(path, 'w', encoding='utf-8', newline='') as sink:
-        sink.write(header + newline)
-        sink.write('# ' + '\t'.join(columns) + newline)
-        for row in rows:
-            sink.write('\t'.join(str(row[column]) for column in columns) + newline)
-
-
-def write_vectors(rows):
-    rows = sorted(rows, key=lambda row: (TIERS.index(row['tier']), row['name']))
-    write_rows(VECTORS, '# Conformance vectors requested through Conformance.fetch; see testdata.py. Columns:',
-               VECTOR_COLUMNS, rows)
-
-
-def write_archives(rows):
-    rows = sorted(rows, key=lambda row: (TIERS.index(row['tier']), row['name']))
-    write_rows(ARCHIVES, '# Archive member sets requested through Conformance.archive; see testdata.py. Columns:',
-               ARCHIVE_COLUMNS, rows)
-
-
-def in_tier(row, tier):
-    return TIERS.index(row['tier']) <= TIERS.index(tier)
+def write_tsv(path, columns, rows, key):
+    header = header_of(path)
+    with open(path, 'w', encoding='utf-8', newline='\n') as sink:
+        sink.write(header)
+        for row in sorted(rows, key=key):
+            sink.write('\t'.join(str(row[column]) for column in columns) + '\n')
 
 
 def sha256(path):
     digest = hashlib.sha256()
     with open(path, 'rb') as source:
-        for block in iter(lambda: source.read(1 << 20), b''):
+        for block in iter(lambda: source.read(1 << 22), b''):
             digest.update(block)
     return digest.hexdigest()
 
 
-def valid(path, expected):
-    return os.path.isfile(path) and sha256(path) == expected
-
-
-def retrying(action):
-    """Runs action, retrying an OSError with the pauses of PAUSES.
-
-    A client error (a dead link, a redirect loop) does not heal with time: only 5xx, 429 and network errors are
-    retried."""
-    for pause in PAUSES:
-        try:
-            return action()
-        except OSError as exception:
-            status = getattr(exception, 'code', None)
-            if pause is None or (isinstance(status, int) and status < 500 and status != 429):
-                raise
-            time.sleep(pause)
-
-
-class ContentMismatch(OSError):
-    """A download whose bytes differ from the pinned ones; retried, since some hosts serve a damaged body
-    with a success status now and then."""
-
-
-def download(url, target, expected, size=None):
-    """Downloads url to target through a temporary file, verifying the SHA-256 and, when given, the size in
-    bytes the manifest lists."""
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    handle, temporary = tempfile.mkstemp(dir=os.path.dirname(target), prefix='download-', suffix='.part')
-    os.close(handle)
-    try:
-        request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
-
-        def copy():
-            with urllib.request.urlopen(request, timeout=120) as response, open(temporary, 'wb') as sink:
-                shutil.copyfileobj(response, sink, 1 << 20)
-                # a connection closed early ends the body without an error: compare with the announced length
-                announced = response.headers.get('Content-Length')
-                if announced is not None and announced.isdigit() and sink.tell() != int(announced):
-                    raise ConnectionError(f'short download of {url}: {sink.tell()} of {announced} bytes')
-                if size is not None and sink.tell() != size:
-                    raise ContentMismatch(f'download of {url} holds {sink.tell()} bytes, the manifest lists {size}')
-            actual = sha256(temporary)
-            if actual != expected:
-                raise ContentMismatch(f'SHA-256 mismatch for {url}: expected {expected}, got {actual}')
-
-        retrying(copy)
-        os.replace(temporary, target)
-    finally:
-        if os.path.exists(temporary):
-            os.remove(temporary)
-
-
-def host(url):
-    return urllib.parse.urlparse(url).netloc.lower()
-
-
-def fetch_vectors(tier, jobs, hosts=(), excluded=()):
-    directory = conformance_dir()
-    wanted = [row for row in read_tsv(VECTORS, VECTOR_COLUMNS) if in_tier(row, tier)
-              and (not hosts or host(row['url']) in hosts) and host(row['url']) not in excluded]
-    missing = [row for row in wanted if not valid(os.path.join(directory, row['name']), row['sha256'])]
-    print(f'vectors: {len(wanted)} in the {tier} tier, {len(missing)} to download into {directory}')
-    failures = []
-
-    def one(row):
-        try:
-            download(row['url'], os.path.join(directory, row['name']), row['sha256'], int(row['size']))
-            return None
-        except Exception as exception:  # reported below; one dead link must not stop the others
-            return f'{row["name"]}: {exception}'
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        for result in pool.map(one, missing):
-            if result:
-                failures.append(result)
-                print('  failed', result, file=sys.stderr)
-    return failures
-
-
-# ZIP archives read by range requests (APPNOTE.TXT 6.3: end of central directory, ZIP64 records, central
-# directory headers, local file headers).
-
-Entry = collections.namedtuple('Entry', 'name method flags crc csize usize offset')
-
-
-def http_range(url, start, end):
-    """Returns bytes [start, end) of url."""
-    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Range': f'bytes={start}-{end - 1}'})
-
-    def read():
-        with urllib.request.urlopen(request, timeout=300) as response:
-            if response.status != 206:
-                raise OSError(f'HTTP {response.status} for a range of {url}')
-            data = response.read()
-            if len(data) != end - start:
-                raise OSError(f'short range read of {url}: {len(data)} of {end - start} bytes')
-            return data
-
-    return retrying(read)
-
-
-def http_size(url):
-    request = urllib.request.Request(url, method='HEAD', headers={'User-Agent': USER_AGENT})
-
-    def head():
-        with urllib.request.urlopen(request, timeout=120) as response:
-            return int(response.headers['Content-Length'])
-
-    return retrying(head)
-
-
-def read_directory(url):
-    """Downloads the central directory of a ZIP archive: returns (bytes from its start to the end of the file,
-    offset of its start)."""
-    size = http_size(url)
-    tail_start = max(0, size - (65535 + 22 + 20 + 56))
-    tail = http_range(url, tail_start, size)
-    eocd = tail.rfind(b'PK\x05\x06')
-    if eocd < 0:
-        raise ValueError(f'{url} is not a ZIP archive')
-    entries, cd_size, cd_offset = struct.unpack_from('<10xHII', tail, eocd)
-    if cd_offset == 0xFFFFFFFF or entries == 0xFFFF or cd_size == 0xFFFFFFFF:
-        locator = eocd - 20
-        if locator < 0 or tail[locator:locator + 4] != b'PK\x06\x07':
-            raise ValueError(f'{url}: missing ZIP64 end of central directory locator')
-        (record,) = struct.unpack_from('<Q', tail, locator + 8)
-        if record >= tail_start:
-            header = tail[record - tail_start:record - tail_start + 56]
-        else:
-            header = http_range(url, record, record + 56)
-        if header[:4] != b'PK\x06\x06':
-            raise ValueError(f'{url}: corrupt ZIP64 end of central directory record')
-        (cd_offset,) = struct.unpack_from('<Q', header, 48)
-    if cd_offset >= tail_start:
-        return tail[cd_offset - tail_start:], cd_offset
-    return http_range(url, cd_offset, tail_start) + tail, cd_offset
-
-
-def parse_directory(directory):
-    """Returns the entries of a central directory (the bytes read_directory returns)."""
-    entries = []
-    position = 0
-    while directory[position:position + 4] == b'PK\x01\x02':
-        (flags, method, crc, csize, usize, name_length, extra_length, comment_length,
-         offset) = struct.unpack_from('<8xHH4xIIIHHH8xI', directory, position)
-        name = directory[position + 46:position + 46 + name_length].decode('utf-8' if flags & 0x800 else 'cp437')
-        extra = directory[position + 46 + name_length:position + 46 + name_length + extra_length]
-        cursor = 0
-        while cursor + 4 <= len(extra):
-            tag, length = struct.unpack_from('<HH', extra, cursor)
-            if tag == 1:
-                values = extra[cursor + 4:cursor + 4 + length]
-                index = 0
-                if usize == 0xFFFFFFFF:
-                    (usize,) = struct.unpack_from('<Q', values, index)
-                    index += 8
-                if csize == 0xFFFFFFFF:
-                    (csize,) = struct.unpack_from('<Q', values, index)
-                    index += 8
-                if offset == 0xFFFFFFFF:
-                    (offset,) = struct.unpack_from('<Q', values, index)
-            cursor += 4 + length
-        entries.append(Entry(name, method, flags, crc, csize, usize, offset))
-        position += 46 + name_length + extra_length + comment_length
-    return entries
-
-
-def archive_id(row):
-    base = os.path.basename(urllib.parse.urlparse(row['url']).path)
-    return re.sub(r'\.zip$', '', base, flags=re.IGNORECASE) + '-' + row['cdsha256'][:16]
-
-
-def archive_directory(row):
-    """Returns the verified central directory of an archive set, from the cache or downloaded into it, and the
-    offset of the directory in the archive."""
-    cache = os.path.join(conformance_dir(), 'archives')
-    path = os.path.join(cache, archive_id(row) + '.cd')
-    if os.path.isfile(path):
-        with open(path, 'rb') as source:
-            data = source.read()
-        if hashlib.sha256(data).hexdigest() == row['cdsha256']:
-            return data, directory_offset(data)
-    data, offset = read_directory(row['url'])
-    actual = hashlib.sha256(data).hexdigest()
-    if actual != row['cdsha256']:
-        raise ValueError(f'central directory SHA-256 mismatch for {row["url"]}: expected {row["cdsha256"]}, '
-                         f'got {actual}')
-    os.makedirs(cache, exist_ok=True)
-    with open(path + '.part', 'wb') as sink:
-        sink.write(data)
-    os.replace(path + '.part', path)
-    return data, offset
-
-
-def directory_offset(data):
-    """Returns the offset in the archive of a central directory, read from the end of central directory record
-    (or its ZIP64 counterpart) that follows the directory headers in data."""
-    position = 0
-    while data[position:position + 4] == b'PK':
-        name_length, extra_length, comment_length = struct.unpack_from('<HHH', data, position + 28)
-        position += 46 + name_length + extra_length + comment_length
-    if data[position:position + 4] == b'PK':
-        return struct.unpack_from('<Q', data, position + 48)[0]
-    if data[position:position + 4] == b'PK':
-        return struct.unpack_from('<I', data, position + 16)[0]
-    raise ValueError('no end of central directory record after the directory')
-
-
-def selected(row, entries):
-    pattern = re.compile(row['members'])
-    return [entry for entry in entries if not entry.name.endswith('/') and pattern.search(entry.name)]
-
-
-def member_path(row, name):
-    return os.path.join(conformance_dir(), 'archives', archive_id(row), *name.split('/'))
-
-
-def member_valid(path, entry):
-    if not os.path.isfile(path) or os.path.getsize(path) != entry.usize:
-        return False
-    crc = 0
+def crc32(path):
+    value = 0
     with open(path, 'rb') as source:
-        for block in iter(lambda: source.read(1 << 20), b''):
-            crc = zlib.crc32(block, crc)
-    return crc == entry.crc
+        for block in iter(lambda: source.read(1 << 22), b''):
+            value = zlib.crc32(block, value)
+    return value
 
 
-def extract(entry, data):
-    """Returns the content of a member from the bytes that start at its local file header."""
-    if data[:4] != b'PK\x03\x04':
-        raise ValueError(f'{entry.name}: no local file header')
-    name_length, extra_length = struct.unpack_from('<HH', data, 26)
-    start = 30 + name_length + extra_length
-    payload = data[start:start + entry.csize]
-    if entry.flags & 1:
-        raise ValueError(f'{entry.name}: encrypted member')
-    if entry.method == 0:
-        content = payload
-    elif entry.method == 8:
-        content = zlib.decompress(payload, -15)
-    else:
-        raise ValueError(f'{entry.name}: compression method {entry.method}')
-    if len(content) != entry.usize or zlib.crc32(content) != entry.crc:
-        raise ValueError(f'{entry.name}: size or CRC-32 differs from the central directory')
-    return content
+def archive_id(source):
+    path = re.sub(r'[?#].*$', '', source)
+    base = re.sub(r'\.zip$', '', path[path.rfind('/') + 1:], flags=re.IGNORECASE)
+    base = re.sub(r'[^A-Za-z0-9._()+-]', '_', base)
+    return base + '-' + hashlib.sha256(source.encode('utf-8')).hexdigest()[:12]
 
 
-def fetch_archive(row, jobs):
-    """Downloads the missing members of an archive set; returns the failures."""
-    try:
-        directory, cd_offset = archive_directory(row)
-    except Exception as exception:
-        return [f'{row["name"]}: {exception}']
-    entries = parse_directory(directory)
-    ends = {}
-    ordered = sorted(entries, key=lambda entry: entry.offset)
-    for index, entry in enumerate(ordered):
-        ends[entry.name] = ordered[index + 1].offset if index + 1 < len(ordered) else cd_offset
-    wanted = selected(row, entries)
-    missing = sorted((entry for entry in wanted if not member_valid(member_path(row, entry.name), entry)),
-                     key=lambda entry: entry.offset)
-    print(f'archive set {row["name"]}: {len(wanted)} members, {len(missing)} to download')
-    # Neighboring members are read in one range request.
-    groups = []
-    for entry in missing:
-        if groups and entry.offset - ends[groups[-1][-1].name] < (1 << 20) \
-                and ends[entry.name] - groups[-1][0].offset < (32 << 20):
-            groups[-1].append(entry)
-        else:
-            groups.append([entry])
-
-    def one(group):
-        try:
-            start = group[0].offset
-            data = http_range(row['url'], start, ends[group[-1].name])
-            for entry in group:
-                content = extract(entry, data[entry.offset - start:ends[entry.name] - start])
-                target = member_path(row, entry.name)
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                with open(target + '.part', 'wb') as sink:
-                    sink.write(content)
-                os.replace(target + '.part', target)
-            return None
-        except Exception as exception:
-            return f'{row["name"]}: {group[0].name} and {len(group) - 1} more: {exception}'
-
-    failures = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(jobs, 8)) as pool:
-        for result in pool.map(one, groups):
-            if result:
-                failures.append(result)
-                print('  failed', result, file=sys.stderr)
-    return failures
+def storage(member):
+    return '/'.join(segment if segment not in ('', '.', '..') else '_' for segment in member.split('/'))
 
 
-def archive_rows(tier, sets=(), excluded=()):
-    return [row for row in read_tsv(ARCHIVES, ARCHIVE_COLUMNS) if in_tier(row, tier)
-            and (not sets or any(fnmatch.fnmatch(row['name'], glob) for glob in sets))
-            and not any(fnmatch.fnmatch(row['name'], glob) for glob in excluded)]
+def index(row):
+    """Returns the (member, size, crc32) entries of an archive set's index."""
+    path = os.path.join(data_dir(), 'archives', row['name'] + '.idx')
+    with open(path, encoding='utf-8') as source:
+        return [(fields[0], int(fields[1]), int(fields[2], 16))
+                for fields in (line.rstrip('\n').split('\t') for line in source if line.strip())]
 
 
-def fetch_clips(tier, strict=False):
-    directory = clips_dir()
-    wanted = [row for row in read_tsv(CLIPS, CLIP_COLUMNS) if in_tier(row, tier)]
-    missing = [row for row in wanted if not os.path.isfile(os.path.join(directory, row['name']))]
-    print(f'clips: {len(wanted)} in the {tier} tier, {len(missing)} to derive into {directory}')
-    if not missing:
-        return []
-    if shutil.which('ffmpeg') is None:
-        return ['clips need ffmpeg on PATH']
-    failures = []
-    sources = {}
-    with tempfile.TemporaryDirectory(prefix='smalt-clips-') as work:
-        for row in missing:
-            try:
-                source = sources.get(row['source_url'])
-                if source is None:
-                    name = row['source_url'].rsplit('/', 1)[-1]
-                    cached = os.path.join(conformance_dir(), name)
-                    source = cached if valid(cached, row['source_sha256']) else os.path.join(work, name)
-                    if source != cached:
-                        print('  downloading', row['source_url'])
-                        download(row['source_url'], source, row['source_sha256'])
-                    sources[row['source_url']] = source
-                derive(source, row, directory, strict)
-            except Exception as exception:
-                failures.append(f'{row["name"]}: {exception}')
-                print('  failed', failures[-1], file=sys.stderr)
-    return failures
+def area_files(area):
+    """Returns the data-directory paths (relative, with forward slashes) of an area, sorted."""
+    files = [f'vectors/{row["name"]}' for row in read_tsv(VECTORS, VECTOR_COLUMNS) if row['area'] == area]
+    for row in read_tsv(ARCHIVES, ARCHIVE_COLUMNS):
+        if row['area'] == area:
+            files.append(f'archives/{row["name"]}.idx')
+            files += [f'archives/{archive_id(row["source"])}/{storage(member)}' for member, _, _ in index(row)]
+    if area == 'clips':
+        files = [f'clips/{row["name"]}' for row in read_tsv(CLIPS, CLIP_COLUMNS)]
+    return sorted(set(files))
 
 
-def derive(source, row, directory, strict=False):
-    """Writes a clip: frames [start, start + frames) of the source, through the filter, as raw yuv420p.
-
-    A clip whose SHA-256 differs from its pin is kept with a warning, or, when strict, deleted and reported as a
-    failure: the encoder golden tests pin the bitstreams of the pinned clips, and swscale's scaled output differs
-    between ffmpeg versions and between its x86 and arm64 kernels (CI derives the clips on Linux x64 once and shares
-    them with every runner through a cross-OS cache entry)."""
-    os.makedirs(directory, exist_ok=True)
-    target = os.path.join(directory, row['name'])
-    temporary = target + '.part'
-    chain = [f'trim=start_frame={row["start"]}']
-    if row['filter'] != '-':
-        chain.append(row['filter'])
-    # Passthrough timing: a constant-rate output would duplicate or drop frames around the trim.
-    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', source, '-vf', ','.join(chain), '-fps_mode', 'passthrough',
-                    '-frames:v', row['frames'], '-pix_fmt', 'yuv420p', '-f', 'rawvideo', temporary], check=True)
-    actual = sha256(temporary)
-    if actual != row['sha256'] and strict:
-        os.remove(temporary)
-        raise ValueError(f'the derivation has SHA-256 {actual}, not the pinned {row["sha256"]} (ffmpeg version or '
-                         f'architecture?)')
-    os.replace(temporary, target)
-    if actual != row['sha256']:
-        print(f'  warning: {row["name"]} differs from the reference derivation (ffmpeg version?): {actual}',
-              file=sys.stderr)
-
-
-def command_fetch(arguments):
-    failures = []
-    sets_only = bool(arguments.set) and not arguments.host
-    if not arguments.clips_only and not sets_only:
-        failures += fetch_vectors(arguments.tier, arguments.jobs, {h.lower() for h in arguments.host},
-                                  {h.lower() for h in arguments.exclude_host})
-    if not arguments.clips_only and not arguments.no_archives:
-        # a set named with --set is fetched whatever its tier
-        tier = 'full' if arguments.set else arguments.tier
-        for row in archive_rows(tier, arguments.set, arguments.exclude_set):
-            failures += fetch_archive(row, arguments.jobs)
-    if not arguments.no_clips and not sets_only:
-        failures += fetch_clips(arguments.tier, arguments.strict)
-    if failures:
-        print(f'{len(failures)} item(s) could not be fetched; the tests that need them will skip', file=sys.stderr)
-        if arguments.strict:
-            sys.exit(1)
+def areas():
+    found = {row['area'] for row in read_tsv(VECTORS, VECTOR_COLUMNS)}
+    found |= {row['area'] for row in read_tsv(ARCHIVES, ARCHIVE_COLUMNS)}
+    return sorted(found) + ['clips']
 
 
 def command_verify(arguments):
-    directory = conformance_dir()
-    bad = 0
+    root = data_dir()
+    wanted = set(arguments.area)
+    bad = checked = 0
+
+    def problem(message):
+        nonlocal bad
+        bad += 1
+        print(message)
+
     for row in read_tsv(VECTORS, VECTOR_COLUMNS):
-        if not in_tier(row, arguments.tier):
+        if wanted and row['area'] not in wanted:
             continue
-        path = os.path.join(directory, row['name'])
+        path = os.path.join(root, 'vectors', row['name'])
+        checked += 1
         if not os.path.isfile(path):
-            print('missing', row['name'])
-            bad += 1
-        elif sha256(path) != row['sha256']:
-            print('corrupt', row['name'])
-            bad += 1
-    for row in archive_rows('full' if arguments.set else arguments.tier, arguments.set, arguments.exclude_set):
-        path = os.path.join(directory, 'archives', archive_id(row) + '.cd')
+            problem(f'missing vectors/{row["name"]}')
+        elif os.path.getsize(path) != int(row['size']) or sha256(path) != row['sha256']:
+            problem(f'corrupt vectors/{row["name"]}')
+    for row in read_tsv(ARCHIVES, ARCHIVE_COLUMNS):
+        if wanted and row['area'] not in wanted:
+            continue
+        path = os.path.join(root, 'archives', row['name'] + '.idx')
         if not os.path.isfile(path):
-            print('missing the central directory of', row['name'])
-            bad += 1
+            problem(f'missing archives/{row["name"]}.idx')
             continue
-        with open(path, 'rb') as source:
-            data = source.read()
-        if hashlib.sha256(data).hexdigest() != row['cdsha256']:
-            print('corrupt central directory of', row['name'])
-            bad += 1
+        if sha256(path) != row['index_sha256']:
+            problem(f'corrupt archives/{row["name"]}.idx')
             continue
-        for entry in selected(row, parse_directory(data)):
-            if not member_valid(member_path(row, entry.name), entry):
-                print('missing or corrupt', row['name'], entry.name)
-                bad += 1
-    print(f'{bad} problem(s) in {directory}')
+        for member, size, crc in index(row):
+            checked += 1
+            file = os.path.join(root, 'archives', archive_id(row['source']), *storage(member).split('/'))
+            if not os.path.isfile(file):
+                problem(f'missing member {member} of {row["name"]}')
+            elif os.path.getsize(file) != size or crc32(file) != crc:
+                problem(f'corrupt member {member} of {row["name"]}')
+    if not wanted or 'clips' in wanted:
+        for row in read_tsv(CLIPS, CLIP_COLUMNS):
+            path = os.path.join(root, 'clips', row['name'])
+            checked += 1
+            if not os.path.isfile(path):
+                problem(f'missing clips/{row["name"]}')
+            elif sha256(path) != row['sha256']:
+                problem(f'corrupt clips/{row["name"]}')
+    print(f'{checked} files checked, {bad} problem(s) in {root}')
     sys.exit(1 if bad else 0)
 
 
 def command_size(_):
     vectors = read_tsv(VECTORS, VECTOR_COLUMNS)
     archives = read_tsv(ARCHIVES, ARCHIVE_COLUMNS)
-    clips = read_tsv(CLIPS, CLIP_COLUMNS)
-    for tier in TIERS:
-        v = [row for row in vectors if in_tier(row, tier)]
-        a = [row for row in archives if in_tier(row, tier)]
-        c = [row for row in clips if in_tier(row, tier)]
-        size = sum(int(row['size']) for row in v)
-        archive_size = sum(int(row['size']) for row in a)
-        clip_size = sum(int(row['size']) for row in c)
-        print(f'{tier}: {len(v)} vectors, {size / 1e6:.1f} MB; {len(a)} archive sets, {archive_size / 1e6:.1f} MB; '
-              f'{len(c)} clips, {clip_size / 1e6:.1f} MB')
-
-
-def command_record(arguments):
-    rows = {row['name']: row for row in read_tsv(VECTORS, VECTOR_COLUMNS)}
-    requested = {}
-    for path in arguments.files:
-        with open(path, encoding='utf-8') as source:
-            for line in source:
-                fields = line.rstrip('\r\n').split('\t')
-                if len(fields) == 3:
-                    requested[fields[0]] = fields
-    added, changed = [], []
-    directory = conformance_dir()
-    for name, (_, url, digest) in sorted(requested.items()):
-        row = rows.get(name)
-        if row is None:
-            path = os.path.join(directory, name)
-            size = os.path.getsize(path) if os.path.isfile(path) else 0
-            rows[name] = {'tier': 'full', 'name': name, 'size': size, 'sha256': digest, 'url': url}
-            added.append(name)
-        elif row['url'] != url or row['sha256'] != digest:
-            row['url'], row['sha256'] = url, digest
-            changed.append(name)
-    unused = sorted(set(rows) - set(requested))
-    print(f'{len(requested)} requested: {len(added)} new, {len(changed)} changed, {len(unused)} in the manifest '
-          f'but not requested by this run')
-    for name in added:
-        print('  new', name)
-    for name in changed:
-        print('  changed', name)
-    if arguments.check:
-        sys.exit(1 if added or changed else 0)
-    write_vectors(list(rows.values()))
-
-
-def command_archive(arguments):
-    re.compile(arguments.members)
-    if '\t' in arguments.licence or '\t' in arguments.members:
-        sys.exit('the members and the licence may not hold tabs')
-    pinned = [other for other in read_tsv(ARCHIVES, ARCHIVE_COLUMNS) if other['url'] == arguments.url]
-    directory = archive_directory(pinned[0])[0] if pinned else read_directory(arguments.url)[0]
-    row = {'tier': arguments.tier, 'name': arguments.name, 'cdsha256': hashlib.sha256(directory).hexdigest(),
-           'url': arguments.url, 'members': arguments.members, 'licence': arguments.licence}
-    members = selected(row, parse_directory(directory))
-    if not members:
-        sys.exit(f'no member of {arguments.url} matches {arguments.members}')
-    row['size'] = sum(entry.usize for entry in members)
-    rows = [other for other in read_tsv(ARCHIVES, ARCHIVE_COLUMNS) if other['name'] != arguments.name]
-    write_archives(rows + [row])
-    print(f'{arguments.name}: {len(members)} members, {row["size"] / 1e6:.1f} MB, central directory '
-          f'{row["cdsha256"]}')
+    total = 0
+    for area in areas():
+        if area == 'clips':
+            size = sum(int(row['size']) for row in read_tsv(CLIPS, CLIP_COLUMNS))
+            print(f'clips: {len(read_tsv(CLIPS, CLIP_COLUMNS))} clips, {size / 1e9:.2f} GB')
+        else:
+            v = [row for row in vectors if row['area'] == area]
+            a = [row for row in archives if row['area'] == area]
+            size = sum(int(row['size']) for row in v) + sum(int(row['size']) for row in a)
+            print(f'{area}: {len(v)} vectors, {len(a)} archive sets, {size / 1e9:.2f} GB')
+        total += size
+    print(f'total: {total / 1e9:.2f} GB')
 
 
 def command_licences(_):
     prefixes = [row['prefix'] for row in read_tsv(LICENCES, LICENCE_COLUMNS)]
-    urls = [(row['name'], row['url']) for row in read_tsv(VECTORS, VECTOR_COLUMNS)]
-    urls += [(row['name'], row['source_url']) for row in read_tsv(CLIPS, CLIP_COLUMNS)]
-    missing = [(name, url) for name, url in urls if not any(url.startswith(prefix) for prefix in prefixes)]
+    sources = [(row['name'], row['source']) for row in read_tsv(VECTORS, VECTOR_COLUMNS)]
+    sources += [(row['name'], row['source_url']) for row in read_tsv(CLIPS, CLIP_COLUMNS)]
+    missing = [(name, url) for name, url in sources if not any(url.startswith(prefix) for prefix in prefixes)]
     unnoted = [row['name'] for row in read_tsv(ARCHIVES, ARCHIVE_COLUMNS) if not row['licence'].strip()]
     for name, url in missing[:50]:
         print(f'no licence note for {name}: {url}')
     for name in unnoted:
         print(f'no licence note for the archive set {name}')
-    used = {prefix for prefix in prefixes if any(url.startswith(prefix) for _, url in urls)}
+    used = {prefix for prefix in prefixes if any(url.startswith(prefix) for _, url in sources)}
     for prefix in prefixes:
         if prefix not in used:
             print(f'unused licence prefix: {prefix}')
-    print(f'{len(urls)} sources: {len(missing)} without a licence note, {len(unnoted)} archive sets without one')
+    print(f'{len(sources)} sources: {len(missing)} without a licence note, {len(unnoted)} archive sets without one')
     sys.exit(1 if missing or unnoted else 0)
+
+
+def command_add(arguments):
+    name = arguments.name or os.path.basename(arguments.file)
+    if '\t' in name or '/' in name or '\\' in name:
+        sys.exit('a vector name may not hold tabs or path separators')
+    rows = [row for row in read_tsv(VECTORS, VECTOR_COLUMNS) if row['name'] != name]
+    target = os.path.join(data_dir(), 'vectors', name)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    shutil.copyfile(arguments.file, target)
+    rows.append({'area': arguments.area, 'name': name, 'size': os.path.getsize(target), 'sha256': sha256(target),
+                 'source': arguments.source})
+    write_tsv(VECTORS, VECTOR_COLUMNS, rows, lambda row: (row['area'], row['name']))
+    print(f'{name}: listed in the {arguments.area} area; push the area to publish it')
+
+
+def shards(area):
+    """Splits an area's files into shards of about SHARD bytes, in path order."""
+    root = data_dir()
+    groups, current, size = [], [], 0
+    for path in area_files(area):
+        length = os.path.getsize(os.path.join(root, *path.split('/')))
+        if current and size + length > SHARD:
+            groups.append(current)
+            current, size = [], 0
+        current.append(path)
+        size += length
+    if current:
+        groups.append(current)
+    return groups
+
+
+def command_pack(arguments):
+    root = data_dir()
+    for area in arguments.area or areas():
+        directory = os.path.join(arguments.out, area)
+        shutil.rmtree(directory, ignore_errors=True)
+        os.makedirs(directory)
+        groups = shards(area)
+        for number, group in enumerate(groups):
+            target = os.path.join(directory, f'{area}-{number:03d}.tar')
+            # reproducible: fixed order, owner, mode and time, so that an unchanged shard keeps its digest
+            with tarfile.open(target, 'w', format=tarfile.PAX_FORMAT) as tar:
+                for path in group:
+                    info = tar.gettarinfo(os.path.join(root, *path.split('/')), arcname=path)
+                    info.uid = info.gid = 0
+                    info.uname = info.gname = ''
+                    info.mode = 0o644
+                    info.mtime = 0
+                    with open(os.path.join(root, *path.split('/')), 'rb') as source:
+                        tar.addfile(info, source)
+        print(f'{area}: {len(groups)} shard(s) in {directory}')
+
+
+def command_push(arguments):
+    if shutil.which('oras') is None:
+        sys.exit('push needs oras on PATH (https://oras.land)')
+    pinned = {row['area']: row for row in read_tsv(ARTIFACTS, ARTIFACT_COLUMNS)}
+    for area in arguments.area or areas():
+        directory = os.path.join(arguments.out, area)
+        files = sorted(f for f in os.listdir(directory) if f.endswith('.tar'))
+        if not files:
+            sys.exit(f'nothing packed for {area} in {directory}')
+        reference = f'{REPOSITORY}:{area}'
+        result = subprocess.run(['oras', 'push', '--artifact-type', ARTIFACT_TYPE, '--format', 'go-template',
+                                 '--template', '{{.digest}}', reference] + [f'{f}:{LAYER}' for f in files],
+                                cwd=directory, check=True, capture_output=True, text=True)
+        digest = result.stdout.strip().splitlines()[-1]
+        pinned[area] = {'area': area, 'reference': f'{REPOSITORY}@{digest}'}
+        print(f'{area}: {pinned[area]["reference"]}')
+    if not os.path.exists(ARTIFACTS):
+        with open(ARTIFACTS, 'w', encoding='utf-8', newline='\n') as sink:
+            sink.write('# The published test data, one OCI artifact per area; see testdata.py. Columns:\n'
+                       '# area\treference\n')
+    write_tsv(ARTIFACTS, ARTIFACT_COLUMNS, list(pinned.values()), lambda row: row['area'])
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
-    fetch = commands.add_parser('fetch')
-    fetch.add_argument('--tier', choices=TIERS, default='smoke')
-    fetch.add_argument('--no-clips', action='store_true')
-    fetch.add_argument('--clips-only', action='store_true')
-    fetch.add_argument('--host', action='append', default=[], help='only the vectors downloaded from this host')
-    fetch.add_argument('--exclude-host', action='append', default=[], help='not the vectors from this host')
-    fetch.add_argument('--no-archives', action='store_true', help='no archive sets')
-    fetch.add_argument('--set', action='append', default=[], help='only the archive sets matching this glob')
-    fetch.add_argument('--exclude-set', action='append', default=[], help='not the archive sets matching this glob')
-    fetch.add_argument('--jobs', type=int, default=4)
-    fetch.add_argument('--strict', action='store_true', help='fail when an item cannot be fetched')
-    fetch.set_defaults(handler=command_fetch)
     verify = commands.add_parser('verify')
-    verify.add_argument('--tier', choices=TIERS, default='full')
-    verify.add_argument('--set', action='append', default=[])
-    verify.add_argument('--exclude-set', action='append', default=[])
+    verify.add_argument('--area', action='append', default=[])
     verify.set_defaults(handler=command_verify)
     size = commands.add_parser('size')
     size.set_defaults(handler=command_size)
-    record = commands.add_parser('record')
-    record.add_argument('files', nargs='+')
-    record.add_argument('--check', action='store_true')
-    record.set_defaults(handler=command_record)
-    archive = commands.add_parser('archive')
-    archive.add_argument('name')
-    archive.add_argument('url')
-    archive.add_argument('members')
-    archive.add_argument('--tier', choices=TIERS, default='full')
-    archive.add_argument('--licence', required=True)
-    archive.set_defaults(handler=command_archive)
     licences = commands.add_parser('licences')
     licences.set_defaults(handler=command_licences)
+    add = commands.add_parser('add')
+    add.add_argument('area')
+    add.add_argument('file')
+    add.add_argument('source')
+    add.add_argument('--name')
+    add.set_defaults(handler=command_add)
+    pack = commands.add_parser('pack')
+    pack.add_argument('--area', action='append', default=[])
+    pack.add_argument('--out', required=True)
+    pack.set_defaults(handler=command_pack)
+    push = commands.add_parser('push')
+    push.add_argument('--area', action='append', default=[])
+    push.add_argument('--out', required=True)
+    push.set_defaults(handler=command_push)
     arguments = parser.parse_args()
     arguments.handler(arguments)
 

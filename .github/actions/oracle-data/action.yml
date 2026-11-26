@@ -1,6 +1,7 @@
 # Restores the oracle data files that .github/workflows/oracle-tools.yml writes (the DNG files of Adobe DNG Converter,
 # the libxaac and FDK AAC decodes of the AAC-ELD streams, the MPEG Surround reference decodes, the OpenSlide
-# renderings of the Aperio slides) into the conformance cache, where the raw, mpeg and image tests read them by default. The entries are saved with paths
+# renderings of the Aperio slides) into the test cache (~/.smalt/cache/<name>, Conformance.cache), where the raw, mpeg and
+# image tests read them by default. The entries are saved with paths
 # relative to the workspace, on Windows or Linux, so every operating system restores them alike. An entry that is
 # missing (its generation failed) leaves its tests to skip, which the skip baseline then reports.
 name: Oracle data
@@ -75,14 +76,14 @@ runs:
         merge-multiple: true
         path: .oracle-data
 
-    - name: Move them into the conformance cache
+    - name: Move them into the test cache
       shell: bash
       run: |
-        mkdir -p ~/.smalt/cache/conformance
+        mkdir -p ~/.smalt/cache
         for directory in .oracle-data/*/; do
           [ -d "$directory" ] || continue
           name=$(basename "$directory")
-          rm -rf ~/.smalt/cache/conformance/"$name"
-          mv "$directory" ~/.smalt/cache/conformance/"$name"
-          echo "$name: $(ls ~/.smalt/cache/conformance/"$name" | wc -l) files"
+          rm -rf ~/.smalt/cache/"$name"
+          mv "$directory" ~/.smalt/cache/"$name"
+          echo "$name: $(ls ~/.smalt/cache/"$name" | wc -l) files"
         done

@@ -98,7 +98,7 @@ class DngConvertTest {
 
         Path path() {
             var path = Path.of(System.getProperty("smalt.test.rawOracle",
-                    Conformance.directory().resolve("raw-oracle").toString())).resolve(file);
+                    Conformance.cache("raw-oracle").toString())).resolve(file);
             Skip.unless(Files.isRegularFile(path), "data:raw-oracle", "no oracle file " + path
                     + "; run tools/testdata/raw-oracle.py");
             return path;
@@ -109,7 +109,7 @@ class DngConvertTest {
     @EnumSource(Sample.class)
     @DisplayName("a converted raw file keeps its photosites, colors, metadata and rendering")
     void convert(Sample sample) {
-        check(sample.name(), read(sample.sample.fetch()));
+        check(sample.name(), read(sample.sample.path()));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -123,7 +123,7 @@ class DngConvertTest {
     @EnumSource(value = RawSamples.class, names = {"CRW_G1", "NEF_E5700"})
     @DisplayName("a four-color file without color matrices is converted with its fitted matrix as ColorMatrix1 under D65")
     void fourColorMatrix(RawSamples sample) {
-        var source = read(sample.fetch());
+        var source = read(sample.path());
         var dng = DngEncoder.convert(MediaSource.of(source));
         var info = RawDecoder.info(MediaSource.of(dng));
         assertTrue(info.isColorCalibrated());
@@ -137,7 +137,7 @@ class DngConvertTest {
     @Test
     @DisplayName("the decoding options' white balance, color matrix and crop choice shape the file")
     void decodingOptions() {
-        var source = read(RawSamples.DNG_5D3_14BIT_SMALL.fetch());
+        var source = read(RawSamples.DNG_5D3_14BIT_SMALL.path());
         // an arbitrary well-conditioned XYZ to camera matrix, which replaces the file's description
         double[] matrix = {0.70, -0.10, -0.08, -0.40, 1.20, 0.22, -0.10, 0.20, 0.60};
         var choices = List.of(
@@ -162,8 +162,8 @@ class DngConvertTest {
     void malformed() {
         assertThrows(MediaException.class, () -> DngEncoder.convert(MediaSource.of(new byte[0])));
         assertThrows(MediaException.class, () -> DngEncoder.convert(MediaSource.of(new byte[4096])));
-        var dng = DngEncoder.convert(MediaSource.of(read(RawSamples.DNG_5D3_14BIT_SMALL.fetch())));
-        for (var source : List.of(read(RawSamples.RW2_S5M2.fetch()), dng)) {
+        var dng = DngEncoder.convert(MediaSource.of(read(RawSamples.DNG_5D3_14BIT_SMALL.path())));
+        for (var source : List.of(read(RawSamples.RW2_S5M2.path()), dng)) {
             for (var length : new int[]{8, 64, 300, source.length / 3, source.length / 2, source.length - 1}) {
                 var truncated = Arrays.copyOf(source, length);
                 try {

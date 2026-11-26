@@ -47,7 +47,7 @@ class AacErrorResilientConformanceTest {
 
     /** Decodes a stream, clipping every sample to the range of the 24-bit reference waveforms. */
     static float[][] decode(String stream) {
-        var planes = AacTestSupport.decodeAll(AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(stream
+        var planes = AacTestSupport.decodeAll(AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file(stream
                 + ".mp4")))).planes();
         clip(planes);
         return planes;
@@ -62,7 +62,7 @@ class AacErrorResilientConformanceTest {
     }
 
     static float[][] reference(String name) {
-        return AacTestSupport.readWav(Fixtures.read(ErrorResilientVectors.fetch(name + ".wav")));
+        return AacTestSupport.readWav(Fixtures.read(ErrorResilientVectors.file(name + ".wav")));
     }
 
     /** Returns the reference name of a stream: the stream name without its {@code _ep0} suffix. */
@@ -144,7 +144,7 @@ class AacErrorResilientConformanceTest {
         @DisplayName("decodes the core of a stream that signals SBR around it, at the core rate")
         void sbrSignaledAroundCore() {
             // er_al10_48's configuration (898900) wrapped in object type 5 with a 96 kHz extension
-            var stream = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch("er_al10_48_ep0.mp4")));
+            var stream = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file("er_al10_48_ep0.mp4")));
             var wrapped = new AacTestSupport.Stream(HexFormat.of().parseHex("29884480"), stream.frames(),
                     stream.sampleRate(), stream.channels());
             var expected = AacTestSupport.decodeAll(stream).planes();
@@ -215,7 +215,7 @@ class AacErrorResilientConformanceTest {
         @CsvSource({"er_ad1000_48_ep0, 512, 1", "er_ad1111_48_ep0, 480, 1", "er_ad2170_48_ep0, 480, 2"})
         @DisplayName("reports the low delay frame length and layout")
         void format(String stream, int frameLength, int channels) {
-            var parsed = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(stream + ".mp4")));
+            var parsed = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file(stream + ".mp4")));
             try (var decoder = new AacDecoder(parsed.track())) {
                 assertEquals(frameLength, decoder.frameLength());
                 assertEquals(48000, decoder.sampleRate());
@@ -256,7 +256,7 @@ class AacErrorResilientConformanceTest {
         @CsvSource({"er_eld1000np_48_ep0, 512, 1", "er_eld1100np_22_ep0, 480, 1", "er_eld2150np_48_ep0, 480, 2"})
         @DisplayName("reports the low delay frame length, the layout and no spectral band replication")
         void format(String stream, int frameLength, int channels) {
-            var parsed = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(stream + ".mp4")));
+            var parsed = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file(stream + ".mp4")));
             try (var decoder = new AacDecoder(parsed.track())) {
                 assertEquals(frameLength, decoder.frameLength());
                 assertEquals(channels == 1 ? ChannelLayout.MONO : ChannelLayout.STEREO, decoder.layout());
@@ -279,7 +279,7 @@ class AacErrorResilientConformanceTest {
         @DisplayName("agree to single precision rounding on ER AAC LC, 512-sample AAC-LD and AAC-ELD")
         void agrees(String stream) {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var file = ErrorResilientVectors.fetch(stream + ".mp4");
+            var file = ErrorResilientVectors.file(stream + ".mp4");
             var planes = AacTestSupport.decodeAll(AacTestSupport.parseMp4(Fixtures.read(file))).planes();
             var reference = AacTestSupport.deinterleave(Oracle.decodeAudio(file), planes.length);
             for (var channel = 0; channel < planes.length; channel++) {
@@ -309,10 +309,10 @@ class AacErrorResilientConformanceTest {
                 "er_ad2050_48", "er_ad2050np_48", "er_ad2160_48", "er_ad2160np_48", "er_ad2170_48", "er_ad2170np_48"})
         @DisplayName("decode bit for bit like the same stream with epConfig 0")
         void matchesSingleAccessUnits(String stream) {
-            var tracks = AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.fetch(stream + "_ep1.mp4")));
+            var tracks = AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.file(stream + "_ep1.mp4")));
             assertTrue(tracks.size() >= 3, stream + " has " + tracks.size() + " tracks");
             var separate = AacTestSupport.decodeInstances(tracks).planes();
-            var single = AacTestSupport.decodeAll(AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(stream
+            var single = AacTestSupport.decodeAll(AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file(stream
                     + "_ep0.mp4")))).planes();
             assertEquals(single.length, separate.length);
             for (var channel = 0; channel < single.length; channel++) {
@@ -320,10 +320,21 @@ class AacErrorResilientConformanceTest {
             }
         }
 
+        /**
+         * Every ER AAC LC and LTP stream with {@code epConfig} 1 of the 2nd edition of ISO/IEC 14496-26, which adds
+         * them at every sampling rate.
+         */
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacErrorResilientConformanceTest#separateEdition2")
+        @DisplayName("decode bit for bit like the same stream with epConfig 0, at every rate of the 2nd edition")
+        void matchesSingleAccessUnitsEdition2(String stream) {
+            matchesSingleAccessUnits(stream);
+        }
+
         @Test
         @DisplayName("rejects a single access unit, and category instances for a stream that does not separate them")
         void wrongEntryPoint() {
-            var tracks = AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.fetch("er_al21_48_ep1.mp4")));
+            var tracks = AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.file("er_al21_48_ep1.mp4")));
             try (var decoder = new AacDecoder(tracks.getFirst().track())) {
                 assertTrue(decoder.separateCategoryInstances());
                 var packet = new Packet(1, tracks.getFirst().frames().getFirst(), Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP,
@@ -332,7 +343,7 @@ class AacErrorResilientConformanceTest {
                 }));
                 assertEquals("aac er epconfig 1", exception.format());
             }
-            var single = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch("er_al21_48_ep0.mp4")));
+            var single = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file("er_al21_48_ep0.mp4")));
             try (var decoder = new AacDecoder(single.track())) {
                 var packet = new Packet(1, single.frames().getFirst(), Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, true);
                 assertThrows(IllegalStateException.class, () -> decoder.decode(List.of(packet), buffer -> {
@@ -344,7 +355,7 @@ class AacErrorResilientConformanceTest {
         @DisplayName("rejects a block that lacks a category instance as malformed")
         void missingInstance() {
             // er_al21 is a channel pair without RVLC: one common instance and three per channel
-            var tracks = AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.fetch("er_al21_48_ep1.mp4")));
+            var tracks = AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.file("er_al21_48_ep1.mp4")));
             assertEquals(7, tracks.size());
             try (var decoder = new AacDecoder(tracks.getFirst().track())) {
                 for (var kept = 0; kept < tracks.size(); kept++) {
@@ -368,7 +379,7 @@ class AacErrorResilientConformanceTest {
                 "er_eld2150np_32_ep0", "er_eld_sbr_s_1_48", "er_eld_sbr_e_2_44", "er_eld_sbr_twi_1_24"})
         @DisplayName("returns exactly the samples a linear read returns from the target on")
         void exact(String name) {
-            var bytes = Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4"));
+            var bytes = Fixtures.read(ErrorResilientVectors.file(name + ".mp4"));
             float[][] linear;
             int rate;
             try (var reader = AudioReader.open(MediaSource.of(bytes))) {
@@ -457,5 +468,69 @@ class AacErrorResilientConformanceTest {
 
     static Stream<String> otherRatesNoise() {
         return Stream.of(OTHER_RATES_NOISE);
+    }
+
+    /** Returns the stream names of the 2nd edition archive set whose file names match a pattern. */
+    static Stream<String> edition2(String pattern) {
+        return com.github.auties00.smalt.testkit.Conformance.archive("mpeg4audio-ed2-streams").members().stream()
+                .map(member -> member.substring(member.lastIndexOf('/') + 1)).filter(name -> name.matches(pattern))
+                .map(name -> name.substring(0, name.length() - 4)).sorted();
+    }
+
+    static Stream<String> separateEdition2() {
+        return edition2("er_a[lp]\\d+_\\d\\d_ep1\\.mp4").map(name -> name.substring(0, name.length() - 4));
+    }
+
+    static Stream<String> edition2Rates() {
+        return edition2("er_(ad|eld)2101np_\\d\\d_ep0\\.mp4");
+    }
+
+    static Stream<String> edition2Layouts() {
+        return edition2("er_(ad|eld)[3-7][01]00np_\\d\\d_ep0\\.mp4");
+    }
+
+    /**
+     * The AAC-LD and AAC-ELD streams the 2nd edition of ISO/IEC 14496-26 adds: {@code er_ad2101np} and
+     * {@code er_eld2101np} at every sampling rate from 7.35 to 96 kHz, and the multichannel {@code 3100np} to
+     * {@code 7100np} streams, whose references hold one loudspeaker each ({@code f}ront, {@code b}ack, {@code l}FE),
+     * each matching one output channel, under the criterion of {@link AacConformanceTest}.
+     */
+    @Nested
+    @DisplayName("AAC-LD and AAC-ELD streams of the 2nd edition against reference waveforms")
+    class Edition2 {
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacErrorResilientConformanceTest#edition2Rates")
+        @DisplayName("every sampling rate matches the reference")
+        void rates(String stream) {
+            assertStrict(stream);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacErrorResilientConformanceTest#edition2Layouts")
+        @DisplayName("every channel configuration matches the references of its loudspeakers")
+        void layouts(String stream) {
+            var decoded = decode(stream);
+            var prefix = referenceOf(stream) + "_";
+            var references = com.github.auties00.smalt.testkit.Conformance.archive("mpeg4audio-ed2-references")
+                    .members().stream().map(member -> member.substring(member.lastIndexOf('/') + 1))
+                    .filter(name -> name.startsWith(prefix) && name.substring(prefix.length()).matches("[fbls]\\d\\d\\.wav"))
+                    .sorted().toList();
+            assertEquals(decoded.length, references.size(), stream + " references " + references);
+            var used = new java.util.HashSet<Integer>();
+            for (var name : references) {
+                var expected = AacTestSupport.readWav(Fixtures.read(ErrorResilientVectors.file(name)))[0];
+                var best = -1;
+                var bestRms = Double.POSITIVE_INFINITY;
+                for (var c = 0; c < decoded.length; c++) {
+                    var error = AacConformanceTest.error(expected, decoded[c], 1024);
+                    if (error[0] < bestRms) {
+                        bestRms = error[0];
+                        best = c;
+                    }
+                }
+                assertTrue(used.add(best), name + " matches the channel of another reference");
+                AacConformanceTest.assertConformant(expected, decoded[best], 1024, name);
+            }
+        }
     }
 }

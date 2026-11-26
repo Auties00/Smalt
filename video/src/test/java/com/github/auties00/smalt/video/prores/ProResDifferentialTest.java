@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.prores;
 
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.video.intra.IntraTesting;
@@ -106,5 +107,59 @@ class ProResDifferentialTest {
         }
         var expected = IntraTesting.ffmpegDecode(file, alpha ? "yuva444p" : "yuv422p", 0);
         IntraTesting.assertWithin(EIGHT_BIT, "8-bit profile " + profile, expected, ours.toByteArray(), false, 255);
+    }
+
+    /**
+     * ProRes files written by Apple's encoders (Final Cut Pro, Compressor, the Netflix Sol Levante masters): every
+     * flavor from Proxy to 4444 XQ, interlaced 1080 and UHD progressive, with and without alpha, gray content and a
+     * file whose colour tags fall back to the frame header.
+     */
+    static Stream<Arguments> appleFiles() {
+        return Stream.of(
+                Arguments.of("prores-fate-Sequence_1-Apple_ProRes_422.mov", "yuv422p10le", false),
+                Arguments.of("prores-fate-Sequence_1-Apple_ProRes_422_HQ.mov", "yuv422p10le", false),
+                Arguments.of("prores-fate-Sequence_1-Apple_ProRes_422_LT.mov", "yuv422p10le", false),
+                Arguments.of("prores-fate-Sequence_1-Apple_ProRes_422_Proxy.mov", "yuv422p10le", false),
+                Arguments.of("prores-fate-Sequence_1-Apple_ProRes_with_Alpha.mov", "yuva444p12le", true),
+                Arguments.of("prores-fate-color-tags-fallback.mov", "yuv422p10le", false),
+                Arguments.of("prores-fate-gray.mov", "yuv422p10le", false),
+                Arguments.of("prores-fate-prores4444_with_transparency.mov", "yuva444p12le", true),
+                Arguments.of("prores-netflix-sollevante-sdr-422hq-uhd-f2400-12.mov", "yuv422p10le", false),
+                Arguments.of("prores-netflix-sollevante-hdr10-4444xq-uhd-f2400-12.mov", "yuv444p12le", false));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("appleFiles")
+    @DisplayName("decodes Apple-encoded files as ffmpeg does within the IDCT accuracy bounds")
+    void appleEncoded(String name, String pixelFormat, boolean alpha) {
+        var file = Conformance.vector(name);
+        var stream = IntraTesting.demux(file);
+        var decoder = new ProResDecoder(stream.track());
+        var peak = pixelFormat.contains("12") ? 4095 : 1023;
+        var packets = stream.packets();
+        // every frame is intra coded: compare frame by frame so the UHD masters never sit whole in memory
+        for (var index = 0; index < packets.size(); index++) {
+            var ours = new ByteArrayOutputStream();
+            decoder.decode(packets.get(index), frame -> ours.writeBytes(IntraTesting.raw(frame.picture(), alpha)));
+            var actual = ours.toByteArray();
+            // the coded frame, not the clean aperture ffmpeg 7.1 crops to by default
+            var expected = IntraTesting.ffmpegDecodeFrame(file, List.of("-apply_cropping", "none"), pixelFormat, index,
+                    actual.length);
+            var label = name + " frame " + index;
+            var difference = IntraTesting.difference(expected, actual, true, peak);
+            System.out.printf("%s: %s%n", label, difference);
+            TOLERANCE.check(label, difference);
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("the Sol Levante cuts ship with the licence of their masters")
+    void solLevanteLicence() throws java.io.IOException {
+        // the cuts are CC BY 4.0 (Netflix Open Content): the licence text travels with them in the test data
+        var text = java.nio.file.Files.readString(Conformance.vector("netflix-sollevante-license.txt"),
+                java.nio.charset.StandardCharsets.UTF_8);
+        org.junit.jupiter.api.Assertions.assertTrue(text.contains("Attribution 4.0 International"), "CC BY 4.0 text");
+        Conformance.vector("prores-netflix-sollevante-sdr-422hq-uhd-f2400-12.mov");
+        Conformance.vector("prores-netflix-sollevante-hdr10-4444xq-uhd-f2400-12.mov");
     }
 }

@@ -381,6 +381,178 @@ class IcoTest {
         assertTrue(stats.decoded() > 0 && stats.rejected() > 0, stats.toString());
     }
 
+    /**
+     * External icons and cursors (image-rs's {@code ico-imagers-*}, Pillow 13.0.0's {@code ico-pillow-*} and a
+     * Windows icon of metadata-extractor-images): every entry against ffmpeg's decode of it (a cursor read with its
+     * header's type changed to icon, which ffmpeg's demuxer requires; a PNG entry ffmpeg's demuxer refuses read as
+     * the PNG it is), and the transparency against the file: the alpha of a 32-bit entry whose alpha is in use or of
+     * a PNG entry as ffmpeg decodes it, otherwise the entry's AND mask, which ffmpeg ignores. The color must match
+     * wherever the pixel is not fully transparent.
+     */
+    @Nested
+    @DisplayName("external icons and cursors")
+    class External {
+        private static byte[] read(String name) {
+            try {
+                return java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(name));
+            } catch (java.io.IOException exception) {
+                throw new java.io.UncheckedIOException(exception);
+            }
+        }
+
+        private static int u16(byte[] data, int at) {
+            return (data[at] & 0xFF) | (data[at + 1] & 0xFF) << 8;
+        }
+
+        private static int u32(byte[] data, int at) {
+            return u16(data, at) | u16(data, at + 2) << 16;
+        }
+
+        private static byte[] ffmpeg(byte[] file, int stream) {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var path = RasterTesting.write("external-" + stream + ".ico", file);
+            return Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-i", path.toString(),
+                    "-map", "0:" + stream, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"));
+        }
+
+        private static byte[] ffmpegPng(byte[] png) {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var path = RasterTesting.write("external-entry.png", png);
+            return Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-i", path.toString(),
+                    "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"));
+        }
+
+        /** {@return the alpha the AND mask of a bitmap entry gives each pixel, top row first} */
+        private static byte[] maskAlpha(byte[] file, int offset) {
+            var header = u32(file, offset);
+            var width = u32(file, offset + 4);
+            var height = u32(file, offset + 8) / 2;
+            var bits = u16(file, offset + 14);
+            var used = u32(file, offset + 32);
+            var colors = bits <= 8 ? (used != 0 ? used : 1 << bits) : 0;
+            var xorStride = (width * bits + 31) / 32 * 4;
+            var mask = offset + header + 4 * colors + xorStride * height;
+            var maskStride = (width + 31) / 32 * 4;
+            var alpha = new byte[width * height];
+            for (var y = 0; y < height; y++) {
+                var row = mask + (height - 1 - y) * maskStride;
+                for (var x = 0; x < width; x++) {
+                    var transparent = (file[row + x / 8] >> (7 - x % 8) & 1) != 0;
+                    alpha[y * width + x] = transparent ? 0 : (byte) 0xFF;
+                }
+            }
+            return alpha;
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"ico-imagers-bmp-24bpp-mask.ico", "ico-imagers-bmp-32bpp-alpha.ico",
+                "ico-imagers-bmp-32bpp-conflicting-and-mask.ico", "ico-imagers-lenient-bpp.ico",
+                "ico-imagers-multiple_entries_with_different_bit_depth.ico", "ico-imagers-png-32bpp-alpha.ico",
+                "ico-imagers-png_l8.ico", "ico-imagers-png_rgb8.ico", "ico-imagers-smile.ico",
+                "ico-imagers-truncated_mask_32bpp.ico", "ico-imagers-two-entry-order-test.ico",
+                "ico-pillow-black_and_white.ico", "ico-pillow-hopper_256x256.ico", "ico-pillow-hopper_mask.ico",
+                "ico-pillow-python.ico", "ico-pillow-deerstalker.cur", "mei-ico-Icon_1.ico"})
+        @DisplayName("decode every entry as ffmpeg does, with the transparency the file gives it")
+        void entries(String name) {
+            var file = read(name);
+            var cursor = u16(file, 2) == 2;
+            var asIcon = file.clone();
+            asIcon[2] = 1;
+            var count = u16(file, 4);
+            var entries = IcoDecoder.entries(MediaSource.of(file));
+            assertEquals(count, entries.size(), "entry count");
+            for (var index = 0; index < count; index++) {
+                var directory = 6 + 16 * index;
+                var offset = u32(file, directory + 12);
+                if (cursor) {
+                    assertEquals(new IcoEntry.Hotspot(u16(file, directory + 4), u16(file, directory + 6)),
+                            entries.get(index).hotspot().orElseThrow(), "hotspot of entry " + index);
+                }
+                var image = IcoDecoder.decode(MediaSource.of(file), index, ImageDecoderOptions.defaults());
+                var ours = RasterTesting.tight(image.picture());
+                var width = image.picture().width();
+                var png = u32(file, offset) == 0x474E5089;
+                byte[] expected;
+                if (png) {
+                    var size = u32(file, directory + 8);
+                    expected = name.equals("ico-imagers-lenient-bpp.ico")
+                            ? ffmpegPng(java.util.Arrays.copyOfRange(file, offset, offset + size))
+                            : ffmpeg(asIcon, index);
+                } else {
+                    expected = ffmpeg(asIcon, index);
+                    var bits = u16(file, offset + 14);
+                    var alphaInUse = false;
+                    if (bits == 32) {
+                        for (var at = 3; at < expected.length; at += 4) {
+                            alphaInUse |= expected[at] != 0;
+                        }
+                    }
+                    if (!alphaInUse) {
+                        var alpha = maskAlpha(file, offset);
+                        for (var pixel = 0; pixel < alpha.length; pixel++) {
+                            expected[4 * pixel + 3] = alpha[pixel];
+                        }
+                    }
+                }
+                RasterTesting.assertSameVisible(expected, ours, width, name + " entry " + index);
+            }
+        }
+
+        @Test
+        @DisplayName("decodes a BITMAPV5HEADER entry with its embedded ICC profile")
+        void v5WithIcc() {
+            var file = read("ico-imagers-bmp_v5_with_icc.ico");
+            var offset = u32(file, 18);
+            assertEquals(124, u32(file, offset));
+            assertEquals(0x4D424544, u32(file, offset + 56), "PROFILE_EMBEDDED");
+            var profile = java.util.Arrays.copyOfRange(file, offset + u32(file, offset + 112),
+                    offset + u32(file, offset + 112) + u32(file, offset + 116));
+            var image = IcoDecoder.decode(MediaSource.of(file));
+            assertArrayEquals(profile, image.iccProfile().orElseThrow(), "embedded profile");
+            // ffmpeg's ico demuxer refuses the entry; its BMP decoder reads the same DIB as a bitmap file
+            var width = u32(file, offset + 4);
+            var height = u32(file, offset + 8) / 2;
+            var dib = java.util.Arrays.copyOfRange(file, offset, file.length);
+            dib[8] = (byte) height;
+            dib[9] = (byte) (height >>> 8);
+            dib[10] = 0;
+            dib[11] = 0;
+            var bmp = new ByteArrayOutputStream();
+            bmp.writeBytes(new byte[]{'B', 'M'});
+            write(bmp, 14 + dib.length, 4);
+            write(bmp, 0, 4);
+            write(bmp, 14 + 124, 4);
+            bmp.writeBytes(dib);
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var path = RasterTesting.write("v5-entry.bmp", bmp.toByteArray());
+            var expected = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-i",
+                    path.toString(), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"));
+            var alpha = maskAlpha(file, offset);
+            for (var pixel = 0; pixel < alpha.length; pixel++) {
+                expected[4 * pixel + 3] = alpha[pixel];
+            }
+            assertEquals(width, image.picture().width());
+            RasterTesting.assertSameVisible(expected, RasterTesting.tight(image.picture()), width, "v5 entry");
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"ico-pillow-decompression_bomb.ico", "ico-pillow-no_cursors.cur",
+                "ico-pillow-mask_1.cur", "ico-pillow-mask_L.cur"})
+        @DisplayName("reject a bitmap far larger than its entry, an entry its directory cuts short and no entries")
+        void rejects(String name) {
+            // decompression_bomb.ico declares a 65535x32767 bitmap in a 198-byte file; no_cursors.cur has no entry;
+            // the directories of mask_1.cur and mask_L.cur give their bitmaps 8 bytes, less than the bitmap header,
+            // which ffmpeg's demuxer refuses too
+            var file = read(name);
+            assertTimeoutPreemptively(Duration.ofSeconds(30), () -> assertThrows(MediaException.class, () -> {
+                for (var entry : IcoDecoder.entries(MediaSource.of(file))) {
+                    IcoDecoder.decode(MediaSource.of(file), entry.index(), ImageDecoderOptions.defaults());
+                }
+                IcoDecoder.decode(MediaSource.of(file));
+            }));
+        }
+    }
+
     @Nested
     @DisplayName("openPages, entries with options and Builder.hotspot(int, int)")
     class PagesEntriesAndHotspot {

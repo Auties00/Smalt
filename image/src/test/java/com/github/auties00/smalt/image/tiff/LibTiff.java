@@ -20,15 +20,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Runs the libtiff command-line tools (tiffcp, tiff2rgba, raw2tiff, fax2tiff, tiffinfo) that
  * serve as black-box oracles, reads their uncompressed output with an independent minimal strip
- * reader, and fetches the libtiff test image sets. Tests skip when a tool or vector is absent.
+ * reader, and reads the libtiff test image sets. Tests skip when a tool is absent.
  */
 public final class LibTiff {
     static final String PICS_ARCHIVE = "libtiff-pics-3.8.0.tar.gz";
-    static final String PICS_URL = "http://download.osgeo.org/libtiff/pics-3.8.0.tar.gz";
-    static final String PICS_SHA256 = "e0e34732b61e1ce49eff2c7a079994c856d2a5f772f5228c84678272bc6829a9";
     static final String SOURCE_ARCHIVE = "libtiff-4.7.1.tar.gz";
-    static final String SOURCE_URL = "https://download.osgeo.org/libtiff/tiff-4.7.1.tar.gz";
-    static final String SOURCE_SHA256 = "f698d94f3103da8ca7438d84e0344e453fe0ba3b7486e04c5bf7a9a3fabe9b69";
 
     private static final AtomicInteger COUNTER = new AtomicInteger();
     private static volatile Map<String, byte[]> pics;
@@ -138,7 +134,12 @@ public final class LibTiff {
         if (tryRun("tiff2rgba", List.of("-c", "none", in.toString(), out.toString())) == null || !Files.exists(out)) {
             return null;
         }
-        var raw = RawStrips.read(read(out));
+        var converted = read(out);
+        if (converted.length <= 8) {
+            // tiff2rgba exits 0 after failing to read the image, leaving a header without a directory
+            return null;
+        }
+        var raw = RawStrips.read(converted);
         if (raw.samples() == 4) {
             return raw.data();
         }
@@ -166,14 +167,14 @@ public final class LibTiff {
 
     public static Map<String, byte[]> pics() {
         if (pics == null) {
-            pics = RasterTesting.untarGz(Conformance.fetch(PICS_ARCHIVE, PICS_URL, PICS_SHA256));
+            pics = RasterTesting.untarGz(Conformance.vector(PICS_ARCHIVE));
         }
         return pics;
     }
 
     public static Map<String, byte[]> sources() {
         if (sources == null) {
-            sources = RasterTesting.untarGz(Conformance.fetch(SOURCE_ARCHIVE, SOURCE_URL, SOURCE_SHA256));
+            sources = RasterTesting.untarGz(Conformance.vector(SOURCE_ARCHIVE));
         }
         return sources;
     }

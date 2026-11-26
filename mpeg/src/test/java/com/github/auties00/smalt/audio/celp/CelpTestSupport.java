@@ -2,7 +2,7 @@ package com.github.auties00.smalt.audio.celp;
 
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.io.MediaSource;
-import com.github.auties00.smalt.testkit.Conformance;
+import com.github.auties00.smalt.audio.aac.Mpeg4AudioVectors;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -64,7 +64,7 @@ final class CelpTestSupport {
      * @return its tracks and access units
      */
     static Stream stream(String name) {
-        return stream(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + name + ".mp4")));
+        return stream(Fixtures.read(Mpeg4AudioVectors.file(name + ".mp4")));
     }
 
     /**
@@ -152,7 +152,7 @@ final class CelpTestSupport {
      * @return the first channel, full scale 1
      */
     static float[] reference(String name) {
-        return readWav(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + name + ".wav")));
+        return readWav(Fixtures.read(Mpeg4AudioVectors.file(name + ".wav")));
     }
 
     /**

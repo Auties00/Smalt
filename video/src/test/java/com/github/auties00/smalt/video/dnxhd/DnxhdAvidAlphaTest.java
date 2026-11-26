@@ -286,17 +286,11 @@ class DnxhdAvidAlphaTest {
             // alpha in an area sized for 10-bit samples, and an 8-bit DNxHD file whose alpha is a coding unit
             return Stream.of(
                     Arguments.of("ffmpeg-trac-8427-dnxhd_with_alpha_straight.mov",
-                            "https://trac.ffmpeg.org/raw-attachment/ticket/8427/dnxhd_with_alpha_straight.mov",
-                            "10d46a0f07ac9ec5093dc7deac30446b5c42d86685e6bbc475ff05c570fb71a4",
                             DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_SQ), AlphaStorage.AVID_UNCOMPRESSED),
                     Arguments.of("ffmpeg-trac-3707-untitled_dnhd.mov",
-                            "https://samples.ffmpeg.org/ffmpeg-bugs/trac/ticket3707/Untitled_dnhd.mov",
-                            "ff237238ca50fe68bae53876e98d69507b07439b9323bd5271f305e52cbb8092",
                             DnxhdEncoderOptions.of(DnxhdProfile.DNXHD).toBuilder().fieldOrder(FieldOrder.TOP_FIRST)
                                     .bitDepth(10).build(), AlphaStorage.AVID_UNCOMPRESSED),
                     Arguments.of("ffmpeg-trac-3707-dnxhd_alpha.mov",
-                            "https://samples.ffmpeg.org/ffmpeg-bugs/trac/ticket3707/DNxHD%20Alpha.mov",
-                            "e52d761169e71fab3c413fec66543a61cfafa4472c1c7860444ba2058600b2c6",
                             DnxhdEncoderOptions.of(DnxhdProfile.DNXHD).toBuilder().compressionId(1238).build(),
                             AlphaStorage.AVID_CODED));
         }
@@ -304,8 +298,8 @@ class DnxhdAvidAlphaTest {
         @ParameterizedTest(name = "{0}")
         @MethodSource("files")
         @DisplayName("writes the AALP atom and the frame layout of Avid's encoder")
-        void sameLayout(String name, String url, String sha256, DnxhdEncoderOptions options, AlphaStorage storage) {
-            var stream = IntraTesting.demux(Conformance.fetch(name, url, sha256));
+        void sameLayout(String name, DnxhdEncoderOptions options, AlphaStorage storage) {
+            var stream = IntraTesting.demux(Conformance.vector(name));
             var avidConfig = stream.track().codecConfig().orElseThrow();
             var avidFrame = stream.packets().getFirst().data();
             var width = stream.track().width();
@@ -327,9 +321,7 @@ class DnxhdAvidAlphaTest {
         @Test
         @DisplayName("keeps Avid's sample description extensions when remuxing an Avid file to QuickTime")
         void remux(@TempDir Path directory) throws Exception {
-            var stream = IntraTesting.demux(Conformance.fetch("ffmpeg-trac-8427-dnxhd_with_alpha_straight.mov",
-                    "https://trac.ffmpeg.org/raw-attachment/ticket/8427/dnxhd_with_alpha_straight.mov",
-                    "10d46a0f07ac9ec5093dc7deac30446b5c42d86685e6bbc475ff05c570fb71a4"));
+            var stream = IntraTesting.demux(Conformance.vector("ffmpeg-trac-8427-dnxhd_with_alpha_straight.mov"));
             var config = stream.track().codecConfig().orElseThrow();
             var text = new String(config, StandardCharsets.ISO_8859_1);
             assertTrue(text.startsWith("AVdh") && text.contains("ACLRACLR0001") && text.contains("AALPAALP0001")

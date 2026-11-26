@@ -38,7 +38,7 @@ class AsfThirdPartyTest {
                 "vc1-samples-wmv9-bloodyback.wmv", "vc1-samples-wmv9-psychonauts.wmv"})
         @DisplayName("every packet has ffprobe's timestamp, size, payload checksum and key flag")
         void packets(String name) {
-            var file = Conformance.fetchListed(name);
+            var file = Conformance.vector(name);
             try (var source = MediaSource.of(file)) {
                 assertEquals(ContainerFormat.ASF, Containers.detect(source).orElseThrow());
             }
@@ -49,7 +49,7 @@ class AsfThirdPartyTest {
         @ValueSource(strings = {"asf-fate-wmv_drm.wmv", "asf-samples-wma_with_metadata_library_object_tag.wma"})
         @DisplayName("a file protected by digital rights management is refused")
         void protectedContent(String name) {
-            var file = Conformance.fetchListed(name);
+            var file = Conformance.vector(name);
             try (var source = MediaSource.of(file)) {
                 var failure = assertThrows(MediaException.Unsupported.class, () -> new AsfDemuxer(source));
                 assertTrue(failure.getMessage().contains("digital rights"), failure.getMessage());
@@ -59,7 +59,7 @@ class AsfThirdPartyTest {
         @Test
         @DisplayName("the pictures of WM/Picture attributes are the attached pictures")
         void picture() {
-            var file = Conformance.fetchListed("asf-samples-wma_with_WmPicture.wma");
+            var file = Conformance.vector("asf-samples-wma_with_WmPicture.wma");
             try (var source = MediaSource.of(file); var demuxer = new AsfDemuxer(source)) {
                 var pictures = demuxer.attachedPictures();
                 assertEquals(1, pictures.size());

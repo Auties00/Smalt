@@ -35,7 +35,9 @@ import java.util.Objects;
  * factors, and is Huffman coded (with optimized tables when it is 12-bit) or, on request, arithmetic coded.
  * Every DCT-coded image the {@link JpegDecoder} decodes can be transformed, except a hierarchical one.
  * The marker segments the output keeps (EXIF, XMP, ICC, comments) are chosen by
- * {@link JpegTransformOptions#markerCopy()}; an EXIF thumbnail is transformed with the image and
+ * {@link JpegTransformOptions#markerCopy()}, except a Multi-Picture Format index: the secondary images that follow
+ * the source's end of image (gain maps, depth maps, stereo views) are not written, so neither is the index that
+ * locates them; an EXIF thumbnail is transformed with the image and
  * {@link #autoOrient(MediaSource)} resets the EXIF orientation.
  * Under {@link JpegTransformOptions#jpegtran()} the output is byte-identical to libjpeg-turbo's
  * {@code jpegtran} given the same transformation. Components that cannot share one interleaved scan

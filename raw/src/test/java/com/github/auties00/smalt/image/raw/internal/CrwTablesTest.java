@@ -32,12 +32,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * they use, that the decoder reproduces the values the converter stores for each of them, and that
  * it reproduces them for the copies of {@link CrwCodeCopies}, whose streams use every code. The
  * oracle files are the uncompressed DNG files and summaries {@code tools/testdata/raw-oracle.py} writes into
- * {@code <conformance cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory);
+ * {@code <test cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory);
  * the oracle tests are skipped without them.
  */
 class CrwTablesTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     private static final List<RawSamples> SAMPLES = List.of(RawSamples.CRW_D30, RawSamples.CRW_D60, RawSamples.CRW_10D,
             RawSamples.CRW_10D_3164, RawSamples.CRW_10D_3165, RawSamples.CRW_300D, RawSamples.CRW_300D_3162,
@@ -99,12 +99,12 @@ class CrwTablesTest {
         @DisplayName("a copy of each sample whose stream uses every code decodes, its region holding the designed values")
         void copies() {
             for (var sample : List.of(RawSamples.CRW_D60, RawSamples.CRW_G1, RawSamples.CRW_10D_3164)) {
-                var copy = CrwCodeCopies.copy(sample.fetch());
+                var copy = CrwCodeCopies.copy(sample.path());
                 var plane = decode(copy);
-                var expected = decode(sample.fetch());
-                var region = CrwCodeCopies.region(sample.fetch());
+                var expected = decode(sample.path());
+                var region = CrwCodeCopies.region(sample.path());
                 var width = plane.width;
-                var shift = CrwCodeCopies.twelve(sample.fetch()) ? 2 : 0;
+                var shift = CrwCodeCopies.twelve(sample.path()) ? 2 : 0;
                 for (var index = 0; index < plane.integers.length; index++) {
                     if (index < region[0] * width || index >= region[1] * width) {
                         if (expected.integers[index] != plane.integers[index]) {
@@ -132,7 +132,7 @@ class CrwTablesTest {
                 tables.add(new TreeMap<>());
             }
             for (var sample : SAMPLES) {
-                var problem = CrwTableDerivation.problem(sample.fetch(), oracle(sample));
+                var problem = CrwTableDerivation.problem(sample.path(), oracle(sample));
                 var result = CrwTableDerivation.derive(problem);
                 assertNotNull(result, sample + " has no consistent code");
                 CrwTableDerivation.merge(tables, problem, result);
@@ -160,10 +160,10 @@ class CrwTablesTest {
             var path = ORACLE.resolve(name.substring(0, name.length() - 4) + ".photosites");
             Skip.unless(Files.isRegularFile(path), "data:raw-oracle", "no oracle file " + path
                     + "; run tools/testdata/raw-oracle.py");
-            var copy = CrwCodeCopies.copy(sample.fetch());
+            var copy = CrwCodeCopies.copy(sample.path());
             assertEquals(CrwCodeCopies.DIGESTS.get(name), CrwCodeCopies.sha256(copy), "the copy the converter read");
             var decoded = decode(copy);
-            if (CrwCodeCopies.twelve(sample.fetch())) {
+            if (CrwCodeCopies.twelve(sample.path())) {
                 // the converter stores the photosites of a 12-bit file after its last whole group of 256 without
                 // their low bits
                 var total = decoded.integers.length;
@@ -183,7 +183,7 @@ class CrwTablesTest {
             var oracle = NikonTableDerivation.oracle(oracle(sample));
             SensorPlane decoded;
             boolean twelve;
-            try (var source = MediaSource.of(sample.fetch())) {
+            try (var source = MediaSource.of(sample.path())) {
                 var file = RawParser.parse(source, MediaLimits.DEFAULT);
                 assertNotNull(file.sensor, file.unsupported);
                 twelve = file.sensor.bitsPerSample == 12;

@@ -1,8 +1,8 @@
-# Pull requests and pushes: build and unit tests on the smoke data tier and the clips, with the oracle tools of
+# Pull requests and pushes: build and unit tests on the hosted test data (tools/testdata/artifacts.tsv), with the oracle tools of
 # tools/testdata/oracles.tsv on every runner (a missing oracle fails), on Linux x64, Windows and macOS with the
 # Vector API, on Linux with the scalar twins, and the kernel suites on Linux arm64 (NEON); the skip baseline; the javadoc lints, the comment
-# lint, the generated-code check and the third-party notices check. The full conformance tier and the capture
-# devices run nightly (nightly.yml).
+# lint, the generated-code check and the third-party notices check. The capture devices and the longer suites run
+# nightly (nightly.yml).
 #
 # The Vector API kernels are checked three ways in every Vector API job: each module's *KernelGuardTest runs its
 # kernel families in child JVMs under the scenario matrix of testkit.jit.KernelGuard (tiered, C2 only, a polluted
@@ -28,22 +28,21 @@ permissions:
   contents: read
   # the cache listing of .github/scripts/cache-policy.sh
   actions: read
+  # the hosted test data on GHCR (.github/actions/testdata)
+  packages: read
 
 env:
   JAVA_VERSION: '26'
-  # Tests read only what the smoke tier cached; a vector outside it skips its test instead of downloading.
-  SMALT_CONFORMANCE_DOWNLOAD: 'false'
 
 jobs:
   # The oracle tools of every test runner, cached before the tests start (the first build of a branch takes most of
   # an hour); a runner whose tools fail still runs its tests, which then fail on the missing oracle.
   oracles:
-    # The full tier the nightly caches fills most of the 10 GB Actions cache, so the clips and oracle data entries
-    # may be evicted between the oracle jobs and the tests; the artifacts of this run stand in for them.
+    # The oracle data entries may be evicted from the 10 GB Actions cache between the oracle jobs and the tests; the
+    # artifacts of this run stand in for them.
     uses: ./.github/workflows/oracle-tools.yml
     with:
       os: '["ubuntu-24.04","ubuntu-24.04-arm","windows-latest","macos-latest"]'
-      clips-artifact: true
       data-artifact: true
 
   test:
@@ -94,8 +93,6 @@ jobs:
       - uses: ./.github/actions/oracles
 
       - uses: ./.github/actions/testdata
-        with:
-          clips-artifact: 'true'
 
       - uses: ./.github/actions/oracle-data
         with:
@@ -327,7 +324,7 @@ jobs:
       - name: Test data tool tests
         run: python -m unittest discover -s tools/testdata -p "test_*.py"
 
-      # Every downloaded vector, clip and archive set names its licence or terms of use (tools/testdata/licences.tsv).
+      # Every hosted vector, clip and archive set names its licence or terms of use (tools/testdata/licences.tsv).
       - name: Test data licence notes
         run: python tools/testdata/testdata.py licences
 

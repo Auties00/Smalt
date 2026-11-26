@@ -60,7 +60,7 @@ final class Av1Streams {
     /** Returns the bytes of a conformance vector listed in {@code tools/testdata/vectors.tsv}. */
     static byte[] vector(String name) {
         try {
-            return Files.readAllBytes(Conformance.fetchListed(name));
+            return Files.readAllBytes(Conformance.vector(name));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
@@ -70,7 +70,7 @@ final class Av1Streams {
     static List<String> referenceMd5(String name) {
         try {
             var md5 = new ArrayList<String>();
-            for (var line : Files.readAllLines(Conformance.fetchListed(name + ".md5"))) {
+            for (var line : Files.readAllLines(Conformance.vector(name + ".md5"))) {
                 if (!line.isBlank()) {
                     md5.add(line.strip().split("[ \t]+")[0]);
                 }

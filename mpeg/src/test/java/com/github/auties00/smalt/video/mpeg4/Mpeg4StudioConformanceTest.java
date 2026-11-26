@@ -427,7 +427,7 @@ class Mpeg4StudioConformanceTest {
                 "vcon-stp7L1", "vcon-stp8L1", "vcon-stp9L1", "vcon-stp10L1", "vcon-stp11L1"})
         @DisplayName("the I-VOPs decode to their pinned samples and the Core Studio P-VOPs are unsupported")
         void intra(String name) throws IOException {
-            var file = Conformance.fetchListed("mpeg4visual-" + name + ".bits");
+            var file = Conformance.vector("mpeg4visual-" + name + ".bits");
             var decoded = decode(Files.readAllBytes(file), true);
             var expected = CONFORMANCE.get(name);
             assertEquals(expected.size(), decoded.frames().size(), "frames");
@@ -448,7 +448,7 @@ class Mpeg4StudioConformanceTest {
         @DisplayName("the I-VOPs FFmpeg decodes match it within the inverse DCT noise")
         void againstFfmpeg(String name, int frames) throws IOException {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var file = Conformance.fetchListed("mpeg4visual-" + name + ".bits");
+            var file = Conformance.vector("mpeg4visual-" + name + ".bits");
             var decoded = decode(Files.readAllBytes(file), true);
             var reference = ffmpeg(file, "yuv422p10le");
             var frame = decoded.samples().getFirst().length;
@@ -462,7 +462,7 @@ class Mpeg4StudioConformanceTest {
         @CsvSource({"vcon-stpsh1L1", "vcon-stpsh2L1", "vcon-stpsp1L1"})
         @DisplayName("the shape and sprite streams, whose layer headers are not Studio headers, are rejected")
         void shapeAndSprite(String name) throws IOException {
-            var file = Conformance.fetchListed("mpeg4visual-" + name + ".bits");
+            var file = Conformance.vector("mpeg4visual-" + name + ".bits");
             var data = Files.readAllBytes(file);
             var error = assertThrows(MediaException.class, () -> decode(data, true));
             assertFalse(error.getMessage().isEmpty());
@@ -472,9 +472,7 @@ class Mpeg4StudioConformanceTest {
         @DisplayName("the FATE Studio sample decodes like FFmpeg")
         void fate() throws IOException {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var file = Conformance.fetch("fate-mpeg4-mpeg4_sstp_dpcm.m4v",
-                    "https://fate-suite.ffmpeg.org/mpeg4/mpeg4_sstp_dpcm.m4v",
-                    "c7389f15ceb3381be18ab21c932ef3cda952466bcd2ade824faf36a880ea860e");
+            var file = Conformance.vector("fate-mpeg4-mpeg4_sstp_dpcm.m4v");
             var decoded = decode(Files.readAllBytes(file), true);
             assertEquals(1, decoded.frames().size());
             assertEquals(CONFORMANCE.get("vcon-stp11L1").getFirst(), md5(decoded.samples().getFirst()));

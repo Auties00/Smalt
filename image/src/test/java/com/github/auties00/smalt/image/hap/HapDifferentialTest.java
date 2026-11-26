@@ -146,6 +146,43 @@ class HapDifferentialTest {
                 Tolerance.Difference.of(expected, ours.toByteArray()));
     }
 
+    /**
+     * HAP files written by Vidvox's encoder (ffmpeg's FATE samples): HAP, HAP Alpha, HAP Q, HAP Q Alpha and HAP Alpha
+     * Only, snappy-compressed or not, in one or many chunks, at 1-pixel and odd sizes. Every frame is held to
+     * ffmpeg's decode within the rounding of its texture format; an alpha-only frame's alpha to ffmpeg's gray.
+     */
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"HAPQA_NoSnappy_127x1,rgba,ycocg", "HAPQA_Snappy_16chunk_127x1,rgba,ycocg",
+            "HAPQA_Snappy_1chunk_127x1,rgba,ycocg", "HapAlphaOnly_NoSnappy_128x72,gray,dxt",
+            "HapAlphaOnly_snappy1chunk_127x71,gray,dxt", "hap1,rgb24,dxt", "hap5,rgba,dxt", "hapy-12-chunks,rgb24,ycocg",
+            "hapy,rgb24,ycocg"})
+    @DisplayName("decodes Vidvox's files as ffmpeg does")
+    void decodesVidvox(String name, String pixelFormat, String texture) throws IOException {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var vector = com.github.auties00.smalt.testkit.Conformance.vector("hap-fate-" + name + ".mov");
+        var file = Scratch.directory("hap-vectors").resolve("hap-fate-" + name + ".mov");
+        Files.copy(vector, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        var stream = demux(file);
+        assertEquals(Codec.HAP, stream.track().codec());
+        var decoder = VideoDecoders.create(stream.track(), VideoDecoderOptions.defaults());
+        var ours = new ByteArrayOutputStream();
+        for (var packet : stream.packets()) {
+            decoder.decode(packet, frame -> {
+                if (pixelFormat.equals("gray")) {
+                    // an alpha-only frame decodes to a one-plane picture of its alpha
+                    var picture = assertInstanceOf(com.github.auties00.smalt.image.YuvPicture.class, frame.picture());
+                    for (var y = 0; y < picture.height(); y++) {
+                        ours.write(picture.y(), y * picture.yStride(), picture.width());
+                    }
+                } else {
+                    ours.writeBytes(rgba((RgbaPicture) frame.picture(), pixelFormat.equals("rgba")));
+                }
+            });
+        }
+        var expected = ffmpegDecode(file, pixelFormat);
+        (texture.equals("ycocg") ? YCOCG : DXT).check(name, Tolerance.Difference.of(expected, ours.toByteArray()));
+    }
+
     static RgbaPicture source(long seed, boolean alpha) {
         var random = new Random(seed);
         var picture = RgbaPicture.allocate(WIDTH, HEIGHT, alpha);

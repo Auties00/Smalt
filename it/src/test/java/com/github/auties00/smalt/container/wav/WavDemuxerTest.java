@@ -471,10 +471,7 @@ class WavDemuxerTest {
         @DisplayName("seeks implicit HE-AAC v2 as raw blocks, ADTS and IEC 61937 bursts in the time base of the core rate")
         void heAacSeek() {
             // implicit signaling: a 22.05 kHz mono Low Complexity configuration that decodes to 44.1 kHz stereo
-            var mp4 = com.github.auties00.smalt.testkit.Conformance.fetch("mpeg4audio-al_sbr_i_44_1.mp4",
-                    "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/"
-                            + "mpeg4audio-conformance/compressedMp4/al_sbr_i_44_1.mp4",
-                    "93f9a8e33ca65f529139ed4827bf37214fe28a17aa786f3a23ba6cfd571cf36c");
+            var mp4 = com.github.auties00.smalt.container.Mpeg4AudioStreams.file("al_sbr_i_44_1.mp4");
             byte[] config;
             List<com.github.auties00.smalt.track.Packet> blocks;
             try (var demuxer = new com.github.auties00.smalt.container.mp4.Mp4Demuxer(MediaSource.of(Fixtures.read(mp4)))) {
@@ -651,6 +648,24 @@ class WavDemuxerTest {
             var layout = ((AudioTrack) demuxer.tracks().getFirst()).layout().orElseThrow();
             assertEquals(8, layout.channels());
             assertFalse(layout.speakers().contains(Speaker.UNKNOWN));
+        }
+    }
+
+    @Test
+    @DisplayName("decodes FATE's real-world WAVE file bit-exactly and splits its packets like ffprobe")
+    void fate() throws Exception {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-wav-200828-005.wav");
+        var bytes = java.nio.file.Files.readAllBytes(file);
+        var decoded = decode(bytes);
+        var probe = new String(Oracle.run(Oracle.Tool.FFPROBE, java.time.Duration.ofMinutes(1), List.of("-v", "error",
+                "-show_entries", "stream=sample_rate,channels", "-of", "csv=p=0", file.toString())),
+                java.nio.charset.StandardCharsets.UTF_8).strip().split(",");
+        assertEquals(Integer.parseInt(probe[0]), decoded.sampleRate());
+        assertEquals(Integer.parseInt(probe[1]), decoded.channels());
+        assertArrayEquals(Oracle.decodeAudio(file), decoded.interleaved());
+        try (var demuxer = new WavDemuxer(MediaSource.of(bytes))) {
+            var packets = AudioPipeline.packets(demuxer, 0).stream().map(ProbedPacket::of).toList();
+            assertEquals(ProbedPacket.probe(file), packets);
         }
     }
 }

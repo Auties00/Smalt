@@ -151,8 +151,8 @@ class DrcRequestMatrixTest {
                     || MpegDrcConformanceTest.argument(line, "-af") != null || !seen.add(bitstream)) {
                 continue;
             }
-            items.add(new Item(bitstream, MpegDrcConformanceTest.readWav(Fixtures.read(archive.fetch(members.get(input)))),
-                    Fixtures.read(archive.fetch(members.get(bitstream)))));
+            items.add(new Item(bitstream, MpegDrcConformanceTest.readWav(Fixtures.read(archive.member(members.get(input)))),
+                    Fixtures.read(archive.member(members.get(bitstream)))));
         }
         return items;
     }

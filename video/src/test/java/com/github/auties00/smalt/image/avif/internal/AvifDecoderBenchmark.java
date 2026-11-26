@@ -45,15 +45,7 @@ public class AvifDecoderBenchmark {
 
     @Setup
     public void setUp() throws Exception {
-        var sha = switch (file) {
-            case "Microsoft/Summer_in_Tomsk_720p_5x4_grid.avif" -> "c9148149b108f5fbce7300903bd59937bfc4c677f2ce359668ad664adb18ec2f";
-            case "Microsoft/Summer_Nature_4k.avif" -> "bae6a3b420018fc725e862593d1c78c8261c9f734f4ce41a69c1a9906296e302";
-            default -> "83d68084a93f043a89d10373f0ca26dafc988eec811b8076cabb2ff1580c1817";
-        };
-        var name = "avif-" + file.replace('/', '-');
-        data = Files.readAllBytes(Conformance.fetch(name,
-                "https://raw.githubusercontent.com/AOMediaCodec/av1-avif/bf4c18d1f3971069b75e87d6ee469790589f4f09/testFiles/"
-                        + file, sha));
+        data = Files.readAllBytes(Conformance.vector("avif-" + file.replace('/', '-')));
     }
 
     @Benchmark

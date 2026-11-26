@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds dng_validate, the validator of Adobe's DNG SDK, as a black-box oracle of the DNG encoder's tests.
 
-The DNG SDK 1.7.1 (build 2768) is downloaded from Adobe, pinned by SHA-256. Its licence (LICENSE.txt in the archive)
+The DNG SDK 1.7.1 (build 2802) is downloaded from Adobe, pinned by SHA-256. Its licence (LICENSE.txt in the archive)
 grants a "non-exclusive, worldwide, royalty free license to use, reproduce, prepare derivative works from, publicly
 display, publicly perform, distribute and sublicense the Software for any purpose"; Smalt only runs the validator in
 tests and never ships it. The archive bundles the libraries the validator links: IJG libjpeg 9c (the JPEG
@@ -30,8 +30,8 @@ import sys
 import urllib.request
 import zipfile
 
-URL = 'https://download.adobe.com/pub/adobe/dng/dng_sdk_1_7_1_2768_20261013.zip'
-SHA256 = 'c1d3a545ed45b150e59af2e6aa0695c1551f0e2bed34ad87436898a05194d2b1'
+URL = 'https://download.adobe.com/pub/adobe/dng/dng_sdk_1_7_1_2802_20261110.zip'
+SHA256 = 'e9bb04e956da3605d8ef4f821bdb979a250c22546b0332b7f81a93b11da7cceb'
 ROOT = 'dng_sdk_1_7_1/'
 # the libjpeg 9c library sources (filelist.txt, "the JPEG library proper"), without the alternative memory managers
 LIBJPEG = ['jaricom', 'jcapimin', 'jcapistd', 'jcarith', 'jccoefct', 'jccolor', 'jcdctmgr', 'jchuff', 'jcinit',

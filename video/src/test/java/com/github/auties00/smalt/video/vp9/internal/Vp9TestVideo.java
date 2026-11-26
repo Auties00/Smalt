@@ -4,8 +4,10 @@ import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderOptions;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderSpeed;
+import org.junit.jupiter.api.Assertions;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -17,7 +19,7 @@ import java.util.List;
 
 /**
  * Test video for the real-time VP9 encoder: synthetic natural-looking motion and the Xiph clips
- * cached by earlier work, when present.
+ * of the hosted test data.
  */
 public final class Vp9TestVideo {
     private Vp9TestVideo() {
@@ -187,16 +189,15 @@ public final class Vp9TestVideo {
     }
 
     /**
-     * Returns the path of a cached raw clip, or {@code null} when absent.
-     *
-     * <p>Clips are looked up in the directory named by the {@code smalt.test.clips} system property, by
-     * default {@code ~/.smalt/cache/clips}; the tests that need one skip when it is missing.
+     * Returns the path of a raw clip of the hosted test data, in {@link Conformance#clips()}; a missing clip fails
+     * the test.
      */
     public static Path clip(String name) {
-        var root = Path.of(System.getProperty("smalt.test.clips",
-                Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips").toString()));
-        var candidate = root.resolve(name);
-        return Files.isRegularFile(candidate) ? candidate : null;
+        var candidate = Conformance.clips().resolve(name);
+        if (!Files.isRegularFile(candidate)) {
+            Assertions.fail("clip " + name + " is missing from " + Conformance.clips());
+        }
+        return candidate;
     }
 
     /** Returns whether FFmpeg runs, for the interoperability tests of other packages. */

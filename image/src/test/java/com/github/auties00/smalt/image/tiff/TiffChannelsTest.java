@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.image.tiff;
 
-import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.Channel;
 import com.github.auties00.smalt.image.Channel16Picture;
 import com.github.auties00.smalt.image.Channel8Picture;
@@ -396,9 +395,7 @@ class TiffChannelsTest {
         @Test
         @DisplayName("report the embedded profile when it describes the color channels")
         void profiles() throws IOException {
-            var cmykProfile = Files.readAllBytes(Conformance.fetch("skia-icc-misc-US_Web_Coated_SWOP_CMYK.icc",
-                    "https://raw.githubusercontent.com/google/skia/0c98530bf7d68e59147c2f1b06d8825c4302af8c/resources/icc_profiles/misc/US_Web_Coated_SWOP_CMYK.icc",
-                    "4855b8fabb96bdc6495d45d089bb8c8efb1ae18389e0dc9e75a5f701a9c0b662"));
+            var cmykProfile = Files.readAllBytes(Conformance.vector("skia-icc-misc-US_Web_Coated_SWOP_CMYK.icc"));
             var values = TiffFiles.pattern(6, 6, 4, 255, 90);
             var file = TiffFiles.of(6, 6, 4, 8).photometric(5).undefined(34675, cmykProfile)
                     .data(TiffFiles.pack(values, 6, 6, 4, 8, true)).bytes();
@@ -527,7 +524,7 @@ class TiffChannelsTest {
         for (var name : List.of("flower-separated-contig-16.tif", "flower-separated-planar-16.tif",
                 "flower-separated-contig-08.tif", "flower-separated-planar-08.tif")) {
             var file = pics.get(name);
-            assumeTrueNotNull(file, name);
+            assertNotNull(file, name + " is not in the libtiff test images");
             var picture = (ChannelPicture) decode(file, KEEP_WIDE).picture();
             assertEquals(PixelLayout.CMYK, picture.layout());
             var wide = decode(file, ImageDecoderOptions.builder().highBitDepth(true).build()).picture();
@@ -539,10 +536,6 @@ class TiffChannelsTest {
         }
         assertEquals(samples((ChannelPicture) decode(pics.get("flower-separated-contig-16.tif"), KEEP_WIDE).picture()),
                 samples((ChannelPicture) decode(pics.get("flower-separated-planar-16.tif"), KEEP_WIDE).picture()));
-    }
-
-    private static void assumeTrueNotNull(byte[] file, String name) {
-        Skip.unless(file != null, "data:libtiff-images", name + " is not in the libtiff test images");
     }
 
     private static long value(ChannelPicture picture, int index) {

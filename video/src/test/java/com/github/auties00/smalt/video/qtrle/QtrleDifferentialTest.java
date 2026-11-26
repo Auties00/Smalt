@@ -431,7 +431,7 @@ class QtrleDifferentialTest {
         @ValueSource(strings = {"Animation-Monochrome.mov", "Animation-4Greys.mov", "Animation-16Greys.mov"})
         @DisplayName("decodes QuickTime's own 1-bit, 2-bit gray and 4-bit gray files pixel for pixel as ffmpeg does")
         void apple(String name) {
-            var file = com.github.auties00.smalt.testkit.Conformance.fetchListed("fate-qtrle-" + name);
+            var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-qtrle-" + name);
             var stream = IntraTesting.demux(file);
             assertEquals(Codec.QTRLE, stream.track().codec());
             var decoder = VideoDecoders.create(stream.track(), VideoDecoderOptions.defaults());
@@ -440,6 +440,84 @@ class QtrleDifferentialTest {
                 decoder.decode(packet, frame -> ours.writeBytes(raw((RgbaPicture) frame.picture(), "rgb24")));
             }
             EXACT.check(name, Tolerance.Difference.of(ffmpegDecode(file, "rgb24"), ours.toByteArray()));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.CsvSource({"fate-qtrle-Animation-4bit-clut36.mov,rgb24",
+"fate-qtrle-Animation-8bit-clut127.mov,rgb24",
+                "fate-qtrle-aletrek-rle.mov,rgb24", "fate-qtrle-criticalpath-credits.mov,rgb24",
+                "fate-qtrle-mr-cork-rle.mov,rgb24", "fate-qtrle-ultra_demo_720_480_32bpp_rle.mov,rgba",
+                "qtrle-samples-qt-rle555.mov,rgb24", "qtrle-samples-Animation-Truecolour.mov,rgb24",
+                "qtrle-samples-Animation-256Greys.mov,rgb24", "qtrle-samples-Animation-Highcolour.mov,rgb24"})
+        @DisplayName("decodes QuickTime-written files (colour tables, palette changes, 16, 24 and 32-bit) as ffmpeg does")
+        void appleFiles(String name, String pixelFormat) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var stream = IntraTesting.demux(file);
+            assertEquals(Codec.QTRLE, stream.track().codec());
+            var decoder = VideoDecoders.create(stream.track(), VideoDecoderOptions.defaults());
+            var ours = new ByteArrayOutputStream();
+            for (var packet : stream.packets()) {
+                decoder.decode(packet, frame -> ours.writeBytes(raw((RgbaPicture) frame.picture(), pixelFormat)));
+            }
+            EXACT.check(name, Tolerance.Difference.of(ffmpegDecode(file, pixelFormat), ours.toByteArray()));
+        }
+
+        @Test
+        @DisplayName("switches color tables with the sample description of each frame")
+        void paletteChange() throws IOException {
+            // two sample descriptions of 4-bit depth with their own color tables; the sample-to-chunk table gives
+            // frames 0-2 and 6-7 the first and frames 3-5 the second (ISO/IEC 14496-12 8.7.4). ffmpeg shows every frame
+            // with the last description's table, so its pictures are mapped back to color indices through that table
+            // and colored with the table of the frame's own description
+            var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-qtrle-Animation-4bit-palette-change.mov");
+            var bytes = java.nio.file.Files.readAllBytes(file);
+            var stsd = indexOf(bytes, "stsd") + 16;
+            var tables = new int[2][16];
+            for (int entry = 0, at = stsd; entry < 2; entry++) {
+                var table = at + 8 + 78 + 8;
+                for (var k = 0; k < 16; k++) {
+                    var e = table + 8 * k;
+                    tables[entry][bytes[e + 1] & 0xF] = (bytes[e + 2] & 0xFF) << 16 | (bytes[e + 4] & 0xFF) << 8
+                            | (bytes[e + 6] & 0xFF);
+                }
+                at += java.nio.ByteBuffer.wrap(bytes, at, 4).getInt();
+            }
+            int[] description = {0, 0, 0, 1, 1, 1, 0, 0};
+            var theirs = ffmpegDecode(file, "rgb24");
+            var frameBytes = 64 * 48 * 3;
+            assertEquals(description.length * frameBytes, theirs.length);
+            var expected = new byte[theirs.length];
+            for (var i = 0; i < theirs.length; i += 3) {
+                var rgb = (theirs[i] & 0xFF) << 16 | (theirs[i + 1] & 0xFF) << 8 | (theirs[i + 2] & 0xFF);
+                var index = -1;
+                for (var k = 0; k < 16; k++) {
+                    if (tables[1][k] == rgb) {
+                        index = k;
+                    }
+                }
+                assertTrue(index >= 0, "ffmpeg color " + Integer.toHexString(rgb) + " is not in the second table");
+                var color = tables[description[i / frameBytes]][index];
+                expected[i] = (byte) (color >> 16);
+                expected[i + 1] = (byte) (color >> 8);
+                expected[i + 2] = (byte) color;
+            }
+            var stream = IntraTesting.demux(file);
+            var decoder = VideoDecoders.create(stream.track(), VideoDecoderOptions.defaults());
+            var ours = new ByteArrayOutputStream();
+            for (var packet : stream.packets()) {
+                decoder.decode(packet, frame -> ours.writeBytes(raw((RgbaPicture) frame.picture(), "rgb24")));
+            }
+            EXACT.assertFrames("palette change", expected, ours.toByteArray(), frameBytes);
+        }
+
+        private static int indexOf(byte[] data, String type) {
+            var name = type.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            for (var i = 0; i + 4 <= data.length; i++) {
+                if (java.util.Arrays.equals(data, i, i + 4, name, 0, 4)) {
+                    return i - 4;
+                }
+            }
+            throw new AssertionError(type);
         }
 
         @ParameterizedTest(name = "depth {0}")

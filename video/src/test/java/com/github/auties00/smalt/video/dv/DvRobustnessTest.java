@@ -155,4 +155,27 @@ class DvRobustnessTest {
                 .height(480).build();
         assertThrows(IllegalArgumentException.class, () -> new DvDecoder(other));
     }
+
+    @Test
+    @DisplayName("decodes every frame of a tape with dropouts to a full picture")
+    void dropouts() {
+        // a PAL camcorder recording whose tape dropouts damaged DIF blocks: DV's segments are independent, so every
+        // frame still decodes to a full picture
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("dv-samples-dropout.dv");
+        var bytes = com.github.auties00.smalt.testkit.Fixtures.read(file);
+        var packets = DvTesting.split(bytes, (bytes[3] & 0x80) != 0 ? DvProfile.DV_625 : DvProfile.DV_525);
+        assertTrue(packets.size() > 1, "frames " + packets.size());
+        var decoder = new DvDecoder();
+        var decoded = new int[1];
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(120), () -> {
+            for (var packet : packets) {
+                decoder.decode(packet, frame -> {
+                    assertEquals(720, frame.picture().width());
+                    assertEquals(576, frame.picture().height());
+                    decoded[0]++;
+                });
+            }
+        });
+        assertEquals(packets.size(), decoded[0]);
+    }
 }

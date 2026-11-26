@@ -51,7 +51,7 @@ final class DtsMasterAudioCorpusTest {
     @DisplayName("Master Audio samples match ffmpeg's lossless output sample for sample, every frame")
     void lossless(String name, int rate, boolean firstFrameIsCore) throws IOException {
         Oracle.assume(Oracle.Tool.FFMPEG);
-        var file = Conformance.fetchListed(name);
+        var file = Conformance.vector(name);
         var reference = Scratch.directory("dts-ma").resolve(name + "-" + Thread.currentThread().threadId() + ".s32");
         var arguments = new ArrayList<>(List.of("-cpuflags", "0", "-v", "error", "-y", "-i", file.toString()));
         if (name.endsWith(".m2ts")) {

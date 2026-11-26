@@ -517,6 +517,11 @@ public final class Jp2Boxes {
         }
         forEach(view, box -> {
             switch (box.type) {
+                case "ftyp" -> {
+                    if (depth == 0) {
+                        checkFileType(view.contents(box));
+                    }
+                }
                 case "jp2h" -> readHeader(view.contents(box), defaults, depth + 1);
                 case "jpch" -> {
                     var header = new Header();
@@ -742,6 +747,31 @@ public final class Jp2Boxes {
         }
         var bytes = assemble(readFragmentList(contents.contents(list)));
         readHeaderBox(contents, type, new View(bytes, 0, bytes.length), header, depth + 1);
+    }
+
+    /**
+     * Refuses a JPM compound document (ISO/IEC 15444-6), whose File Type box names the {@code jpm }
+     * brand and lists neither {@code jp2 } nor {@code jpx } as compatible: its pages are compositions
+     * of objects that a JP2 or JPX reader would decode as an unrelated codestream.
+     *
+     * @param contents the File Type box contents: brand, minor version, compatibility list
+     * @throws MediaException.Unsupported for a JPM-only file
+     */
+    private static void checkFileType(View contents) {
+        if (contents.end() - contents.start() < 8) {
+            return;
+        }
+        var brand = new String(contents.bytes(), contents.start(), 4, java.nio.charset.StandardCharsets.ISO_8859_1);
+        if (!brand.equals("jpm ")) {
+            return;
+        }
+        for (var at = contents.start() + 8; at + 4 <= contents.end(); at += 4) {
+            var compatible = new String(contents.bytes(), at, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
+            if (compatible.equals("jp2 ") || compatible.equals("jpx ")) {
+                return;
+            }
+        }
+        throw new MediaException.Unsupported("JPEG 2000", "JPM compound documents (ISO/IEC 15444-6)");
     }
 
     /**

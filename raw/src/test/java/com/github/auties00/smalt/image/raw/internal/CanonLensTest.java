@@ -548,7 +548,7 @@ class CanonLensTest {
         var failures = new ArrayList<String>();
         var options = RawDecoderOptions.builder().embeddedPreview(false).build();
         for (var name : SAMPLES) {
-            var path = Conformance.fetchListed(name);
+            var path = Conformance.vector(name);
             try (var source = MediaSource.of(FileChannel.open(path, StandardOpenOption.READ))) {
                 var file = RawDecoding.open(source, MediaLimits.DEFAULT);
                 assertNotNull(file.sensor.lens, name);

@@ -71,7 +71,7 @@ class DolbyVisionRpuTest {
         @Test
         @DisplayName("hold the curves of a real profile 5 RPU")
         void real() throws IOException {
-            var file = Files.readAllBytes(Conformance.fetchListed("dovi-tool-profile5.bin"));
+            var file = Files.readAllBytes(Conformance.vector("dovi-tool-profile5.bin"));
             var unescaped = NalUnits.unescape(file, 4, file.length - 4);
             var rpu = DolbyVisionRpu.parse(unescaped, 0, unescaped.length);
             var mapping = rpu.mapping();
@@ -315,7 +315,7 @@ class DolbyVisionRpuTest {
         @DisplayName("match the fields dovi_tool reports")
         void vector(String name, int profile, String layer, boolean fullRange, int signalDepth, int minPq, int maxPq,
                     List<Integer> v29, List<Integer> v40) throws IOException {
-            var file = Files.readAllBytes(Conformance.fetchListed("dovi-tool-" + name));
+            var file = Files.readAllBytes(Conformance.vector("dovi-tool-" + name));
             // dovi_tool stores each RPU after a four-byte start code, with its emulation prevention bytes
             assertEquals(1, file[3]);
             var payload = NalUnits.unescape(file, 4, file.length - 4);

@@ -2185,4 +2185,89 @@ class MpegSurroundTest {
             assertTrue(energy > 0.0, "the residual signals take no part in the upmix");
         }
     }
+
+    /**
+     * HE-AAC with embedded MPEG Surround 5.1 of a production encoder (Fraunhofer, the DASH-IF multichannel audio test
+     * vectors). No MPEG Surround decoder that reads these files is available as an oracle (ffmpeg decodes the stereo
+     * downmix only), so the downmix is checked against ffmpeg within the 16-bit conformance criterion, and the upmix
+     * for its layout, its length and the presence of signal in the channels the downmix lacks.
+     */
+    @Nested
+    @DisplayName("production encoder streams")
+    class Production {
+        private static float[][] decode(byte[] file, boolean surround, ChannelLayout[] layout) {
+            var chunks = new ArrayList<float[][]>();
+            try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(
+                    com.github.auties00.smalt.io.MediaSource.of(file))) {
+                var track = (AudioTrack) demuxer.tracks().getFirst();
+                try (var decoder = new AacDecoder(track, AacDecoderOptions.builder().mpegSurround(surround).build())) {
+                    Consumer<AudioBuffer> sink = buffer -> {
+                        layout[0] = buffer.layout();
+                        chunks.add(AacTestSupport.copy(buffer));
+                    };
+                    for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                        decoder.decode(packet, sink);
+                    }
+                }
+            }
+            var channels = chunks.getLast().length;
+            var length = 0;
+            for (var chunk : chunks) {
+                length += chunk[0].length;
+            }
+            var planes = new float[channels][length];
+            var position = 0;
+            for (var chunk : chunks) {
+                for (var c = 0; c < Math.min(channels, chunk.length); c++) {
+                    System.arraycopy(chunk[c], 0, planes[c], position, chunk[c].length);
+                }
+                position += chunk[0].length;
+            }
+            return planes;
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"dashif-mca-fhg-mps-6ch_ident_48kHz-en-11s-6-mps-96000bps_seg.mp4",
+                "dashif-mca-fhg-mps-ED-CM-5.1-DVD_length_fixed-en-653s-6-mps-160000bps_seg.mp4",
+                "dashif-mca-fhg-mps-ED-CM-5.1-DVD_length_fixed-en-653s-6-mps-48000bps_seg.mp4"})
+        @DisplayName("decode the downmix like ffmpeg and upmix it to 5.1")
+        void upmix(String vector) {
+            com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+            var path = com.github.auties00.smalt.testkit.Conformance.vector(vector);
+            var file = com.github.auties00.smalt.testkit.Fixtures.read(path);
+            var layout = new ChannelLayout[1];
+            var downmix = decode(file, false, layout);
+            assertEquals(ChannelLayout.STEREO, layout[0], vector + " downmix layout");
+            var reference = com.github.auties00.smalt.testkit.Oracle.decodeAudio(path);
+            var frames = reference.length / 2;
+            assertEquals(frames, downmix[0].length, vector + " downmix length");
+            for (var c = 0; c < 2; c++) {
+                double squared = 0;
+                double peak = 0;
+                for (var i = 0; i < frames; i++) {
+                    var d = Math.abs((double) reference[i * 2 + c] - downmix[c][i]);
+                    squared += d * d;
+                    peak = Math.max(peak, d);
+                }
+                var rms = Math.sqrt(squared / frames);
+                org.junit.jupiter.api.Assertions.assertTrue(rms <= AacConformanceTest.RMS_LIMIT,
+                        vector + " downmix channel " + c + ": RMS " + rms);
+                org.junit.jupiter.api.Assertions.assertTrue(peak <= AacConformanceTest.PEAK_LIMIT,
+                        vector + " downmix channel " + c + ": peak " + peak);
+            }
+            var upmix = decode(file, true, layout);
+            assertEquals(ChannelLayout.SURROUND_5_1, layout[0], vector + " upmix layout");
+            assertEquals(downmix[0].length, upmix[0].length, vector + " upmix length");
+            var positions = layout[0].speakers();
+            for (var c = 0; c < upmix.length; c++) {
+                double energy = 0;
+                for (var sample : upmix[c]) {
+                    org.junit.jupiter.api.Assertions.assertTrue(Float.isFinite(sample), vector + " channel " + c);
+                    energy += (double) sample * sample;
+                }
+                org.junit.jupiter.api.Assertions.assertTrue(energy > 0, vector + " channel " + positions.get(c)
+                        + " is silent");
+            }
+        }
+    }
 }

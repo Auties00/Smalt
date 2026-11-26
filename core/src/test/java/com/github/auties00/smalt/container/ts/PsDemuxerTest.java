@@ -904,4 +904,46 @@ class PsDemuxerTest {
             throw new UncheckedIOException(exception);
         }
     }
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("FATE samples")
+    class Fate {
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.CsvSource({"fate-mpegps-pcm_aud.mpg, s16be, 44100, 1",
+                "fate-pcm-dvd-coolitnow-partial.vob, s24be, 48000, 2"})
+        @DisplayName("unpack DVD linear PCM to the samples ffmpeg's pcm_dvd decoder outputs")
+        void dvdLpcm(String name, String format, int rate, int channels) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var ours = com.github.auties00.smalt.container.ContainerProbe.demux(file,
+                    com.github.auties00.smalt.container.Containers::openDemuxer);
+            var audio = ours.tracks().stream().filter(com.github.auties00.smalt.track.AudioTrack.class::isInstance)
+                    .map(com.github.auties00.smalt.track.AudioTrack.class::cast).findFirst().orElseThrow();
+            assertEquals(rate, audio.sampleRate());
+            assertEquals(channels, audio.layout().orElseThrow().channels());
+            var pcm = new java.io.ByteArrayOutputStream();
+            for (var packet : ours.packetsOf(audio)) {
+                pcm.writeBytes(packet.data());
+            }
+            var expected = com.github.auties00.smalt.testkit.Oracle.run(
+                    com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(1),
+                    java.util.List.of("-v", "error", "-i", file.toString(), "-map", "0:a:0", "-f", format, "-"));
+            assertTrue(pcm.size() > 0);
+            // a cut file may start and end inside PES packets that ffmpeg decodes in part, or not at all: ours must be
+            // one run of ffmpeg's samples, starting on a sample frame, missing at most a PES packet at either end
+            var ourBytes = pcm.toByteArray();
+            var frame = channels * (format.equals("s16be") ? 2 : 3);
+            var start = -1;
+            for (var at = 0; at + 256 <= expected.length && start < 0; at += frame) {
+                if (java.util.Arrays.equals(expected, at, at + 256, ourBytes, 0, 256)) {
+                    start = at;
+                }
+            }
+            assertTrue(start >= 0 && start <= 2016 * frame, "the first samples are not among ffmpeg's");
+            var length = Math.min(expected.length - start, ourBytes.length);
+            assertTrue(expected.length - start - length <= 2016 * frame && ourBytes.length - length <= 2016 * frame,
+                    expected.length + " vs " + ourBytes.length + " from " + start);
+            org.junit.jupiter.api.Assertions.assertArrayEquals(java.util.Arrays.copyOfRange(expected, start,
+                    start + length), java.util.Arrays.copyOf(ourBytes, length));
+        }
+    }
 }

@@ -524,7 +524,7 @@ class DngCarryOverTest {
         @DisplayName("a camera raw file's maker note is held in Adobe's form with its original position, a DNG "
                 + "file's private data as it is")
         void makerNote(MakerNoteSample sample) {
-            var path = sample.sample.fetch();
+            var path = sample.sample.path();
             var source = DngConvertTest.read(path);
             var converted = convert(source);
             var block = DngStructure.of(converted).first().get(PRIVATE_DATA).bytes();
@@ -556,7 +556,7 @@ class DngCarryOverTest {
         @DisplayName("exiftool reads the same maker note fields from the DNG file as from its source")
         void exiftool(MakerNoteSample sample) {
             Oracle.assume("exiftool");
-            var source = sample.sample.fetch();
+            var source = sample.sample.path();
             var converted = DngValidateTest.save("makernote-" + sample.name() + ".dng",
                     convert(DngConvertTest.read(source)));
             var expected = makerNoteFields(source);

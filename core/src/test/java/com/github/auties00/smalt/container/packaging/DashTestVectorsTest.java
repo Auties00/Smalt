@@ -113,7 +113,7 @@ class DashTestVectorsTest {
     }
 
     private static Metadata metadata(String presentation, String representation) throws IOException {
-        var file = Conformance.fetchListed("dash-livesim-" + presentation + "-" + representation + "_data.json.gz");
+        var file = Conformance.vector("dash-livesim-" + presentation + "-" + representation + "_data.json.gz");
         String json;
         try (var input = new GZIPInputStream(Files.newInputStream(file))) {
             json = new String(input.readAllBytes(), StandardCharsets.UTF_8);
@@ -146,9 +146,9 @@ class DashTestVectorsTest {
         assertEquals(8, media.size(), "media segments " + media);
         var out = new ByteArrayOutputStream();
         try {
-            out.write(Files.readAllBytes(archive.fetch(init)));
+            out.write(Files.readAllBytes(archive.member(init)));
             for (var member : media) {
-                out.write(Files.readAllBytes(archive.fetch(member)));
+                out.write(Files.readAllBytes(archive.member(member)));
             }
             var file = work.resolve(presentation + "-" + representation + ".mp4");
             Files.write(file, out.toByteArray());

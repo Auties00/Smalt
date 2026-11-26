@@ -49,8 +49,11 @@ final class G722Qmf {
     /**
      * Splits two consecutive input samples into one sample of each sub-band, left in {@link #xl} and {@link #xh}.
      *
-     * @param first the earlier sample, 15-bit, from -16384 to 16383
-     * @param second the later sample, 15-bit
+     * <p>The input keeps all 16 bits, as {@code qmf_tx} of the ITU-T Software Tool Library's G.722 does: the filter
+     * sums the exact products and drops 14 bits, so the sub-band samples equal the reference's.
+     *
+     * @param first the earlier sample, 16-bit
+     * @param second the later sample, 16-bit
      */
     void analyze(int first, int second) {
         System.arraycopy(x, 0, x, 2, 22);
@@ -62,8 +65,8 @@ final class G722Qmf {
             xa += (long) H[i] * x[i];
             xb += (long) H[i + 1] * x[i + 1];
         }
-        xl = (int) Math.max(-16384, Math.min(16383, (xa + xb) >> 13));
-        xh = (int) Math.max(-16384, Math.min(16383, (xa - xb) >> 13));
+        xl = (int) Math.max(-16384, Math.min(16383, (xa + xb) >> 14));
+        xh = (int) Math.max(-16384, Math.min(16383, (xa - xb) >> 14));
     }
 
     /**

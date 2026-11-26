@@ -23,7 +23,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * XL images of one sample (color filter array and monochrome images) or three (linear raw images) that assemble
  * into the stored image, its edges repeated past the stored area, the file declares DNG 1.7 as its backward
  * version, libjxl's djxl decodes the tiles to the same samples, and images of two samples per photosite are
- * refused. The round trips of every image kind run in {@code DngEncoderTest} over every compression.
+ * refused. The round trips of every image kind run in {@code DngEncoderTest} over every compression. A camera-written
+ * file of JPEG XL tiles decodes to the image the DNG SDK reads from it.
  */
 class DngJpegXlTest {
     private static final int TILE = 32;
@@ -171,6 +172,19 @@ class DngJpegXlTest {
             out[i] = (data[start + 2 * i] & 0xFF) << 8 | (data[start + 2 * i + 1] & 0xFF);
         }
         return out;
+    }
+
+    @Test
+    @DisplayName("a camera-written DNG 1.7 file of JPEG XL linear raw tiles with GainMap opcodes decodes to the DNG "
+            + "SDK's stage 2 image")
+    void cameraFile() {
+        // the Samsung Galaxy S22's Expert RAW file: lossless JPEG XL tiles of three 16-bit samples and four GainMap
+        // opcodes in list 2, which dng_validate (DNG SDK 1.7.1) decodes with libjxl
+        var sample = RawSamples.DNG_GALAXY_S22_JPEG_XL;
+        var info = RawDecoder.info(MediaSource.of(DngValidateTest.read(sample.path())));
+        assertEquals("JPEG XL", info.compression().orElseThrow());
+        assertEquals("1.7.0.0", info.dngVersion().orElseThrow());
+        DngValidateTest.assertStage2("s22-jxl.dng", sample.path(), com.github.auties00.smalt.testkit.Tolerance.exact());
     }
 
     @Test

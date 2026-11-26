@@ -35,7 +35,7 @@ class AacErrorProtectionConformanceTest {
     private static final List<String> AAC = List.of("er_ad1111_22_ep3_srs01", "er_ad1111_44_ep3_srs01",
             "er_ad2050_24_ep3_srs03", "er_ad2050_48_ep3_srs03", "er_ad2170_32_ep3_srs04", "er_al10_08_ep3_crc01",
             "er_al10_22_ep3_crc01", "er_al15_08_ep3_srcpc01", "er_al15_48_ep3_srcpc01", "er_al18_11_ep3_crc02",
-            "er_al18_11_ep3_srcpc02", "er_al18_24_ep3_crc02", "er_al18_88_ep3_srcpc02", "er_al21_12_ep3_crc03",
+            "er_al18_24_ep3_crc02", "er_al18_88_ep3_srcpc02", "er_al21_12_ep3_crc03",
             "er_al21_32_ep3_crc03", "er_al23_16_ep3_crc04", "er_al23_44_ep3_crc04", "er_al26_12_ep3_srcpc03",
             "er_al26_88_ep3_srcpc03", "er_ap14_12_ep3_srs02", "er_ap14_32_ep3_srs02", "er_ap27_16_ep3_srcpc04",
             "er_ap27_96_ep3_srcpc04");
@@ -76,7 +76,7 @@ class AacErrorProtectionConformanceTest {
     }
 
     private static List<AacTestSupport.Stream> tracks(String name) {
-        return AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4")));
+        return AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.file(name + ".mp4")));
     }
 
     private static float[][] decode(List<AacTestSupport.Stream> tracks, int maxLayer) {

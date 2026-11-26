@@ -643,8 +643,10 @@ final class X3fCorrections {
                     .putInt(gain.channels).putInt(1).putInt(1).putInt(gain.rows).putInt(gain.columns);
             parameters.putDouble(gain.rows > 1 ? (double) height / ((gain.rows - 1) * (double) activeHeight) : 1);
             parameters.putDouble(gain.columns > 1 ? (double) width / ((gain.columns - 1) * (double) activeWidth) : 1);
-            parameters.putDouble(-(double) active[0] / activeHeight);
-            parameters.putDouble(-(double) active[1] / activeWidth);
+            // the GainMap opcode samples its map at the photosites' centers, half a photosite past their indices,
+            // and the tables at the indices: the origin moves by that half photosite
+            parameters.putDouble((0.5 - active[0]) / activeHeight);
+            parameters.putDouble((0.5 - active[1]) / activeWidth);
             parameters.putInt(gain.channels);
             for (var value : gain.gains) {
                 parameters.putFloat((float) value);

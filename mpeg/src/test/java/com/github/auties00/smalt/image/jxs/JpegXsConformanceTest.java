@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Decodes the conformance codestreams of ISO/IEC 21122-4 (third edition) and requires every sample of every component
  * to equal the reference reconstruction the suite ships (big-endian PGX planes, the reference decoder's output); for
  * the Bayer codestreams the reference is the color filter array mosaic. The smoke tier holds the small codestreams
- * (the JXS file, the narrow ones, 4:2:0, MLS, Bayer, CHigh); the full tier, fetched by the nightly build, holds every
+ * (the JXS file, the narrow ones, 4:2:0, MLS, Bayer, CHigh); the full set holds every
  * codestream; the temporal differential coding sequences are not decoded yet and must be rejected as unsupported.
  */
 @DisplayName("JPEG XS conformance codestreams (ISO/IEC 21122-4)")
@@ -78,7 +78,7 @@ class JpegXsConformanceTest {
 
     private static void check(Conformance.Archive archive, Set<String> members, String number, String member)
             throws IOException {
-        var data = Files.readAllBytes(archive.fetch(member));
+        var data = Files.readAllBytes(archive.member(member));
         var image = JpegXsDecoder.decodeImage(MediaSource.of(data), LIMITS);
         var references = references(archive, members, number + ".pgx");
         if (image.cfaPattern().isPresent()) {
@@ -113,7 +113,7 @@ class JpegXsConformanceTest {
                 .timeBase(new Rational(1, 25)).width(1).height(1).build(),
                 VideoDecoderOptions.builder().limits(LIMITS).highBitDepth(true).build());
         for (var frame : frames) {
-            var data = Files.readAllBytes(archive.fetch(frame));
+            var data = Files.readAllBytes(archive.member(frame));
             assertThrows(MediaException.Unsupported.class, () -> JxsFrameDecoder.decode(data, 0, data.length, LIMITS),
                     frame);
             assertThrows(MediaException.Unsupported.class,
@@ -131,7 +131,7 @@ class JpegXsConformanceTest {
             throws IOException {
         var planes = new ArrayList<Plane>();
         var prefix = listing.contains("/") ? listing.substring(0, listing.lastIndexOf('/') + 1) : "";
-        for (var line : Files.readAllLines(archive.fetch(listing), StandardCharsets.ISO_8859_1)) {
+        for (var line : Files.readAllLines(archive.member(listing), StandardCharsets.ISO_8859_1)) {
             var raw = line.strip();
             if (raw.isEmpty()) {
                 continue;
@@ -139,8 +139,8 @@ class JpegXsConformanceTest {
             var name = prefix + raw;
             var header = prefix + raw.substring(0, raw.length() - 4) + ".h";
             assertTrue(members.contains(name) && members.contains(header), listing + " names " + raw);
-            planes.add(plane(Files.readString(archive.fetch(header), StandardCharsets.ISO_8859_1),
-                    Files.readAllBytes(archive.fetch(name))));
+            planes.add(plane(Files.readString(archive.member(header), StandardCharsets.ISO_8859_1),
+                    Files.readAllBytes(archive.member(name))));
         }
         return planes;
     }

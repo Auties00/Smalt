@@ -41,6 +41,6 @@ class AudioDecoderBehaviorTest {
             "fate-dst-64fs44-2ch.dff"})
     @DisplayName("smoke vectors: identical samples under every source behavior and clean faults")
     void vector(String name) throws IOException {
-        ReaderAsserts.audio("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+        ReaderAsserts.audio("vectors/" + name, Files.readAllBytes(Conformance.vector(name))).run();
     }
 }

@@ -724,6 +724,41 @@ class HdrColorTest {
             }
         }
 
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({
+                "skia-icc-misc-Rec2020_HLG_cicp.icc, BT2020, HLG",
+                "skia-icc-misc-P3_PQ_cicp.icc, SMPTE432, PQ",
+                "skia-icc-misc-Apple_pq_hagc_hdgm2.icc, BT2020, PQ"})
+        @DisplayName("reads the cicp tags of Skia's HLG and Display P3 PQ profiles and of an Apple PQ capture profile")
+        void foreignCicp(String name, ColorPrimaries primaries, TransferCharacteristics transfer) throws IOException {
+            var bytes = Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(name));
+            // the expectation is the file's own cicp tag (ICC.1:2022 10.3): primaries, transfer, matrix 0, full range
+            var cicp = tag(bytes, "cicp");
+            assertEquals(primaries.code(), bytes[cicp + 8] & 0xFF, name);
+            assertEquals(transfer.code(), bytes[cicp + 9] & 0xFF, name);
+            assertEquals(0, bytes[cicp + 10], name);
+            assertEquals(1, bytes[cicp + 11], name);
+            var profile = ColorProfile.parse(bytes);
+            assertTrue(profile.isHighDynamicRange(), name);
+            assertEquals(new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL, primaries, transfer),
+                    profile.colorInfo().orElseThrow(), name);
+            assertEquals("4.4.0", profile.version());
+            // the cicp tag defines the colorimetry: the conversion equals that of the profile Smalt writes for it
+            var lattice = new int[3 * 9 * 9 * 9];
+            var n = 0;
+            for (var r = 0; r < 9; r++) {
+                for (var g = 0; g < 9; g++) {
+                    for (var b = 0; b < 9; b++) {
+                        lattice[n++] = r * 8191;
+                        lattice[n++] = g * 8191;
+                        lattice[n++] = b * 8191;
+                    }
+                }
+            }
+            assertArrayEquals(convert16(ColorTransform.create(hdr(primaries, transfer), ColorProfile.srgb()), lattice),
+                    convert16(ColorTransform.create(profile, ColorProfile.srgb()), lattice), name);
+        }
+
         @Test
         @DisplayName("a HEIF or AVIF colr ICC profile with a PQ or HLG cicp tag describes high dynamic range")
         void heif() {

@@ -29,12 +29,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * two samples per photosite, the second being the image of one photodiode of each pair, which the decoder's dual
  * pixel image must equal photosite for photosite, as the two images the DNG decoder splits from the converter's file
  * must equal the CR3 decoder's. The oracle files are the
- * ones {@code tools/testdata/raw-oracle.py} writes into {@code <conformance cache>/raw-oracle}
+ * ones {@code tools/testdata/raw-oracle.py} writes into {@code <test cache>/raw-oracle}
  * ({@code -Dsmalt.test.rawOracle} overrides the directory); the tests are skipped without them.
  */
 class Cr3OracleTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     // the full-range level the converter writes instead of the camera's specular white level
     private static final double CONVERTER_FULL_RANGE = 16384;
@@ -100,7 +100,7 @@ class Cr3OracleTest {
     void photosites(RawSamples sample) {
         var oracle = converted(sample);
         SensorPlane decoded;
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             assertTrue(file.sensor != null, file.unsupported);
             var sensor = file.sensor;
@@ -136,7 +136,7 @@ class Cr3OracleTest {
             + "its photosites equal the converter's second samples")
     void dualPixel(RawSamples sample) {
         var oracle = converted(sample);
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             assertEquals(oracle.samplesPerPixel() == 2, file.dualPixel != null, "dual pixel image");
             if (file.dualPixel == null) {
@@ -176,7 +176,7 @@ class Cr3OracleTest {
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
         Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
         RawFile cr3;
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             cr3 = RawParser.parse(source, MediaLimits.DEFAULT);
             try (var converted = MediaSource.of(dng)) {
                 var file = RawParser.parse(converted, MediaLimits.DEFAULT);
@@ -196,7 +196,7 @@ class Cr3OracleTest {
     @DisplayName("the color filter pattern, image area, levels and white balance are the converter's")
     void levels(RawSamples sample) {
         var theirs = converted(sample);
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var ours = RawParser.parse(source, MediaLimits.DEFAULT);
             var sensor = ours.sensor;
             assertEquals(theirs.cfa(), sensor.cfa.toString(), "color filter pattern");
@@ -219,7 +219,7 @@ class Cr3OracleTest {
             }
             assertArrayEquals(theirs.neutral(), ours.color.asShotNeutral, 1e-5, "as-shot neutral");
             assertTrue(sensor.white != null, "white level");
-            if (theirs.white() == CONVERTER_FULL_RANGE || sample == RawSamples.CR3_EOS_1D_X_MARK_III) {
+            if (theirs.white() == CONVERTER_FULL_RANGE) {
                 assertTrue(sensor.white[0] < theirs.white(), "white level " + sensor.white[0] + " not below the converter's");
             } else {
                 assertEquals(theirs.white(), sensor.white[0], "white level");

@@ -1,6 +1,9 @@
 package com.github.auties00.smalt.video.vvc;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.video.VideoFrame;
 import org.junit.jupiter.api.DisplayName;
@@ -10,13 +13,18 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import java.util.zip.ZipFile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (the field streams' are of the woven frames). The base layer of the multi-layer streams must match the MD5 of the
  * reference decoder's layer 0 output, and the streams of the 4:2:2 and 4:4:4 profiles must be rejected as
  * unsupported. Each archive is pinned in {@code tools/testdata/vectors.tsv} and cached by
- * {@link Conformance#fetchListed}.
+ * {@link Conformance#vector}.
  */
 @DisplayName("VVC conformance bitstreams (ITU-T H.266.1, FDIS_r1)")
 class VvcConformanceTest {
@@ -125,8 +133,8 @@ class VvcConformanceTest {
             GPM_B_1|GPM_B_1.bit|45|82892deee3497f789882e4d7eb959254
             HLG_A_4|HLG_A_4.bit|65|5b1710cdb45fb0e0f519c118589c1b50
             HLG_B_4|HLG_B_4.bit|65|5b1710cdb45fb0e0f519c118589c1b50
-            HRD_A_3|HRD_A_3.bit|60|cde6c0d2416335173cf9d2ff8d32e460
-            HRD_B_2|HRD_B_2.bit|60|3bd31f8094e9df345aba8cc401a97c23
+            HRD_A_3|HRD_A_4.bit|60|df6c1c8ac43ebb4c2fa7de6933cc4a7e
+            HRD_B_2|HRD_B_3.bit|60|efa1dd53c308aea9674a0d787d788afd
             IBC_A_2|IBC_A_2.bit|17|1ed62c56e2a2f2698aadf59d8a3bd60d
             IBC_B_2|IBC_B_2.bit|17|62f32ae1c7a4f56f1492468dd85095f2
             IBC_C_2|IBC_C_2.bit|17|cbea0370a4a5bf4fab9dcd18054d857a
@@ -202,7 +210,7 @@ class VvcConformanceTest {
             QUANT_D_4|QUANT_D_4.bit|3|08dc6d75369d466436b179ba13de71b3
             QUANT_E_1|QUANT_E_1.bit|33|2a0c27f6481e7226faa54920bd6fd561
             RAP_A_1|RAP_A_1.bit|1|f46da2475bd22db8757dfa82f036a84f
-            RAP_B_1|RAP_B_1.bit|33|562412a45e9592b8bfe54bc64d0a7092
+            RAP_B_1|RAP_B_2.bit|33|562412a45e9592b8bfe54bc64d0a7092
             RAP_C_1|RAP_C_1.bit|65|2c75ed985df67e09dfea70a16fc3d91a
             RAP_D_1|RAP_D_1.bit|33|4907419d59e00a8c2789732205e31a47
             RPL_A_2|RPL_A_2.bit|60|d7fed587fea32a2b107adcc9e35e6980
@@ -253,7 +261,7 @@ class VvcConformanceTest {
             TRANS_D_4|TRANS_D_4.bit|64|cd6886010ea573c14f310400e09f8e52
             TREE_A_3|TREE_A_3.bit|1479|fffc6bc2778989543bca5112c1de97e7
             TREE_B_3|TREE_B_3.bit|3247|8547c6f156ad1cf9838d7844430cc24a
-            TREE_C_3|TREE_C_3.bit|4267|9776ba9d54f57a33be2d9807bc33c783
+            TREE_C_3|TREE_C_4.bit|4267|9776ba9d54f57a33be2d9807bc33c783
             VIRTUAL_A_3|VIRTUAL_A_3.bit|60|ec790ccc6e1e4e1ded0689821e11e787
             VIRTUAL_B_3|VIRTUAL_B_3.bit|60|5c64969ce1cb2d4b960f5809ac998874
             WPP_A_3|WPP_A_3.bit|49|8b2803b4d95dc20adf94e077a139860b
@@ -270,14 +278,14 @@ class VvcConformanceTest {
      * Name | bitstream entry | base layer output frames | MD5 of the reference decoder's layer 0 output.
      */
     private static final String LAYERED = """
-            OLS_A_5|OLS_A_5.bit|5|0dd8fadf466dc68466af7848b7cc85f0
-            OLS_B_5|OLS_B_5.bit|5|0dd8fadf466dc68466af7848b7cc85f0
-            OLS_C_5|OLS_C_5.bit|5|0dd8fadf466dc68466af7848b7cc85f0
-            VPS_A_3|VPS_A_3.bit|9|083ba0039cf01e461abb990b0965ae50
-            VPS_B_1|VPS_B_1.bit|10|71f312807953304f6bec1d4b568de172
-            VPS_C_2|VPS_C_2.bit|64|10f5abbddce19b9290ff73567757f0a0
-            ILRPL_A_2|ILRPL_A_2.bit|5|6dcef29e83c3a7d2c024c259976f6c95
-            OPI_B_3|OPI_B_3.bit|17|ac58502ff7032f8f1e1a64df628d1543
+            OLS_A_5|OLS_A_6.bit|5|00ea3a1ced72f55910b5c6f6ac0a175f
+            OLS_B_5|OLS_B_6.bit|5|00ea3a1ced72f55910b5c6f6ac0a175f
+            OLS_C_5|OLS_C_6.bit|5|00ea3a1ced72f55910b5c6f6ac0a175f
+            VPS_A_3|VPS_A_4.bit|9|1d082acbbe027ada2d2e6a564c0d59fa
+            VPS_B_1|VPS_B_2.bit|10|8c4c856e6927a36df775068140b91a15
+            VPS_C_2|VPS_C_3.bit|64|537e9fb7538978ecdd7906ceba60ca5d
+            ILRPL_A_2|ILRPL_A_3.bit|5|611bcde09f1f3af465c28525aa48101c
+            OPI_B_3|OPI_B_4.bit|17|3aeac79dafcea1d6af0a0a35de89f999
             """;
 
     /**
@@ -319,10 +327,30 @@ class VvcConformanceTest {
         return result.stream();
     }
 
+    /**
+     * Returns the archive of a stream: the FDIS_r1 vector {@code vvc-fdis-<name>.zip}, whose bytes may be those of a
+     * later revision of the stream (the H.266.1 (01/2026) set renamed its members, for example HRD_A_3 holds
+     * {@code HRD_A_4.*}), else the vector {@code vvc-v2026-<name>.zip} of a stream that set added.
+     */
+    static Path archive(String name) {
+        var fdis = "vvc-fdis-" + name + ".zip";
+        return Conformance.vector(Conformance.listed(fdis) ? fdis : "vvc-v2026-" + name + ".zip");
+    }
+
     static byte[] bitstream(String name, String entry) throws IOException {
-        var archive = Conformance.fetchListed("vvc-fdis-" + name + ".zip");
-        try (var zip = new ZipFile(archive.toFile())) {
+        try (var zip = new ZipFile(archive(name).toFile())) {
             return zip.getInputStream(zip.getEntry(entry)).readAllBytes();
+        }
+    }
+
+    /**
+     * Returns the bitstream of a stream's archive: its only {@code .bit} member, whatever revision names it.
+     */
+    static byte[] bitstream(String name) throws IOException {
+        try (var zip = new ZipFile(archive(name).toFile())) {
+            var entries = zip.stream().filter(entry -> entry.getName().endsWith(".bit")).toList();
+            assertEquals(1, entries.size(), "bitstreams of " + name);
+            return zip.getInputStream(entries.getFirst()).readAllBytes();
         }
     }
 
@@ -408,6 +436,130 @@ class VvcConformanceTest {
         var result = VvcTestStreams.decode(bitstream(vector.name(), vector.bitstream()), options);
         assertEquals(vector.frames(), result.frames(), "frame count of " + vector.name());
         assertEquals(vector.md5(), result.md5(), "base layer MD5 of " + vector.name());
+    }
+
+    /**
+     * Decodes the base layer of the multi-layer streams the H.266.1 (01/2026) set added and checks it against what
+     * the archive holds for layer 0: the MD5 of the reference decoder's layer 0 output ({@code *.layer0.yuv.md5}),
+     * the per-plane MD5s of every layer 0 picture of its output picture log ({@code *.opl}: layer, order count,
+     * width, height, then the MD5 of the Y, Cb and Cr planes), and the decoded picture hash SEI messages of the
+     * layer, which the decoder verifies. OLSMultiProfile_B_2 carries none of these for its independent base layer
+     * (its log and output are of layer 1 only, and it has no hash SEI message), so its base layer is checked for the
+     * picture count and size of its access units, which the layer 1 log gives.
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"ILRPL_B_1", "OLSMultiProfile_A_2", "OLSMultiProfile_B_2", "OLSMultiProfile_C_2",
+            "PPSScalWin_A_2", "PPSScalWin_B_2", "PPSScalWin_C_2", "SPATSCAL_A_4"})
+    @DisplayName("decodes the base layer of the multi-layer streams of the 2026 set as the reference decoder does")
+    void baseLayer2026(String name) throws IOException {
+        var stream = bitstream(name);
+        String layer0Md5 = null;
+        var log = new ArrayList<String[]>();
+        try (var zip = new ZipFile(archive(name).toFile())) {
+            for (var entry : zip.stream().toList()) {
+                var text = new String(zip.getInputStream(entry).readAllBytes(), StandardCharsets.UTF_8);
+                if (entry.getName().endsWith(".layer0.yuv.md5")) {
+                    layer0Md5 = text.strip().split("\\s+")[0].toLowerCase(Locale.ROOT);
+                } else if (entry.getName().endsWith(".opl")) {
+                    for (var line : text.split("\\R")) {
+                        if (!line.isBlank()) {
+                            log.add(line.replace(" ", "").split(","));
+                        }
+                    }
+                }
+            }
+        }
+        var layer0 = log.stream().filter(fields -> fields[0].equals("0")).toList();
+        var hashed = hasPictureHash(stream);
+        assertTrue(layer0Md5 != null || !layer0.isEmpty() || hashed || name.equals("OLSMultiProfile_B_2"),
+                name + " has no reference for its base layer");
+        var options = VvcDecoderOptions.builder().highBitDepth(true).hashVerification(true).build();
+        var digest = VvcTestStreams.md5();
+        // a decoded picture is valid only during the callback: its size and plane MD5s are taken there
+        var pictures = new ArrayList<String>();
+        var planes = new ArrayList<List<String>>();
+        try (var decoder = new VvcDecoder(VvcTestStreams.track(), options)) {
+            Consumer<VideoFrame> sink = frame -> {
+                VvcTestStreams.hash(digest, frame.picture());
+                pictures.add(frame.picture().width() + "x" + frame.picture().height());
+                planes.add(planeMd5s(frame.picture()));
+            };
+            for (var nal : VvcTestStreams.splitAnnexB(stream)) {
+                decoder.decode(VvcTestStreams.packet(nal), sink);
+            }
+            decoder.flush(sink);
+        }
+        assertFalse(pictures.isEmpty(), "no base layer picture in " + name);
+        if (layer0Md5 != null) {
+            assertEquals(layer0Md5, HexFormat.of().formatHex(digest.digest()), "layer 0 MD5 of " + name);
+        }
+        if (!layer0.isEmpty()) {
+            assertEquals(layer0.size(), pictures.size(), "layer 0 pictures of " + name);
+            for (var i = 0; i < layer0.size(); i++) {
+                var fields = layer0.get(i);
+                assertEquals(Integer.parseInt(fields[2]) + "x" + Integer.parseInt(fields[3]), pictures.get(i),
+                        "size of picture " + i + " of " + name);
+                assertEquals(List.of(fields[4], fields[5], fields[6]), planes.get(i),
+                        "plane MD5s of picture " + i + " of " + name);
+            }
+        }
+        if (name.equals("OLSMultiProfile_B_2")) {
+            assertEquals(log.size(), pictures.size(), "access units of " + name);
+            for (var picture : pictures) {
+                assertEquals("416x240", picture, "picture size of " + name);
+            }
+        }
+    }
+
+    /**
+     * Returns whether a stream carries a decoded picture hash SEI message (payload type 132) first in a base layer
+     * SEI NAL unit.
+     */
+    private static boolean hasPictureHash(byte[] stream) {
+        for (var nal : VvcTestStreams.nalUnits(stream)) {
+            var type = VvcTestStreams.type(nal);
+            if ((nal[0] & 0x3F) == 0 && (type == 23 || type == 24) && nal.length > 2 && (nal[2] & 0xFF) == 132) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns the MD5 of each plane of a picture, its samples laid out as {@link VvcTestStreams#hash} hashes them.
+     */
+    private static List<String> planeMd5s(Picture picture) {
+        return switch (picture) {
+            case YuvPicture p -> List.of(md5(p.y(), p.yStride(), p.width(), p.height()),
+                    md5(p.u(), p.uvStride(), p.chromaWidth(), p.chromaHeight()),
+                    md5(p.v(), p.uvStride(), p.chromaWidth(), p.chromaHeight()));
+            case Yuv16Picture p -> List.of(md5(p.y(), p.yStride(), p.width(), p.height()),
+                    md5(p.u(), p.uvStride(), p.chromaWidth(), p.chromaHeight()),
+                    md5(p.v(), p.uvStride(), p.chromaWidth(), p.chromaHeight()));
+            default -> throw new IllegalStateException("unexpected picture " + picture);
+        };
+    }
+
+    private static String md5(byte[] plane, int stride, int width, int height) {
+        var digest = VvcTestStreams.md5();
+        for (var y = 0; y < height; y++) {
+            digest.update(plane, y * stride, width);
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static String md5(short[] plane, int stride, int width, int height) {
+        var digest = VvcTestStreams.md5();
+        var row = new byte[width * 2];
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                var value = plane[y * stride + x];
+                row[2 * x] = (byte) value;
+                row[2 * x + 1] = (byte) (value >> 8);
+            }
+            digest.update(row);
+        }
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     @ParameterizedTest(name = "{0}")

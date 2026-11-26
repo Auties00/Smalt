@@ -7,6 +7,7 @@ import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import java.io.IOException;
@@ -14,8 +15,10 @@ import java.nio.file.Files;
 import java.time.Duration;
 import java.util.SplittableRandom;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Feeds damaged raw files to every entry point: random byte changes, truncations and overwritten
@@ -101,12 +104,46 @@ class RawRobustnessTest {
             "MRW_DYNAX_7D", "MRW_DIMAGE_5", "CRW_D30", "CRW_G1", "X3F_DP1", "X3F_SD14"})
     @DisplayName("damaged sample files only raise MediaException")
     void samples(RawSamples sample) throws IOException {
-        var original = Files.readAllBytes(sample.fetch());
+        var original = Files.readAllBytes(sample.path());
         var small = original.length < 4 << 20;
         var random = new SplittableRandom(sample.ordinal());
         assertTimeoutPreemptively(Duration.ofSeconds(240), () -> {
             for (var round = 0; round < (small ? 60 : 24); round++) {
                 exercise(mutate(original, random, round), small || round % 6 == 1);
+            }
+        });
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            // a NEF small raw image, whose samples are YCbCr rather than photosites (NEFCompression 8)
+            "NEF_D810_SMALL_RAW, true, small raw",
+            // an ARW of Sony's lossless compression at a reduced size, of three samples per pixel
+            "ARW_A9M3, true, no raw image",
+            // the new ARW coding of the ILCE-7M5 (TIFF compression 32766)
+            "ARW_A7M5, true, compression 32766",
+            // a Phase One IIQ Sv2 file (compression 6)
+            "IIQ_IQ140_SV2, true, compression 6",
+            // a CinemaDNG whose compression 7 tiles hold 12-bit DCT (SOF1) streams, which the DNG SDK's validator
+            // rejects as an invalid file too
+            "DNG_BLACKMAGIC_MICRO_CINEMA, false, lossless JPEG"
+    })
+    @DisplayName("real files of a coding the decoder does not support raise Unsupported naming it, and damaged copies "
+            + "of them only MediaException")
+    void unsupported(RawSamples sample, boolean described, String feature) throws IOException {
+        var original = Files.readAllBytes(sample.path());
+        var info = RawDecoder.info(MediaSource.of(original));
+        if (described) {
+            assertFalse(info.isDecodable());
+            assertTrue(info.unsupportedFeature().orElseThrow().contains(feature), info.unsupportedFeature().orElseThrow());
+        }
+        var failure = assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decode(MediaSource.of(original)));
+        assertTrue(failure.getMessage().contains(feature), failure.getMessage());
+        assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decodeRaw(MediaSource.of(original)));
+        var random = new SplittableRandom(sample.ordinal());
+        assertTimeoutPreemptively(Duration.ofSeconds(240), () -> {
+            for (var round = 0; round < 24; round++) {
+                exercise(mutate(original, random, round), round % 6 == 1);
             }
         });
     }

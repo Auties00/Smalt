@@ -48,9 +48,7 @@ public class OpusBenchmark {
 
     @Setup
     public void setup() throws Exception {
-        var mp3 = Conformance.fetch("librivox-art_of_war_03-04_64kb.mp3",
-                "https://archive.org/download/art_of_war_librivox/art_of_war_03-04_sun_tzu_64kb.mp3",
-                "57e879fe7822578fd22010f1280185799a119a3482e025d9a71f49878ff45ba7");
+        var mp3 = Conformance.vector("librivox-art_of_war_03-04_64kb.mp3");
         var raw = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), List.of("-v", "error", "-t", Integer.toString(SECONDS),
                 "-i", mp3.toString(), "-ac", "1", "-ar", "16000", "-f", "f32le", "-"));
         var temp = Path.of(System.getProperty("java.io.tmpdir"));

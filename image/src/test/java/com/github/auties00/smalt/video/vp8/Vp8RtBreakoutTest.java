@@ -105,7 +105,7 @@ class Vp8RtBreakoutTest {
     @Test
     @DisplayName("on a natural clip WebRTC's threshold decodes to the reconstruction and keeps quality")
     void naturalClip() throws IOException {
-        var frames = Vp8VideoEncoderTest.clipOrSynthetic("johnny480.yuv", 640, 480, 30);
+        var frames = Vp8VideoEncoderTest.clip("johnny480.yuv", 640, 480, 30);
         var config = Vp8VideoEncoderTest.with(Vp8VideoEncoderTest.config(640, 480, 600_000), 6, true, 1, 1, 1);
         var plain = Vp8VideoEncoderTest.encode(config, frames, 30, true, i -> false, null);
         var broken = Vp8VideoEncoderTest.encode(config.withEncodeBreakout(1), frames, 30, true, i -> false, null);

@@ -32,88 +32,16 @@ import static org.junit.jupiter.api.Assertions.*;
  * errors.
  */
 class ApngTest {
-    private static final String BASE = "http://philip.html5.org/tests/apng/";
-
-    private static final String HASHES = """
-            000 f8bb08c2c717a0ca4d0a513613797acb174b493001a7bd7bb84bc40b67138f50
-            001 def05de6147136409ac8133e98d5e25de5ba90f151ac98430c62f7835bb64788
-            002 328ae6149b8c65f0f7bb4afbc5cee51db44e332d8d4b8ca1619831f254efd836
-            003 27b99d5a125aa7539cb7e804152ceb9b090f71d1d0a63a65cb07b7761f6aa3e0
-            004 3e0ffdbe7dc6dad05dfc4cacd712b76c1121cd7378671212ae000d76c07b1a4e
-            005 e3b10731287532eb2fe7d3c82ea338e49201e8d3366f8c295ba38c8ea30508c4
-            006 a61b0d873abd84fd4051500189c4387deb7f33603ccb0057e3e3514b47a63199
-            007 1abab0c7de5252a16da34777ff34c4a29c6000493d23ac1777cd17415e6aab33
-            008 8f26f544d5f7f0c8d4448ca020c93f79b64e1d607c7c561082bc989ca2e91fad
-            009 72ede26035cd5259568014444ae6d0adfc6e17a0a32a0cdab0efd636140ac0c2
-            010 eaea7da1805f17d8d0914574e797f700d52745ea7f37304e2c7510faafb43d85
-            011 24ba2f2427076d76284a32ae7f5b57ea82b134df4c71471d90f17fc8b3b549f9
-            012 28138dd4a4ad56f86c18216b051b96a1bb353b69ebd85ce272928b085bb84400
-            013 d0495c63d383f963704123f44272209877656fb0cee4b59a2099486c2d761e06
-            014 e3d4ba499c333a600dd1e42f374a9a68fb783b0f3274091ab34f5b395462eae8
-            015 6db2a90911b40067b7f35b01869115f081858ee15b28374e57c51c7e5c0cb524
-            016 62a455c588f84633ed9bbbe8993d58e834e9c7c30a4f9e495bf144caf38351c7
-            017 68ad45a3c5f082981b2229d6be192a492d067051d3ef307916385b60f5856522
-            018 fcfb37fa3cbdff3733a1b4158daa4d79e8b73fb2451dfd26a060fd2fdc12fd59
-            019 0ea550eed2be77a58dca9a2799669d4f501793dca16d723bd4b13d973a657d11
-            020 a291d9b89156d4d8eba9e658b44f38ca1543fb4fab10d3b00c3fd4ea306d5844
-            021 2b571f7034ef1fb355182cf00fa6ccd7d784720709f229e3bcc5948abf2f81ee
-            022 dc13592222a89d9d68c9f9e36dd16f716217fad2da7026e273b524eaaf11a231
-            023 94a663efd047fd6557178a19559bd3615a31aba574e3a9a4fa958fd3e6a15e05
-            024 382ad9a12422764d71eecf212ca63197a85cfb3469e729aa90ba925fb01ed3d8
-            025 d0806bb174bd52a1591cefbe061d81403de6ccc0b608babb99ac57dd1e0aec3f
-            026 dbf96c3cc3be0f3ce4cf6dfb36bb676459b3afcfc001765adbce276d17873f7d
-            027 cb5f16080740c2413b0de42055e5cccf2c0e4e959582ed4da38d88a65e095e88
-            028 c078e6c56dcadc50ee85009647289aecd52e893c37c50bce622ef8d648a47c07
-            029 964b047e1e08b8eb4fba4e1d007b8ed466552db0beb384f8e3fcaa26b254d85b
-            030 96e11a4777d431af686188e0d0de0588c953b649442fa6ffcdeaf50e8cbd76a0
-            031 3529e70621fe74654db60838bbef96ac055bc0248615d6e3ef51b7db0bda1ff2
-            032 14efff3306cab1c0fa02691b812d8e88582498c8ba8804ab12fa1a23b3dc86f2
-            033 82da2ad317a5b3ed2659f063354271ae4051fc3fad726c0092db8b7e6442d351
-            034 343fff1a6b66347fb9b1a14d37f93c20600b58cd853114de54326be1a68666a4
-            035 05693186fb3d9c91ed0d4451399b3c4340741789c373ff352b2dc49dd79c7b46
-            036 06195c323179b78da31ec2e38cee19f69c637f4f6201b44631d184ad9749d9d0
-            037 82b702bd90bfac4b03cdb635bc7b9800f7c61d28e588811632b2a33706b0a693
-            038 2a9179d9263c2b0bb3140abce3ec1b088b06a49320c4705111599a087d22b585
-            039 e334338085eef64d8ffae1b58c2512c2d4b01c8c95621e8e799e6fa34d7a2be1
-            040 59068aa0bfc605418e01847be21a9014ee5fc54102f4e9d85719b2a0a7e38407
-            041 41ae985b03b960195e022a2423041ffe4838d21415c4f8b329eca75a590f3a01
-            042 c76009a8070ba0f2f1d88738e6d75c598e9a3da571e042c6b253da3e1d856eaf
-            043 a50d974cac6b8d05f0e6708133133480867d6e2f8ac6632429936f0186b009e6
-            044 b0227c0faf35a64e2e4f3f5b886dcdd03731fa9462fd339864fe04e059ea7b6c
-            045 d8ee2d43e7f1c50bc0685bbe9cfab24637562f6bf22730c982e68bd35fa08fa2
-            046 508d4aef37919636dd094392564824e493f5e39b1f0fbe7e3776005820506997
-            047 f36dbc297317c54b2f89924b923dbd87e912362fa7f7ef3a06b5fb85ca68474e
-            048 302d05341f1b1c0ca1d659564e9a800b627ac505dd679a4e5b7495989cc0570e
-            049 5dda3b6b1675725c14e020f9b9048472d76d7587660b309bc95025e5baa01c17
-            050 da82a37bd07f9d215d0e4afa201b62c8c91d6900b5ded2faae77a5584c6ff7f0
-            051 951961565e23de5c98c71663dfac216468d9a7f2941bde97147c596a4de2d6ab
-            052 340c7eceb27ea6941d4883acfea3a491a626d6435e76e930661d2fb6aa3c4937
-            053 6b97190824fe6fb92621efe716bf559e2ce079e4954ad65655e36a33f0642b0b
-            054 45ad1e3a15c34fc8becb77787503d46c4f08f3206e2e5d3967426ed217743ce1
-            055 bc9294f9ea864533a2a58e3afc7b68f921383b67f7c164406bed4b3a0224366e
-            056 0da68015c8eb0a048ac01ebdb04717e85d3580f2086c8668d59b6cc0bd99e34c
-            057 fc20e7ebe22a864c07842eaebf868a35035daf078aa4845798d91189056957ec
-            058 20089731e12ba9662a465ec3370e93032939f1140bfbf3230f2cde0b2f412afb
-            059 0d4f83e58c6d6c75eee9980b86349adb5f0e30308cc0741753186993d3a23232
-            060 7f3d4ea1c3f754bcd70f2f8d6f153166860eca7a0517e2ac03a9a593ce47f5bb
-            """;
-
     private static final int GREEN = 0xFF00FF00;
     private static final int BLUE = 0xFFFF0000;
     private static final int YELLOW = 0xFF00FFFF;
 
     private static byte[] philip(String id) {
-        for (var line : HASHES.strip().split("\n")) {
-            var parts = line.trim().split(" ");
-            if (parts[0].equals(id)) {
-                try {
-                    return Files.readAllBytes(Conformance.fetch("apng-philip-" + id + ".png", BASE + id + ".png", parts[1]));
-                } catch (java.io.IOException exception) {
-                    throw new java.io.UncheckedIOException(exception);
-                }
-            }
+        try {
+            return Files.readAllBytes(Conformance.vector("apng-philip-" + id + ".png"));
+        } catch (java.io.IOException exception) {
+            throw new java.io.UncheckedIOException(exception);
         }
-        throw new IllegalArgumentException(id);
     }
 
     /** One decoded frame: packed canvas copy and duration. */

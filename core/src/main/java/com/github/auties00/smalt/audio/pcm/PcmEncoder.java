@@ -844,7 +844,8 @@ public final class PcmEncoder implements AudioEncoder {
     /**
      * Encodes a 16-bit linear sample as G.711 mu-law.
      *
-     * @implNote This implementation follows the biased segment encoding of ITU-T G.711: the
+     * @implNote This implementation follows the biased segment encoding of ITU-T G.711, bit-exact with the
+     * reference encoder of ITU-T G.191 (the magnitude of a negative sample is its one's complement): the
      * magnitude is clipped to {@value #MULAW_CLIP}, biased by {@code 0x84}, its segment is the
      * position of its highest set bit above bit 7, and the code (sign, segment, four mantissa
      * bits) is complemented.
@@ -856,8 +857,10 @@ public final class PcmEncoder implements AudioEncoder {
         var sign = 0;
         var value = pcm;
         if (value < 0) {
+            // the one's complement, as for A-law: ITU-T G.191's reference encoder takes the magnitude of a negative
+            // sample as ~x, which keeps the decision levels symmetric about -1/2
             sign = 0x80;
-            value = -value;
+            value = ~value;
         }
         value = Math.min(value, MULAW_CLIP) + MULAW_BIAS;
         var exponent = 31 - Integer.numberOfLeadingZeros(value >> 7);

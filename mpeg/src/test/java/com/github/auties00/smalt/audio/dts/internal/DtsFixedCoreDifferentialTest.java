@@ -229,7 +229,7 @@ final class DtsFixedCoreDifferentialTest {
      */
     private static List<byte[]> extensionUnits(String vector, int channels, int mask, int speakers, int samples,
                                                int rateCode) throws IOException {
-        var data = Files.readAllBytes(Conformance.fetchListed("dts-" + vector + ".dtshd"));
+        var data = Files.readAllBytes(Conformance.vector("dts-" + vector + ".dtshd"));
         var units = new ArrayList<byte[]>();
         var position = 0;
         while (position + 8 <= data.length) {
@@ -978,7 +978,7 @@ final class DtsFixedCoreDifferentialTest {
      */
     private static List<byte[]> fateUnits(String vector) {
         var units = new ArrayList<byte[]>();
-        try (var source = MediaSource.of(Conformance.fetchListed("dts-" + vector + ".dtshd"));
+        try (var source = MediaSource.of(Conformance.vector("dts-" + vector + ".dtshd"));
              var demuxer = new DtsDemuxer(source)) {
             demuxer.tracks();
             Packet packet;

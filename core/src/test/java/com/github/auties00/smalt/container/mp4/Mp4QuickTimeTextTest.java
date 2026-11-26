@@ -87,4 +87,11 @@ class Mp4QuickTimeTextTest {
         assertEquals(List.of(SubtitleCue.of(0, 1_000_000, "<font face=\"Courier\"><i>Hello</i></font> there"),
                 SubtitleCue.of(2_000_000, 3_000_000, "<font face=\"Courier\"><i>Bye</i></font> now")), cues);
     }
+
+    @Test
+    @DisplayName("reads FATE's mov_text capability tester as ffprobe does")
+    void fateCapabilityTester() {
+        com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe("fate-sub-MovText_capability_tester.mp4",
+                source -> new Mp4Demuxer(source));
+    }
 }

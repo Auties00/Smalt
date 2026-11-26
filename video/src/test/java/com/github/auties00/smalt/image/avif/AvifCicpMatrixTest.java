@@ -193,4 +193,32 @@ class AvifCicpMatrixTest {
             assertTrue(Math.abs((expected.v()[i] & 0xFF) - image.planes()[2][i]) <= 1, "Co " + i);
         }
     }
+
+    /**
+     * libavif's color test files: SDR sRGB, HDR PQ in sRGB, Display P3 and BT.2020 primaries, wide-gamut HDR, and a
+     * natural HDR picture in BT.2020 and sRGB primaries. The color information equals the nclx box ffprobe reads, and
+     * the samples equal ffmpeg's AV1 decoding.
+     */
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({"libavif-colors_sdr_srgb.avif,1,13,6",
+            "libavif-colors_hdr_srgb.avif,1,16,6", "libavif-colors_hdr_p3.avif,12,16,6",
+            "libavif-colors_hdr_rec2020.avif,9,16,9", "libavif-colors_wcg_hdr_rec2020.avif,9,16,9",
+            "libavif-seine_hdr_rec2020.avif,9,16,9", "libavif-seine_hdr_srgb.avif,1,16,6"})
+    @org.junit.jupiter.api.DisplayName("read libavif's CICP test files as ffprobe and ffmpeg do")
+    void libavifFiles(String vector, int primaries, int transfer, int matrix) {
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        var image = AvifDecoder.decode(MediaSource.of(data), ImageDecoderOptions.builder().highBitDepth(true).build());
+        var color = switch (image.picture()) {
+            case Yuv16Picture yuv -> yuv.color();
+            case com.github.auties00.smalt.image.YuvPicture yuv -> yuv.color();
+            default -> throw new AssertionError(image.picture().toString());
+        };
+        org.junit.jupiter.api.Assertions.assertEquals(ColorPrimaries.of(primaries), color.primaries(), vector);
+        org.junit.jupiter.api.Assertions.assertEquals(TransferCharacteristics.of(transfer), color.transfer(), vector);
+        org.junit.jupiter.api.Assertions.assertEquals(MatrixCoefficients.of(matrix), color.matrix(), vector);
+        org.junit.jupiter.api.Assertions.assertEquals(ColorRange.FULL, color.range(), vector);
+        AvifConformanceTest.assertPlanesEqual(AvifReference.primary(data), AvifReference.Planes.of(image.picture()),
+                vector);
+    }
 }

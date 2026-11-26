@@ -4,7 +4,7 @@
 The test decodes a pyramid level of two public Aperio slides of the OpenSlide test data (compression
 33005, RGB codestreams with the irreversible component transform, and 33003, Y, Cb and Cr codestreams
 with subsampled chroma) and compares it with two renderings this script writes into
-<conformance cache>/svs-oracle (-Dsmalt.test.svsOracle overrides the directory):
+<cache>/svs-oracle (SMALT_CACHE, default ~/.smalt/cache; -Dsmalt.test.svsOracle overrides the directory):
 
   <slide>-page<k>.rgba       OpenSlide's read_region of the whole level, RGBA;
   <slide>-page<k>.openjpeg   for 33005 only, the level assembled from its tiles as OpenJPEG decodes
@@ -14,7 +14,7 @@ OpenSlide and imagecodecs are used as black boxes: pip install openslide-python 
 tifffile imagecodecs numpy (made with openslide-python 1.4.6, openslide-bin 4.0.1, tifffile 2026.10.15
 and imagecodecs 2026.10.10, which bundles OpenJPEG 2.5.4), on Windows: the OpenJPEG of imagecodecs'
 Linux wheel rounds the irreversible component transform of one sample of the 33005 level otherwise. The
-slides are fetched first when the cache lacks them.
+slides are read from the hosted test data (SMALT_TESTDATA, see tools/testdata/README.md).
 
     python -I tools/testdata/svs-oracle.py
 """
@@ -34,17 +34,6 @@ SLIDES = [
     ('openslide-aperio-cmu-1-jp2k-33005.svs', 3, 2, True),
     ('openslide-aperio-jp2k-33003-1.svs', 3, 2, False),
 ]
-
-
-def vector(name):
-    rows = testdata.read_tsv(testdata.VECTORS, testdata.VECTOR_COLUMNS)
-    for row in rows:
-        if row['name'] == name:
-            path = os.path.join(testdata.conformance_dir(), name)
-            if not testdata.valid(path, row['sha256']):
-                testdata.download(row['url'], path, row['sha256'])
-            return path
-    raise SystemExit(name + ' is not in vectors.tsv')
 
 
 def openjpeg(path, page):
@@ -67,10 +56,9 @@ def openjpeg(path, page):
 
 
 def main():
-    directory = os.path.join(testdata.conformance_dir(), 'svs-oracle')
-    os.makedirs(directory, exist_ok=True)
+    directory = testdata.cache_dir('svs-oracle')
     for name, page, level, with_openjpeg in SLIDES:
-        path = vector(name)
+        path = testdata.vector(name)
         slide = openslide.OpenSlide(path)
         width, height = slide.level_dimensions[level]
         region = slide.read_region((0, 0), level, (width, height)).convert('RGBA')

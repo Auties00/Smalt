@@ -30,6 +30,6 @@ class Vp8BehaviorTest {
     @ValueSource(strings = {"vp80-00-comprehensive-001.ivf"})
     @DisplayName("smoke vectors: identical frames under every source behavior and clean faults")
     void vector(String name) throws IOException {
-        ReaderAsserts.video("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+        ReaderAsserts.video("vectors/" + name, Files.readAllBytes(Conformance.vector(name))).run();
     }
 }

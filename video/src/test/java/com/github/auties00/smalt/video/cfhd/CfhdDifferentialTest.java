@@ -257,4 +257,73 @@ class CfhdDifferentialTest {
         org.junit.jupiter.api.Assertions.assertThrows(MediaException.Malformed.class,
                 () -> decoder.decodeFrame(frame, 0, frame.length));
     }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"cfhd-fate-cfhd_422.avi,yuv422p10le", "cfhd-fate-cfhd_444.avi,gbrp12le",
+            "cfhd-fate-cfhd_odd.mov,yuv422p10le", "cfhd-fate-cineform_yuv10b_hd.mov,yuv422p10le"})
+    @DisplayName("decodes GoPro-written files as ffmpeg does")
+    void decodesGoProFiles(String name, String pixelFormat) {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var stream = IntraTesting.demux(file);
+        assertEquals(Codec.CFHD, stream.track().codec());
+        var decoder = VideoDecoders.create(stream.track(), VideoDecoderOptions.defaults());
+        var ours = new ByteArrayOutputStream();
+        var frames = new int[1];
+        for (var packet : stream.packets()) {
+            decoder.decode(packet, frame -> {
+                assertEquals(stream.track().width(), frame.picture().width());
+                assertEquals(stream.track().height(), frame.picture().height());
+                frames[0]++;
+                ours.writeBytes(raw(frame.picture()));
+            });
+        }
+        decoder.flush(frame -> {
+            frames[0]++;
+            ours.writeBytes(raw(frame.picture()));
+        });
+        var expected = IntraTesting.ffmpegDecode(file, pixelFormat, 0);
+        assertEquals(expected.length, ours.size(), name + " (" + frames[0] + " frames)");
+        var difference = Tolerance.Difference.of(reduce(expected, 16), reduce(ours.toByteArray(), 16));
+        System.out.printf("%s: %s%n", name, difference);
+        FFMPEG.check(name, difference);
+    }
+
+    @Test
+    @DisplayName("decodes a GoPro Studio Bayer file to the photosites ffmpeg reads")
+    void decodesGoProBayerFile() {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("cfhd-samples-lower_res.mov");
+        var stream = IntraTesting.demux(file);
+        var width = stream.track().width();
+        var height = stream.track().height();
+        var decoder = new CfhdDecoder(stream.track(), CfhdDecoderOptions.builder()
+                .bayerOutput(CfhdBayerOutput.MOSAIC).build());
+        var frame = 0;
+        for (var packet : stream.packets()) {
+            var picture = decoder.decodeFrame(packet.data(), 0, packet.data().length);
+            if (picture == null) {
+                continue;
+            }
+            var mosaic = (Yuv16Picture) picture;
+            assertEquals(width, mosaic.width());
+            assertEquals(height, mosaic.height());
+            var ours = new int[width * height];
+            for (var y = 0; y < height; y++) {
+                for (var x = 0; x < width; x++) {
+                    ours[y * width + x] = mosaic.y()[y * mosaic.yStride() + x] & 0xFFFF;
+                }
+            }
+            var coded = IntraTesting.ffmpegDecodeFrame(file, List.of(), "bayer_rggb16le", frame, width * height * 2);
+            var theirs = new int[ours.length];
+            for (var i = 0; i < theirs.length; i++) {
+                theirs[i] = (coded[2 * i] & 0xFF) | (coded[2 * i + 1] & 0xFF) << 8;
+            }
+            // the file's source had its curve applied before encoding (PCRV), so the mosaic keeps it and compares
+            // with ffmpeg's photosites directly; the bound is CfhdBayerTest's for ffmpeg's wavelet rounding
+            var difference = Tolerance.Difference.of(theirs, ours);
+            System.out.printf("lower_res frame %d: %s%n", frame, difference);
+            Tolerance.maxAbs(512).and(Tolerance.meanAbs(48)).check("lower_res frame " + frame, difference);
+            frame++;
+        }
+        assertEquals(stream.packets().size(), frame);
+    }
 }

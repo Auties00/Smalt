@@ -717,7 +717,10 @@ final class Opcodes {
     }
 
     /**
-     * Applies {@code GainMap}: bilinear interpolation of a coarse gain grid, replicated outside it.
+     * Applies {@code GainMap}: bilinear interpolation of a coarse gain grid, replicated outside it, at the center
+     * of each photosite ({@code (row + 0.5) / height} and {@code (column + 0.5) / width} in the map's relative
+     * coordinates), where the DNG SDK's validator samples it: the steep Bayer-plane maps of a Pixel 6 Pro file
+     * reproduce its stage 2 image only at the centers.
      *
      * @param reader the parameters
      * @param surface the image
@@ -743,11 +746,11 @@ final class Opcodes {
         var width = surface.width();
         var columnPosition = new float[Math.max(0, area.right - area.left)];
         for (var column = area.left; column < area.right; column += area.colPitch) {
-            columnPosition[column - area.left] = (float) Math.clamp(((double) column / width - originH) / spacingH,
+            columnPosition[column - area.left] = (float) Math.clamp(((column + 0.5) / width - originH) / spacingH,
                     0, pointsH - 1);
         }
         for (var row = area.top; row < area.bottom; row += area.rowPitch) {
-            var v = Math.clamp(((double) row / height - originV) / spacingV, 0, pointsV - 1);
+            var v = Math.clamp(((row + 0.5) / height - originV) / spacingV, 0, pointsV - 1);
             var v0 = Math.min((int) v, pointsV - 1);
             var v1 = Math.min(v0 + 1, pointsV - 1);
             var fv = (float) (v - v0);

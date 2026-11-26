@@ -13,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -264,6 +265,55 @@ class IcnsCodecTest {
             var pages = IcnsDecoder.openPages(MediaSource.of(file));
             assertEquals(5, pages.pageCount());
             assertArrayEquals(pattern(32, 10), RasterTesting.tight(pages.read(4).picture()));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @DisplayName("decodes Pillow's test icons as Pillow does")
+        @CsvSource(delimiter = '|', value = {
+                "pillow|16=c89c49abb7ef268252efff4b99a383c2648bfbf159122e567bc323dc0415d40a,32=d6081f5569d6005d3171df5a6c14ca13eb6fa5c4c931c614a0fa23f2d79bbf4a,64=05a27e97488953b140690c74bd4fb700e370f035d98c6195c7ec7e2e46ccc1a9,128=1a9fb4ce2d6f706fa1143d21f40bfae7c4f152d4235c7b24beabba4c75e5f8b1,256=9d302c617999a8a3b2de6ee9b239717fb8d104590d9b0528ce9b08b2effb158f,512=3b3708f2e892b78670a3e1fd172afd313e2ff8b314b017591be774e5affb8356,1024=cb85ae7eb022b3337664317cb961e09874d80ed2c37a472e31a990d8609cc21d",
+                "pillow2|16=c89c49abb7ef268252efff4b99a383c2648bfbf159122e567bc323dc0415d40a,32=d6081f5569d6005d3171df5a6c14ca13eb6fa5c4c931c614a0fa23f2d79bbf4a,128=1a9fb4ce2d6f706fa1143d21f40bfae7c4f152d4235c7b24beabba4c75e5f8b1,256=9d302c617999a8a3b2de6ee9b239717fb8d104590d9b0528ce9b08b2effb158f,512=3b3708f2e892b78670a3e1fd172afd313e2ff8b314b017591be774e5affb8356",
+                "pillow3|32=f500c9118149a52c5d306a456e6abc8c41166986fe369617f8ee3a151e878d0d,64=7ea3133b789092587f5f6b420166a81e766b462ddad8667af3ba8c1cbb2b5429,128=b59b67d85ef1298136579b81fcf2fa9b48a5d815945b8701ddbdb059088d1f27,256=b41bab070720547064e1a630f5d0a857f3a7f343045a578a5a75d56f27324ee1,512=c3734735573e2d1a2b087662614e7dfb401de0b7a5dfd254249af17781fc276d,1024=f5b98ca4f717b883b5ac8864255e8f0bb4df9e2ef9f74009f132430dd1aa3404"})
+        void pillowFiles(String name, String digests) throws IOException {
+            // SHA-256 of Pillow 13.0.0's IcnsFile.getimage(size).convert("RGBA").tobytes() for each size it lists, by
+            // pixel size (sizes of one pixel size give the same image); every Smalt entry of a listed size must match
+            var file = Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector("icns-pillow-" + name
+                    + ".icns"));
+            var expected = new java.util.TreeMap<Integer, String>();
+            for (var pair : digests.split(",")) {
+                var parts = pair.split("=");
+                expected.put(Integer.parseInt(parts[0]), parts[1]);
+            }
+            var matched = new java.util.TreeSet<Integer>();
+            for (var entry : IcnsDecoder.entries(MediaSource.of(file))) {
+                var digest = expected.get(entry.width());
+                if (digest == null || entry.dark()) {
+                    continue;
+                }
+                assertEquals(digest, sha256(decode(file, entry.index())), name + " " + entry.type());
+                matched.add(entry.width());
+            }
+            assertEquals(expected.keySet(), matched, name + ": every size Pillow lists");
+        }
+
+        @Test
+        @DisplayName("reads Pillow's decompression-bomb icon in bounded time, with only media exceptions")
+        void pillowBomb() throws IOException {
+            // the file holds an ic08 element and an unknown element whose bogus size makes Pillow compute a 2.6e11
+            // pixel image; Smalt skips unknown elements, so it may decode the ic08 image, or refuse the file
+            var file = Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "icns-pillow-oom-8ed3316a4109213ca96fb8a256a0bfefdece1461.icns"));
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(30), () -> {
+                try {
+                    for (var entry : IcnsDecoder.entries(MediaSource.of(file))) {
+                        var image = IcnsDecoder.decode(MediaSource.of(file), entry.index(),
+                                ImageDecoderOptions.defaults());
+                        assertEquals(entry.width(), image.picture().width());
+                    }
+                    IcnsDecoder.decode(MediaSource.of(file));
+                } catch (com.github.auties00.smalt.MediaException allowed) {
+                    // refusing the hostile file is fine
+                }
+            });
         }
 
         @Test

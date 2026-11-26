@@ -45,7 +45,7 @@ class Vp9GoodComparisonTest {
     Path temp;
 
     static List<YuvPicture> foreman(int frames) throws IOException {
-        var file = Conformance.fetchListed("foreman_qcif.y4m");
+        var file = Conformance.vector("foreman_qcif.y4m");
         var bytes = Files.readAllBytes(file);
         var pos = 0;
         while (bytes[pos] != '\n') {

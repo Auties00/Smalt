@@ -32,7 +32,7 @@ final class DtsDecoderRobustnessTest {
             .sampleRate(48000).build();
 
     private static List<byte[]> units(String vector) {
-        var file = Conformance.fetchListed("dts-" + vector + ".dtshd");
+        var file = Conformance.vector("dts-" + vector + ".dtshd");
         var units = new ArrayList<byte[]>();
         try (var demuxer = new DtsDemuxer(MediaSource.of(file))) {
             Packet packet;

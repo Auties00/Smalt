@@ -214,6 +214,48 @@ class JpegLosslessTest {
             assertEquals(43, image.picture().height());
         }
 
+        @ParameterizedTest(name = "predictor {0}")
+        @org.junit.jupiter.params.provider.ValueSource(ints = {1, 4, 7})
+        @DisplayName("code libjpeg-turbo 3.2.1's 16-bit monkey16.png losslessly, as djpeg reads it back")
+        void monkey16(int predictor) throws java.io.IOException {
+            // monkey16.png replaced monkey16.ppm as libjpeg-turbo's 16-bit lossless source
+            var png = com.github.auties00.smalt.image.png.PngDecoder.decode(MediaSource.of(java.nio.file.Files
+                    .readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector("ljt-monkey16.png"))), WIDE);
+            var source = assertInstanceOf(com.github.auties00.smalt.image.Rgba16Picture.class, png.picture());
+            var jpeg = com.github.auties00.smalt.image.jpeg.JpegEncoder.encode(source,
+                    com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.builder().lossless(true)
+                            .predictor(predictor).build());
+            // the RGB components decode to planes; their samples are compared as RGBA
+            var decoded = com.github.auties00.smalt.image.ops.ImageOps.toRgba16(decode(jpeg, WIDE).picture());
+            assertEquals(source.width(), decoded.width());
+            for (var y = 0; y < source.height(); y++) {
+                for (var x = 0; x < source.width() * 4; x++) {
+                    assertEquals(source.pixels()[y * source.stride() + x], decoded.pixels()[y * decoded.stride() + x],
+                            "sample " + x + " of row " + y);
+                }
+            }
+            com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.DJPEG);
+            var path = com.github.auties00.smalt.testkit.image.RasterTesting.write("monkey16-" + predictor + ".jpg", jpeg);
+            var ppm = com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.DJPEG,
+                    java.time.Duration.ofMinutes(1), List.of(path.toString()));
+            // djpeg writes a 16-bit binary PPM, big-endian; the header ends after the maximum value's newline
+            var header = 0;
+            for (var newlines = 0; newlines < 3; header++) {
+                if (ppm[header] == '\n') {
+                    newlines++;
+                }
+            }
+            for (var pixel = 0; pixel < source.width() * source.height(); pixel++) {
+                var y = pixel / source.width();
+                var x = pixel % source.width();
+                for (var c = 0; c < 3; c++) {
+                    var at = header + 2 * (3 * pixel + c);
+                    var value = (ppm[at] & 0xFF) << 8 | ppm[at + 1] & 0xFF;
+                    assertEquals(source.pixels()[y * source.stride() + 4 * x + c] & 0xFFFF, value, "djpeg sample");
+                }
+            }
+        }
+
         @Test
         @DisplayName("take the frame height from a DNL segment")
         void dnl() {

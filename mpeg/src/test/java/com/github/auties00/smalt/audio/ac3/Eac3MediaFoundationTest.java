@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -38,18 +39,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * decoder synthesizes noise.
  */
 class Eac3MediaFoundationTest {
-    private static final String TICKET = "https://trac.ffmpeg.org/raw-attachment/ticket/10958/"
-            + "08%20-%20It%27s%20Not%20Unusual_";
-
     private static final int FRAME = 1536;
 
     @TempDir
     Path directory;
 
-    private static byte[] ticket(String rate, String sha256) {
+    private static byte[] ticket(String rate) {
         try {
-            return Files.readAllBytes(Conformance.fetch("ffmpeg-trac-10958-its-not-unusual-" + rate + ".ec3",
-                    TICKET + rate + ".ec3", sha256));
+            return Files.readAllBytes(Conformance.vector("ffmpeg-trac-10958-its-not-unusual-" + rate + ".ec3"));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
@@ -92,13 +89,11 @@ class Eac3MediaFoundationTest {
     }
 
     @ParameterizedTest(name = "{0} kbit/s")
-    @CsvSource({
-            "96, c76ce7fa7c62360c9378c5f9078c5c984c4c2c6104b892b7ee40267f25168d9d",
-            "88, 492ae82a936ec2f88695102ecfe98dcdbef1d2f5b20a36d0712d2baeed2b8576"})
+    @ValueSource(strings = {"96", "88"})
     @DisplayName("decode the transient pre-noise processing of Dolby's encoder as Dolby's decoder does")
-    void auditionStreams(String rate, String sha256) {
+    void auditionStreams(String rate) {
         var driver = MediaFoundation.driver();
-        var stream = DitherClearing.clear(ticket(rate, sha256));
+        var stream = DitherClearing.clear(ticket(rate));
         var mf = MediaFoundation.decode(driver, MediaFoundation.write(directory, "ticket.ec3", stream), directory,
                 -1, MediaFoundation.CUSTOM, 0);
         assertEquals(2, mf.channels());

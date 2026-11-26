@@ -443,4 +443,130 @@ class WavPackDecoderTest {
             }
         }
     }
+
+    /**
+     * The WavPack test suite 2.0 (David Bryant, 2017): the legacy files of every encoder generation, the special
+     * cases, the 1-bit DSD and 8-bit depths and the corrupt files.
+     */
+    @Nested
+    @DisplayName("the WavPack test suite 2.0")
+    class TestSuite {
+        private static final String SET = "wavpack-test-suite-2.0";
+
+        private static java.nio.file.Path member(String path) {
+            return com.github.auties00.smalt.testkit.Conformance.archive(SET).member("test_suite/" + path);
+        }
+
+        private static Stream_ open(String path) {
+            var wvcPath = path.substring(0, path.length() - 3) + ".wvc";
+            var archive = com.github.auties00.smalt.testkit.Conformance.archive(SET);
+            var correction = archive.members().contains("test_suite/" + wvcPath) && !path.contains("#lossy");
+            try (var demuxer = new WavPackDemuxer(MediaSource.of(member(path)),
+                    correction ? MediaSource.of(member(wvcPath)) : null, DemuxerOptions.defaults())) {
+                var track = (AudioTrack) demuxer.tracks().getFirst();
+                var packets = new ArrayList<Packet>();
+                Packet packet;
+                while ((packet = demuxer.read()) != null) {
+                    packets.add(packet);
+                }
+                return new Stream_(track, packets);
+            }
+        }
+
+        /** Decodes with the stored MD5 checked on flush, returning wvunpack's raw output. */
+        private static byte[] verified(Stream_ stream) {
+            var decoder = new WavPackDecoder(stream.track(), AudioDecoderOptions.builder().verifyIntegrity(true).build());
+            var raw = raw(decoder, stream.packets(), false);
+            assertDoesNotThrow(() -> decoder.flushIntegers(block -> { }), "stored MD5");
+            return raw;
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"bit_depths/1bit_dsd.wv", "bit_depths/8bit.wv", "special_cases/custom_srate.wv",
+                "special_cases/stereo_mixing.wv", "special_cases/redundant_bits.wv", "special_cases/hybrid_test.wv",
+                "special_cases/cue_sheet.wv", "legacy/vers-40.wv", "legacy/vers-40-hybrid.wv", "legacy/vers-480.wv",
+                "legacy/vers-480-hybrid.wv", "legacy/vers-480-sfx.wv"})
+        @DisplayName("decodes the files that store an MD5 (with their correction files) to it")
+        void storedMd5(String path) {
+            var stream = open(path);
+            var raw = verified(stream);
+            assertTrue(raw.length > 0, "no samples");
+            if (path.endsWith("custom_srate.wv")) {
+                assertEquals(36000, stream.track().sampleRate(), "the rate of the metadata block");
+            }
+        }
+
+        @org.junit.jupiter.api.Test
+        @DisplayName("decodes every lossless WavPack 4 file of the legacy folder, the self-extracting one included, to the same samples")
+        void legacyAgree() {
+            // the readme: the source file is identical for each sample
+            var reference = md5(verified(open("legacy/vers-480.wv")));
+            for (var path : List.of("legacy/vers-40.wv", "legacy/vers-40-hybrid.wv", "legacy/vers-480-hybrid.wv",
+                    "legacy/vers-480-sfx.wv")) {
+                assertEquals(reference, md5(verified(open(path))), path);
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"legacy/vers-10.wv", "legacy/vers-20.wv", "legacy/vers-20-lossy.wv", "legacy/vers-30.wv",
+                "legacy/vers-30-fast.wv", "legacy/vers-30-lossy.wv", "legacy/vers-397.wv", "legacy/vers-397-hybrid.wv"})
+        @DisplayName("rejects the files of the deprecated encoders before 4.0 with a MediaException")
+        void preVersion4(String path) {
+            // the suite's legacy readme deprecates them and asks decoders to drop them; they start with a WAVE header
+            // and hold no WavPack 4 block
+            assertThrows(MediaException.class, () -> {
+                var stream = open(path);
+                try (var decoder = AudioDecoders.create(stream.track())) {
+                    for (var packet : stream.packets()) {
+                        decoder.decode(packet, block -> { });
+                    }
+                }
+            });
+        }
+
+        @org.junit.jupiter.api.Test
+        @DisplayName("decodes the hybrid test without its correction file lossy, to as many samples as the lossless decode")
+        void hybridLossy() {
+            var lossless = verified(open("special_cases/hybrid_test.wv"));
+            var stream = new Stream_[1];
+            try (var demuxer = new WavPackDemuxer(MediaSource.of(member("special_cases/hybrid_test.wv")))) {
+                var track = (AudioTrack) demuxer.tracks().getFirst();
+                var packets = new ArrayList<Packet>();
+                Packet packet;
+                while ((packet = demuxer.read()) != null) {
+                    packets.add(packet);
+                }
+                stream[0] = new Stream_(track, packets);
+            }
+            var lossy = raw(new WavPackDecoder(stream[0].track()), stream[0].packets(), false);
+            assertEquals(lossless.length, lossy.length);
+            assertTrue(!java.util.Arrays.equals(lossless, lossy), "the lossy decode equals the lossless one");
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"corruption/bad_checksums.wv", "corruption/dsd_corrupt.wv",
+                "corruption/hybrid_corrupt.wv", "corruption/lossless_corrupt.wv"})
+        @DisplayName("decodes through the corrupt files, rejecting only damaged blocks with a MediaException")
+        void corruption(String path) {
+            // the corruption readme: decoders should continue through the damage; a version 5 decoder, which checks
+            // the block checksums, drops the blocks of bad_checksums
+            var stream = open(path);
+            var rejected = new int[1];
+            var decoded = new long[1];
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofMinutes(2), () -> {
+                try (var decoder = AudioDecoders.create(stream.track())) {
+                    for (var packet : stream.packets()) {
+                        try {
+                            decoder.decode(packet, block -> decoded[0] += block.frames());
+                        } catch (MediaException expected) {
+                            rejected[0]++;
+                        }
+                    }
+                }
+            });
+            assertTrue(rejected[0] > 0, path + ": no damaged block rejected");
+            assertTrue(decoded[0] > 0, path + ": nothing decoded");
+            assertTrue(rejected[0] < stream.packets().size(), path + ": every block rejected");
+        }
+    }
 }

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.heic;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
@@ -16,6 +17,7 @@ import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifOverlay;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.image.heic.HeicReference.Planes;
 import com.github.auties00.smalt.image.heic.internal.StillDecoder;
@@ -27,6 +29,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -37,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -575,6 +579,109 @@ class HeicConformanceTest {
             assertEquals(4240, thumbnail.sourceWidth());
             assertPlanes(reference(source, parse(source), 7, thumbnail), Planes.of(thumbnail.picture()), "cat thumbnail");
             assertEquals(10, thumbnail.picture().bitDepth());
+        }
+    }
+
+    /**
+     * The files of the MPEG file format conformance suite that the Nokia set lacks, the Nokia files added after it,
+     * the edge cases of libheif's test files and pillow_heif's special and damaged files, and phone and camera photos
+     * of metadata-extractor's corpus.
+     */
+    @Nested
+    @DisplayName("MPEG, libheif, pillow_heif and metadata-extractor files")
+    class Corpus {
+        /**
+         * Decodes the primary image, then compares the reconstruction of its item, before the transformative
+         * properties, with ffmpeg's decode of the item's HEVC payload, or of its tiles stitched together for a grid,
+         * at the depth and in the chroma format of the item.
+         */
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {
+                "heic-mpeg-iff_hevc_single_item.heic", "heic-mpeg-iff_hevc_single_item_main10.heic",
+                "heic-nokia-C046.heic", "heic-nokia-multilayer002.heic",
+                "heic-pillow-tests-images-heif_special-200MP.heic",
+                "heic-pillow-tests-images-heif_special-aspect_mismatch_thumbnail.heic",
+                "heic-pillow-tests-images-heif_special-aux_YCbCr.heic",
+                "heic-pillow-tests-images-heif_special-big_ftyp.heic",
+                "heic-pillow-tests-images-heif_special-broken_thumbnail.heic",
+                "heic-pillow-tests-images-heif_special-crop_mismatch_thumbnail.heic",
+                "heic-pillow-tests-images-heif_special-entity_groups.heic",
+                "heic-pillow-tests-images-heif_special-invalid_metadata_type.heic",
+                "heic-pillow-tests-images-heif_special-profile_mismatch_thumbnail.heic",
+                "heic-pillow-tests-images-heif_special-transform_mismatch_thumbnail.heic",
+                "heic-pillow-tests-images-heif_other-nokia-bird_burst.heic",
+                "heif-libheif-clap_cropped.heic", "heif-libheif-conformance_window_padding.heic",
+                "heif-libheif-rainbow-451x461.heic", "heif-libheif-with-alpha-512x512.heic",
+                "mei-heic-IMG_1034.heic", "mei-heic-IMG_2927.HEIC", "mei-heic-Issue_263_dotnet.heic",
+                "mei-heic-Issue_487.heic", "mei-heif-Sony_ILCE-7M4_A7M4.HIF"
+        })
+        @DisplayName("the primary image matches ffmpeg's decode of its coded items")
+        void primary(String name) {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var source = source(Conformance.vector(name));
+            // the 200 megapixel grid exceeds the default pixel area limit, which the decoder must then be given
+            var limits = MediaLimits.DEFAULT.toBuilder().maxPixels(256L * 1024 * 1024).build();
+            var decoded = HeicDecoder.decode(source, ImageDecoderOptions.builder().highBitDepth(true).limits(limits)
+                    .build());
+            assertEquals(ImageFormat.HEIC, decoded.format());
+            var file = parse(source);
+            var primary = file.primaryItem();
+            var picture = StillDecoder.decode(source, file, primary, limits, true).picture();
+            var actual = withoutAlpha(Planes.of(picture));
+            var expected = switch (primary.type()) {
+                case "grid" -> HeicReference.grid(source, file, primary, actual.format(), actual.depth());
+                case "hvc1" -> HeicReference.reconstructed(source, file, primary, actual);
+                default -> throw new AssertionError(name + ": primary item of type " + primary.type());
+            };
+            assertPlanes(expected, actual, name);
+        }
+
+        /**
+         * A file the decoder does not support must be refused with {@link MediaException.Unsupported}, never decoded
+         * into a wrong picture: the tiled items of {@code tbas} (whose {@code ipma} box also lists its items out of
+         * the increasing order ISO/IEC 14496-12 8.11.14.1 requires, which the decoder reports as malformed), the
+         * low-overhead {@code mini} format and a depth image the decoder does not reconstruct.
+         */
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"heic-mpeg-iff_hevc_tile_multiple_items_tbas.heic", "heif-libheif-lightning_mini.heif",
+                "heic-pillow-tests-images-heif_special-unsupported_depth_image.heic"})
+        @DisplayName("files with unsupported features decode their primary image or are refused as unsupported")
+        void unsupported(String name) {
+            var source = source(Conformance.vector(name));
+            try {
+                var decoded = HeicDecoder.decode(source);
+                assertTrue(decoded.picture().width() > 0 && decoded.picture().height() > 0, name);
+            } catch (MediaException.Unsupported expected) {
+                assertNotNull(expected.getMessage(), name);
+            } catch (MediaException.Malformed expected) {
+                assertEquals("heic-mpeg-iff_hevc_tile_multiple_items_tbas.heic", name, expected.getMessage());
+                assertTrue(expected.getMessage().contains("ipma"), expected.getMessage());
+            }
+        }
+
+        /**
+         * Damaged files, and the files that crashed other readers, must fail with a {@link MediaException} or decode,
+         * within a bounded time.
+         */
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"heic-pillow-tests-images-heif_corrupted-corrupted.heic",
+                "heic-pillow-tests-images-heif_corrupted-corrupted.hif",
+                "heic-pillow-tests-images-heif_truncated-truncated.heic", "heif-libheif-moov_size_zero.heif",
+                "heif-libheif-pclr_zero_columns.heic",
+                "mei-heic-IllegalArgumentException.HeifReader.processBoxes.heif",
+                "mei-heic-NegativeArraySizeException.HeifReader.processBoxes.heif",
+                "mei-heic-NegativeArraySizeException.ItemInfoBox.init.heif",
+                "mei-heic-NullPointerException.HeifPictureHandler.processBox.heif"})
+        @DisplayName("damaged and hostile files fail cleanly")
+        void damaged(String name) {
+            var bytes = HeicVectors.read(Conformance.vector(name));
+            assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
+                try {
+                    HeicDecoder.decode(MediaSource.of(bytes));
+                } catch (MediaException expected) {
+                    assertNotNull(expected.getMessage(), name);
+                }
+            });
         }
     }
 

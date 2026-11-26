@@ -5,15 +5,19 @@ Each case converts a 4032x3024 picture (Pillow holds RGB and CMYK as 4 bytes per
 benchmark's RGBA and CMYK layouts) into a preallocated output, single-threaded, and prints the mean
 and the 99.9% confidence half-width over the measured runs, in milliseconds. Run it under
 bench-lock.sh, like every timing run. Needs Pillow built with Little CMS and the profiles in the
-conformance cache (python tools/testdata/lcms-oracle.py fetches them).
+hosted test data (SMALT_TESTDATA, see tools/testdata/README.md).
 """
 import io
 import os
 import statistics
+import sys
 import time
 from pathlib import Path
 
 from PIL import Image, ImageCms
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testdata  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "core/src/test/resources/com/github/auties00/smalt/image/color/lcms"
@@ -21,8 +25,7 @@ WIDTH, HEIGHT = 4032, 3024
 
 
 def cache(name):
-    root = Path(os.environ.get("SMALT_CONFORMANCE_CACHE", Path.home() / ".smalt/cache/conformance"))
-    return ImageCms.ImageCmsProfile(io.BytesIO((root / name).read_bytes()))
+    return ImageCms.ImageCmsProfile(io.BytesIO(Path(testdata.vector(name)).read_bytes()))
 
 
 def main():

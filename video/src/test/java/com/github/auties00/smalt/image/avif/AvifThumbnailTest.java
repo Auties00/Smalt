@@ -88,7 +88,7 @@ class AvifThumbnailTest {
     @Test
     @DisplayName("decode the thumbnail of Microsoft's Tomsk_with_thumbnails.avif under a hint")
     void tomsk() throws IOException {
-        var data = Files.readAllBytes(Conformance.fetchListed("avif-Microsoft-Tomsk_with_thumbnails.avif"));
+        var data = Files.readAllBytes(Conformance.vector("avif-Microsoft-Tomsk_with_thumbnails.avif"));
         var full = AvifDecoder.decode(MediaSource.of(data));
         var reduced = AvifDecoder.decode(MediaSource.of(data), ImageDecoderOptions.ofMinimumSize(160, 90));
         assertEquals(full.picture().width(), reduced.sourceWidth());

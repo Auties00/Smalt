@@ -54,8 +54,7 @@ public class Vp9RtEncodeBenchmark {
         var width = size == 720 ? 1280 : 640;
         var height = size == 720 ? 720 : 480;
         var clip = Vp9TestVideo.clip(size == 720 ? "johnny720.yuv" : "johnny480.yuv");
-        frames = clip != null ? Vp9TestVideo.read(clip, width, height, 0, 60)
-                : Vp9TestVideo.synthesize(width, height, 60);
+        frames = Vp9TestVideo.read(clip, width, height, 0, 60);
         encoder = Vp9Setup.of(width, height, new Rational(30, 1),
                 new Rational(1, 30), size == 720 ? 1_200_000 : 600_000, 2, 52, 0, speed, true, true, 1, false, 1000,
                 500, 600, 6, threads).encoder();

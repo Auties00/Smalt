@@ -196,9 +196,7 @@ class DnxhdDifferentialTest {
     void fateDnxhr444() {
         // a DNxHR 444 file from a non-ffmpeg encoder (compressor name "DNxHR", 1920x839), stream
         // copied by ffmpeg into the FATE suite in 2015, before ffmpeg had a DNxHR encoder
-        var file = Conformance.fetch("fate-dnxhd-dnxhr444_cid1270.mov",
-                "https://fate-suite.ffmpeg.org/dnxhd/dnxhr444_cid1270.mov",
-                "f7c2eebab156ebae99be97e0752aca34ab4bce81ce0c776767b814ea014b0856");
+        var file = Conformance.vector("fate-dnxhd-dnxhr444_cid1270.mov");
         var stream = IntraTesting.demux(file);
         var packet = stream.packets().getFirst().data();
         assertEquals(1, packet[0x2C] & 1, "CLF set: RGB format");
@@ -227,5 +225,58 @@ class DnxhdDifferentialTest {
         }
         IntraTesting.assertWithin(EIGHT_BIT, "8-bit", IntraTesting.ffmpegDecode(file, "yuv422p", 0),
                 ours.toByteArray(), false, 255);
+    }
+
+    /**
+     * Files from other encoders than ffmpeg's: an Avid DNxHD 100 file of the adaptive field/frame compression ID
+     * 1260, a DNxHR 12-bit file of ID 1271, a raw DNxHR LB stream of ID 1274 and raw DNxHR streams whose header prefix
+     * carries the frame height (the prefix variants of 1536 to 3212 lines).
+     */
+    static Stream<Arguments> otherEncoders() {
+        return Stream.of(
+                Arguments.of("dnxhd-fate-dnxhd100_cid1260.mov", "yuv422p"),
+                Arguments.of("dnxhd-fate-dnxhr_cid1271_12bit.mov", "yuv422p12le"),
+                Arguments.of("dnxhd-fate-dnxhr_cid1274.dnxhr", "yuv422p"),
+                Arguments.of("dnxhd-fate-prefix-256x1536.dnxhr", "yuv422p"),
+                Arguments.of("dnxhd-fate-prefix-256x1716.dnxhr", "yuv422p"),
+                Arguments.of("dnxhd-fate-prefix-256x2048.dnxhr", "yuv422p"),
+                Arguments.of("dnxhd-fate-prefix-256x2160.dnxhr", "yuv422p"),
+                Arguments.of("dnxhd-fate-prefix-256x3212.dnxhr", "yuv422p"));
+    }
+
+    /** Splits a raw DNxHD stream into its frames: every frame starts with the same header prefix as the first. */
+    static List<byte[]> rawFrames(byte[] stream) {
+        var frames = new ArrayList<byte[]>();
+        var start = 0;
+        for (var at = 1; at + 5 <= stream.length; at++) {
+            if (java.util.Arrays.equals(stream, at, at + 5, stream, 0, 5)) {
+                frames.add(java.util.Arrays.copyOfRange(stream, start, at));
+                start = at;
+            }
+        }
+        frames.add(java.util.Arrays.copyOfRange(stream, start, stream.length));
+        return frames;
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("otherEncoders")
+    @DisplayName("decodes files of other encoders as ffmpeg does within the IDCT accuracy bounds")
+    void otherEncoders(String name, String pixelFormat) {
+        var file = Conformance.vector(name);
+        var frames = name.endsWith(".dnxhr") ? rawFrames(Fixtures.read(file))
+                : IntraTesting.demux(file).packets().stream().map(com.github.auties00.smalt.track.Packet::data).toList();
+        var decoder = new DnxhdDecoder();
+        var ours = new ByteArrayOutputStream();
+        for (var frame : frames) {
+            ours.writeBytes(IntraTesting.raw(decoder.decodeFrame(frame, 0, frame.length), false));
+        }
+        var expected = IntraTesting.ffmpegDecode(file, pixelFormat, 0);
+        var actual = ours.toByteArray();
+        assertEquals(expected.length, actual.length, name);
+        var wide = pixelFormat.endsWith("le");
+        var peak = pixelFormat.contains("12") ? 4095 : pixelFormat.contains("10") ? 1023 : 255;
+        var difference = IntraTesting.difference(expected, actual, wide, peak);
+        System.out.printf("%s: %s%n", name, difference);
+        FFMPEG.check(name, difference);
     }
 }

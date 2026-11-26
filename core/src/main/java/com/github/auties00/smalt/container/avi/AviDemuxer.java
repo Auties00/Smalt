@@ -761,13 +761,17 @@ public final class AviDemuxer implements Demuxer {
             walkMovi();
         }
         var total = 0L;
+        var videoFrames = 0L;
         for (var stream : streams) {
             if (stream != null) {
                 total += stream.count;
+                videoFrames += stream.video ? stream.count : 0;
                 stream.computeTimes();
             }
         }
-        LimitChecks.checkFrames(limits, total);
+        // maxFrames bounds the frames of video; the chunks of every stream, audio included, the allocation limit
+        LimitChecks.checkFrames(limits, videoFrames);
+        LimitChecks.checkAllocation(limits, total * 8);
         orderStream = new int[(int) total];
         orderEntry = new int[(int) total];
         var heads = new int[streams.size()];
@@ -871,7 +875,7 @@ public final class AviDemuxer implements Demuxer {
         if (count == 0) {
             return false;
         }
-        LimitChecks.checkFrames(limits, count);
+        LimitChecks.checkAllocation(limits, count * 16L);
         var movi = moviLists.getFirst()[0];
         reader.seek(idx1Position);
         long baseOffset = -1;
@@ -1583,7 +1587,10 @@ public final class AviDemuxer implements Demuxer {
                 if (count >= MAX_CHUNKS) {
                     throw new MediaException.LimitExceeded("AVI stream with more than " + MAX_CHUNKS + " chunks");
                 }
-                LimitChecks.checkFrames(limits, count * 2L);
+                if (video) {
+                    LimitChecks.checkFrames(limits, count * 2L);
+                }
+                LimitChecks.checkAllocation(limits, count * 2L * 13);
                 offsets = Arrays.copyOf(offsets, count * 2);
                 sizes = Arrays.copyOf(sizes, count * 2);
                 keys = Arrays.copyOf(keys, count * 2);

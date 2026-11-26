@@ -116,7 +116,7 @@ class Av1LayersTest {
             var picture = (YuvPicture) frame.picture();
             frames.add(new Frame(picture.width(), picture.height(), md5(picture)));
         };
-        try (var source = MediaSource.of(Files.readAllBytes(Conformance.fetchListed("av1-" + vector)));
+        try (var source = MediaSource.of(Files.readAllBytes(Conformance.vector("av1-" + vector)));
              var demuxer = Containers.openDemuxer(source)) {
             var track = (VideoTrack) demuxer.tracks().getFirst();
             try (var decoder = new Av1Decoder(track, options)) {

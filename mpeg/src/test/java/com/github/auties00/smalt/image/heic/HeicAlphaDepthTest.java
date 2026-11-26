@@ -67,8 +67,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HeicAlphaDepthTest {
     private static final ImageDecoderOptions WIDE = ImageDecoderOptions.builder().highBitDepth(true).build();
 
-    private static final String RAW_BASE = "https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/RExt/";
-
     /** The alpha samples an alpha payload of another size gives once resampled to a size. */
     private static int[] resampled(Planes alpha, int width, int height) {
         Picture mono;
@@ -477,8 +475,8 @@ class HeicAlphaDepthTest {
     @Nested
     @DisplayName("mixed luma and chroma depths")
     class MixedDepth {
-        private static byte[] bitstream(String name, String sha256) throws IOException {
-            var archive = Conformance.fetch("hevc-rext-" + name + ".zip", RAW_BASE + name + ".zip", sha256);
+        private static byte[] bitstream(String name) throws IOException {
+            var archive = Conformance.vector("hevc-rext-" + name + ".zip");
             try (var zip = new ZipFile(archive.toFile())) {
                 return zip.getInputStream(zip.getEntry(name + "/" + name + ".bin")).readAllBytes();
             }
@@ -521,13 +519,10 @@ class HeicAlphaDepthTest {
         }
 
         @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {
-                "Bitdepth_A_RExt_Sony_1|34967e2047d59b0f3e96e7501712a056c01f369501d812b170c717ce1d417368",
-                "Bitdepth_B_RExt_Sony_1|6f5f16377e9287ced1ad06a9493249ed1d61e393d779b06e777a92e14b6c6eb6"})
+        @ValueSource(strings = {"Bitdepth_A_RExt_Sony_1", "Bitdepth_B_RExt_Sony_1"})
         @DisplayName("decode the first picture of a RExt stream wrapped in HEIF as HevcDecoder does at high bit depth")
         void conformance(String vector) throws IOException {
-            var parts = vector.split("\\|");
-            var stream = bitstream(parts[0], parts[1]);
+            var stream = bitstream(vector);
             var sets = new ArrayList<byte[]>();
             var payload = new ByteArrayOutputStream();
             var annexB = new ByteArrayOutputStream();
@@ -576,7 +571,7 @@ class HeicAlphaDepthTest {
             assertEquals(12, deep.bitDepth());
             HeicStructureTest.assertPlanes(Planes.of(expected), Planes.of(deep));
             var narrow = assertInstanceOf(YuvPicture.class, HeicDecoder.decode(MediaSource.of(data)).picture());
-            var chromaShallow = parts[0].startsWith("Bitdepth_A");
+            var chromaShallow = vector.startsWith("Bitdepth_A");
             var planes = Planes.of(narrow).planes();
             var wide = Planes.of(deep).planes();
             for (var plane = 0; plane < 3; plane++) {
@@ -771,6 +766,84 @@ class HeicAlphaDepthTest {
             unknown.reference("cdsc", item, image).primary(image);
             assertTrue(HeicDecoder.decode(MediaSource.of(unknown.build()), ImageDecoderOptions.builder()
                     .limits(MediaLimits.DEFAULT).build()).xmp().isEmpty());
+        }
+    }
+
+    /**
+     * Deep monochrome, RGB and RGBA files written by libheif (pillow_heif's test images) and an iPhone portrait
+     * with depth and matte auxiliary images.
+     */
+    @Nested
+    @DisplayName("real deep and auxiliary files")
+    class Files {
+        private static void assertSame(Planes expected, Planes actual, String label) {
+            assertEquals(expected.width() + "x" + expected.height() + " " + expected.format() + " " + expected.depth(),
+                    actual.width() + "x" + actual.height() + " " + actual.format() + " " + actual.depth(), label);
+            for (var plane = 0; plane < 3; plane++) {
+                assertArrayEquals(expected.planes()[plane], actual.planes()[plane], label + ": plane " + plane);
+            }
+        }
+
+        /**
+         * Decodes the color item at its depth and compares it, and its alpha item when it has one, with ffmpeg's
+         * decode of the items' HEVC payloads.
+         */
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"L_10__29x100, 10, false", "L_12__29x100, 12, false", "RGB_12__29x100, 12, false",
+                "RGBA_12__29x100, 12, true"})
+        @DisplayName("10 and 12-bit monochrome, RGB and RGBA files match ffmpeg at their depth")
+        void deep(String row) {
+            com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+            var fields = row.split(",\\s*");
+            var name = fields[0];
+            var depth = Integer.parseInt(fields[1]);
+            var hasAlpha = Boolean.parseBoolean(fields[2]);
+            var source = MediaSource.of(HeicVectors.read(HeicVectors.pillow("tests/images/heif/" + name + ".heif")));
+            var file = com.github.auties00.smalt.internal.heif.HeifFile.parse(source, MediaLimits.DEFAULT, false);
+            var primary = file.primaryItem();
+            var still = com.github.auties00.smalt.image.heic.internal.StillDecoder.decode(source, file, primary,
+                    MediaLimits.DEFAULT, true).picture();
+            var actual = Planes.of(still);
+            assertEquals(depth, actual.depth(), name + " depth");
+            assertSame(HeicReference.reconstructed(source, file, primary, actual), actual, name);
+            var decoded = HeicDecoder.decode(source, WIDE);
+            var alpha = Planes.of(decoded.picture()).planes()[3];
+            assertEquals(hasAlpha, alpha != null, name + " alpha");
+            if (hasAlpha) {
+                var item = file.auxiliariesOf(primary.id()).stream().filter(candidate -> {
+                    var type = candidate.property(com.github.auties00.smalt.internal.heif.HeifProperty.AuxiliaryType.class);
+                    return type != null && (type.urn().contains("alpha") || type.urn().endsWith("auxid:1"));
+                }).findFirst().orElseThrow();
+                var expected = HeicReference.reconstructed(source, file, item, new Planes(actual.width(),
+                        actual.height(), ChromaFormat.MONOCHROME, depth, new int[4][])).planes()[0];
+                assertArrayEquals(rescale(expected, depth, Planes.of(decoded.picture()).depth()), alpha,
+                        name + " alpha");
+            }
+        }
+
+        /**
+         * An iPhone 11 Pro photo whose only items besides the primary grid are its EXIF and XMP metadata (no depth or
+         * matte image, whatever its curation note says): it lists no auxiliary image, its picture has no alpha plane,
+         * and its grid matches ffmpeg's decode of its tiles.
+         */
+        @Test
+        @DisplayName("an iPhone photo without auxiliary images lists none and decodes its grid like ffmpeg")
+        void portrait() {
+            com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+            var source = MediaSource.of(HeicVectors.read(Conformance.vector("mei-heic-IMG_2928.HEIC")));
+            var decoded = HeicDecoder.decode(source);
+            assertEquals(null, Planes.of(decoded.picture()).planes()[3], "alpha plane");
+            assertEquals(List.of(), HeicDecoder.auxiliaryImages(source), "auxiliary images");
+            var file = com.github.auties00.smalt.internal.heif.HeifFile.parse(source, MediaLimits.DEFAULT, false);
+            for (var item : file.items()) {
+                assertEquals(null, item.property(com.github.auties00.smalt.internal.heif.HeifProperty.AuxiliaryType.class),
+                        "auxiliary type of item " + item.id());
+            }
+            var primary = file.primaryItem();
+            var still = com.github.auties00.smalt.image.heic.internal.StillDecoder.decode(source, file, primary,
+                    MediaLimits.DEFAULT, true).picture();
+            var actual = Planes.of(still);
+            assertSame(HeicReference.reconstructed(source, file, primary, actual), actual, "IMG_2928");
         }
     }
 }

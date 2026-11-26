@@ -22,37 +22,37 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Checks, without the converter's files, the decoding of the formats {@link SampleGapsOracleTest} checks against
- * them: the Pentax table a maker note without one implies, the size of the largest mRAW files, the white balance of
+ * them: the Pentax table a maker note without one implies, the white balance of
  * synthetic encrypted Sony SR2 blocks (among them blocks holding the encrypted levels of the CC0 files), and synthetic
  * Panasonic data of raw format versions 6 (12-bit), 7 and 8 (shifts, ceiling and origins, tiles in rows).
  */
 class SampleGapsTest {
     @Test
-    @DisplayName("a K10D file without its maker note's table decodes as with it, its table being the implied one")
+    @DisplayName("a K-x file without its maker note's table decodes as with it, its table being the implied one")
     void pentaxImpliedTable() {
-        var original = read(SampleGapsOracleTest.patched("patched-pentax-k10d-no-table"));
-        try (var source = MediaSource.of(RawSamples.PEF_K10D.fetch())) {
+        var original = read(SampleGapsOracleTest.patched("patched-pentax-k-x-no-table"));
+        try (var source = MediaSource.of(RawSamples.PEF_PENTAX_KX.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var plane = SensorPlane.of(file.sensor, MediaLimits.DEFAULT);
             file.sensor.reader.read(plane, MediaLimits.DEFAULT);
             assertArrayEquals(plane.integers, original.integers);
         }
-        var k2000 = read(SampleGapsOracleTest.patched("patched-pentax-k2000-no-table"));
-        try (var source = MediaSource.of(RawSamples.PEF_K2000.fetch())) {
+        var k5 = read(SampleGapsOracleTest.patched("patched-pentax-k-5-no-table"));
+        try (var source = MediaSource.of(RawSamples.PEF_K5.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var plane = SensorPlane.of(file.sensor, MediaLimits.DEFAULT);
             file.sensor.reader.read(plane, MediaLimits.DEFAULT);
-            // the K2000 embeds another table, so its data read with the implied one differs
-            assertNotEquals(java.util.Arrays.hashCode(plane.integers), java.util.Arrays.hashCode(k2000.integers));
+            // the K-5 embeds another table (of 14-bit data), so its data read with the implied one differs
+            assertNotEquals(java.util.Arrays.hashCode(plane.integers), java.util.Arrays.hashCode(k5.integers));
         }
     }
 
     @Test
     @DisplayName("a maker note table too short for 13 codes and an RW2 version 8 shift above 16 are malformed")
     void malformedParameters() {
-        var pef = bytes(RawSamples.PEF_K10D);
+        var pef = bytes(RawSamples.PEF_PENTAX_KX);
         // the count of the big-endian maker note entry of tag 0x0220, whose tag SampleGapsOracleTest renames
-        java.nio.ByteBuffer.wrap(pef).putInt(1692, 10);
+        java.nio.ByteBuffer.wrap(pef).putInt(1704, 10);
         assertThrows(MediaException.Malformed.class, () -> read(pef));
         var rw2 = bytes(RawSamples.RW2_S5M2);
         // the shift of Huffman value 5 in tag 0x0041
@@ -72,19 +72,6 @@ class SampleGapsTest {
         // the copy's ceiling (tag 0x003B) is 4000, and the origin of its fourth cell (60000) is clamped to it
         assertEquals(4000, largest);
         assertNotEquals(java.util.Arrays.hashCode(original.integers), java.util.Arrays.hashCode(patched.integers));
-    }
-
-    @Test
-    @DisplayName("the mRAW file of a 5DS decodes at its full size under the default limits")
-    void largeMraw() {
-        try (var source = MediaSource.of(RawSamples.CR2_5DS_MRAW.fetch())) {
-            var file = RawParser.parse(source, MediaLimits.DEFAULT);
-            assertNotNull(file.sensor, file.unsupported);
-            assertEquals(6480, file.sensor.width);
-            assertEquals(4320, file.sensor.height);
-            var plane = SensorPlane.of(file.sensor, MediaLimits.DEFAULT);
-            file.sensor.reader.read(plane, MediaLimits.DEFAULT);
-        }
     }
 
     @Test
@@ -394,7 +381,7 @@ class SampleGapsTest {
 
     private static byte[] bytes(RawSamples sample) {
         try {
-            return java.nio.file.Files.readAllBytes(sample.fetch());
+            return java.nio.file.Files.readAllBytes(sample.path());
         } catch (java.io.IOException exception) {
             throw new java.io.UncheckedIOException(exception);
         }

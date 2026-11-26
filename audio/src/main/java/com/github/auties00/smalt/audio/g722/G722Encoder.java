@@ -19,10 +19,11 @@ import java.util.function.Consumer;
  *
  * <p>Input is quantized to 16 bits (a float or double sample is clipped to {@code [-1, 1]}, multiplied by 32768,
  * rounded to the nearest integer with ties toward positive infinity and clamped, NaN becoming zero; an integer
- * sample is shifted or rounded to 16 bits), and its top 15 bits are the Recommendation's uniform input. The transmit
- * quadrature mirror filter, which the Recommendation leaves free in its rounding and accumulator width, computes its
- * products and sums exactly and truncates; the sub-band encoders are bit-exact with the digital test sequences of
- * G.722 Appendix II. Every pair of samples becomes one byte, the 2-bit higher sub-band code above the 6-bit lower
+ * sample is shifted or rounded to 16 bits). The transmit quadrature mirror filter, which the Recommendation leaves
+ * free in its rounding and accumulator width, filters all 16 bits as the ITU-T Software Tool Library's G.722 does,
+ * computing its products and sums exactly and truncating; the sub-band encoders are bit-exact with the digital test
+ * sequences of G.722 Appendix II, and the whole encoder with the Software Tool Library's coding of its speech test
+ * file. Every pair of samples becomes one byte, the 2-bit higher sub-band code above the 6-bit lower
  * sub-band code.
  *
  * <p>Each packet holds {@value #PACKET_SAMPLES} samples (20 ms), timestamped in samples from zero, with its
@@ -176,7 +177,7 @@ public final class G722Encoder implements AudioEncoder {
         }
         var data = new byte[(count + 1) / 2];
         for (var i = 0; i < data.length; i++) {
-            qmf.analyze(plane[2 * i] >> 1, plane[2 * i + 1] >> 1);
+            qmf.analyze(plane[2 * i], plane[2 * i + 1]);
             var il = low.encodeLow(qmf.xl);
             var ih = high.encodeHigh(qmf.xh);
             data[i] = (byte) (ih << 6 | il);

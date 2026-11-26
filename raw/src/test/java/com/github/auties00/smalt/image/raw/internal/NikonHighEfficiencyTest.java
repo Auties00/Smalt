@@ -601,7 +601,7 @@ class NikonHighEfficiencyTest {
     private static SensorPlane sensor(RawSamples sample) {
         byte[] bytes;
         try {
-            bytes = Files.readAllBytes(sample.fetch());
+            bytes = Files.readAllBytes(sample.path());
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }

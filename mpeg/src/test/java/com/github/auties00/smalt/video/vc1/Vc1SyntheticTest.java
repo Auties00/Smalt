@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Decodes the streams {@link Vc1Synthetic} writes, which need no fetched vector: against ffmpeg, and for their frame
+ * Decodes the streams {@link Vc1Synthetic} writes, which need no hosted vector: against ffmpeg, and for their frame
  * order, timestamps and keyframes, plus the decoder's argument, state and limit checks.
  */
 @DisplayName("VC-1 synthetic streams")

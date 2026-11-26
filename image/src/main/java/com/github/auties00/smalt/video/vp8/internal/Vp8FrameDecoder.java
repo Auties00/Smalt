@@ -211,6 +211,12 @@ public final class Vp8FrameDecoder {
     private final boolean keyFramesOnly;
 
     /**
+     * Whether the frame being decoded has changed the decoder's state (its size, the buffer it is
+     * decoded into, its header state), so that a failure must discard the references.
+     */
+    private boolean stateChanged;
+
+    /**
      * The fewest macroblock rows for which parsing, reconstruction, and the loop filter run as a
      * pipeline.
      */
@@ -785,15 +791,16 @@ public final class Vp8FrameDecoder {
             outputRequested = false;
             return;
         }
+        stateChanged = false;
         try {
             swapBuffers(decodeFrame(data, offset, length));
         } catch (MediaException exception) {
             output = null;
-            discardReferences();
+            failed();
             throw exception;
         } catch (RuntimeException exception) {
             output = null;
-            discardReferences();
+            failed();
             throw new MediaException.Malformed("corrupt vp8 frame", exception);
         } finally {
             outputRequested = false;
@@ -839,6 +846,22 @@ public final class Vp8FrameDecoder {
         var top = row * 16;
         if (top < height) {
             frame.copyRowsTo(picture, width, height, top, Math.min(top + 16, height));
+        }
+    }
+
+    /**
+     * Recovers from a frame that failed to decode.
+     *
+     * <p>A frame of a VP8 stream rejected by its tag or key frame header, before it changed any
+     * state, leaves the references as they were, so that the next inter frame decodes from them,
+     * as libvpx decodes it ({@code test/invalid_file_test.cc}, {@code invalid-bug-1443.ivf}). Any
+     * other failure, and any failure of a WebP image, discards the references.
+     */
+    private void failed() {
+        if (stateChanged || keyFramesOnly) {
+            discardReferences();
+        } else {
+            showFrame = false;
         }
     }
 
@@ -939,6 +962,7 @@ public final class Vp8FrameDecoder {
             }
             h = Math.min(h, rowLimit);
             LimitChecks.checkPicture(limits, w, h);
+            stateChanged = true;
             horizontalScale = (data[pos + 4] & 0xFF) >> 6;
             verticalScale = (data[pos + 6] & 0xFF) >> 6;
             pos += 7;
@@ -965,6 +989,7 @@ public final class Vp8FrameDecoder {
         if (firstPartitionSize > end - pos) {
             throw new MediaException.Malformed("vp8 first partition truncated");
         }
+        stateChanged = true;
         keyFrame = isKey;
         version = frameVersion;
         var newIdx = takeFreeBuffer();
@@ -974,7 +999,7 @@ public final class Vp8FrameDecoder {
         parseHeader(br, data, pos + firstPartitionSize, end);
         beginOutput(show);
         decodeMacroblocks(buffers[newIdx]);
-        if (br.isEof()) {
+        if (keyFramesOnly && br.isEof()) {
             throw new MediaException.Malformed("vp8 first partition overrun");
         }
         showFrame = show;
@@ -1309,6 +1334,10 @@ public final class Vp8FrameDecoder {
     /**
      * Locates the token partitions after the first partition and initializes their decoders.
      *
+     * <p>In a VP8 stream the frame may end right after the partition sizes: as libvpx
+     * ({@code setup_token_decoder}) does, the partitions that no byte is left for are then empty,
+     * and decode as zeros. A WebP image needs data in its last partition, as libwebp does.
+     *
      * @param br    the first partition decoder
      * @param data  the array holding the frame
      * @param start the index of the first byte after the first partition
@@ -1324,6 +1353,10 @@ public final class Vp8FrameDecoder {
         var partStart = start + sizesLength;
         var remaining = end - partStart;
         for (var p = 0; p < count - 1; p++) {
+            if (!keyFramesOnly && remaining == 0) {
+                partitions[p].init(data, partStart, 0);
+                continue;
+            }
             var s = start + 3 * p;
             var size = (data[s] & 0xFF) | (data[s + 1] & 0xFF) << 8 | (data[s + 2] & 0xFF) << 16;
             if (keyFramesOnly) {
@@ -1337,7 +1370,7 @@ public final class Vp8FrameDecoder {
             partStart += size;
             remaining -= size;
         }
-        if (remaining <= 0) {
+        if (remaining <= 0 && keyFramesOnly) {
             throw new MediaException.Malformed("vp8 last token partition is empty");
         }
         partitions[count - 1].init(data, partStart, remaining);
@@ -1500,14 +1533,22 @@ public final class Vp8FrameDecoder {
     }
 
     /**
-     * Checks that neither the first partition nor a row's token partition ended before the row
-     * did.
+     * Checks, for a WebP image, that neither the first partition nor a row's token partition ended
+     * before the row did.
+     *
+     * <p>A WebP image is rejected there, as libwebp rejects it ("premature end of partition"). A
+     * frame of a VP8 stream is not: libvpx reads the bytes past the end of a partition as zeros
+     * and returns the frame, only flagging it as corrupt ({@code vp8dx_bool_error}), and so does
+     * this decoder.
      *
      * @param br     the first partition decoder
      * @param tokens the row's token partition decoder
-     * @throws MediaException.Malformed if either partition is overrun
+     * @throws MediaException.Malformed if either partition of a WebP image is overrun
      */
-    private static void checkRowEnd(BoolDecoder br, BoolDecoder tokens) {
+    private void checkRowEnd(BoolDecoder br, BoolDecoder tokens) {
+        if (!keyFramesOnly) {
+            return;
+        }
         if (br.isEof()) {
             throw new MediaException.Malformed("vp8 first partition overrun");
         }

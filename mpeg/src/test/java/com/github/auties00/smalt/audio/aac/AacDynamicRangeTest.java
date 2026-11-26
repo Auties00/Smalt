@@ -241,7 +241,7 @@ class AacDynamicRangeTest {
     }
 
     static AacTestSupport.Stream conformance(String name) {
-        return AacTestSupport.parseMp4(Fixtures.read(HeAacConformanceTest.fetch(name)));
+        return AacTestSupport.parseMp4(Fixtures.read(HeAacConformanceTest.file(name)));
     }
 
     /** Returns the amplitude of a tone over a sample range (Goertzel). */
@@ -576,7 +576,7 @@ class AacDynamicRangeTest {
         @ValueSource(strings = {"er_al10_48_ep0.mp4", "er_al21_48_ep0.mp4"})
         @DisplayName("decode unchanged when their extension payloads carry no gains")
         void unchanged(String name) {
-            var stream = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(name)));
+            var stream = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file(name)));
             var plain = AacTestSupport.decodeAll(stream);
             var light = AacTestSupport.decodeAll(new AacDecoder(stream.track(), light().targetLevel(100).build()),
                     stream.frames());
@@ -619,6 +619,77 @@ class AacDynamicRangeTest {
                 assertThrows(IllegalArgumentException.class, () -> AacDecoderOptions.builder().targetLevel(level).build());
             }
             assertThrows(NullPointerException.class, () -> AacDecoderOptions.builder().compression(null));
+        }
+    }
+
+    /**
+     * The non-USAC dynamic range control streams of ISO/IEC 14496-26 2nd edition: AAC Low Complexity 6.1
+     * ({@code al20}) and 7.1 ({@code al21}), and HE-AAC 6.1 and 7.1 with surround channels
+     * ({@code al_sbr_gen_*_6.1Sur}, {@code _7.1Sur}), with {@code dynamic_range_info} and program reference levels, and their
+     * reference waveforms, one per channel, for three decoder settings: no compression ({@code <stream>_<channel>}),
+     * the heavy compression at a target level of 80 ({@code _compr1_level080}) and the light compression with full
+     * cut and boost at a target level of 92 ({@code _cut1_boost1_level092}). Every channel must meet the 16-bit
+     * criterion of {@link AacConformanceTest} against its reference, each reference matching one output channel.
+     */
+    @Nested
+    @DisplayName("ISO/IEC 14496-26 DRC conformance streams")
+    class IsoStreams {
+        @ParameterizedTest(name = "{0} {1}")
+        @org.junit.jupiter.params.provider.CsvSource({
+                "al20_32, plain", "al20_44, plain", "al20_48, plain", "al21_32, plain", "al21_44, plain",
+                "al21_48, plain",
+                "al20_32, compr1_level080", "al20_44, compr1_level080", "al20_48, compr1_level080",
+                "al21_32, compr1_level080", "al21_44, compr1_level080", "al21_48, compr1_level080",
+                "al20_32, cut1_boost1_level092", "al20_44, cut1_boost1_level092", "al20_48, cut1_boost1_level092",
+                "al21_32, cut1_boost1_level092", "al21_44, cut1_boost1_level092", "al21_48, cut1_boost1_level092",
+                "al_sbr_gen_32_6.1Sur, plain", "al_sbr_gen_44_6.1Sur, plain", "al_sbr_gen_48_6.1Sur, plain",
+                "al_sbr_gen_32_7.1Sur, plain", "al_sbr_gen_44_7.1Sur, plain", "al_sbr_gen_48_7.1Sur, plain",
+                "al_sbr_gen_32_6.1Sur, compr1_level080", "al_sbr_gen_48_7.1Sur, compr1_level080",
+                "al_sbr_gen_32_6.1Sur, cut1_boost1_level092", "al_sbr_gen_48_7.1Sur, cut1_boost1_level092"})
+        @DisplayName("every channel matches its reference waveform under each setting")
+        void references(String stream, String setting) {
+            var options = switch (setting) {
+                case "plain" -> AacDecoderOptions.builder().compression(AacCompression.NONE).noTargetLevel().build();
+                case "compr1_level080" -> AacDecoderOptions.builder().compression(AacCompression.HEAVY).targetLevel(80)
+                        .build();
+                default -> AacDecoderOptions.builder().compression(AacCompression.LIGHT).cutScale(1).boostScale(1)
+                        .targetLevel(92).build();
+            };
+            var source = AacTestSupport.parseMp4(com.github.auties00.smalt.testkit.Fixtures.read(
+                    Mpeg4AudioVectors.file(stream + ".mp4")));
+            float[][] decoded;
+            int frameLength;
+            try (var decoder = new AacDecoder(HeAacConformanceTest.detectingTrack(source), options)) {
+                decoded = AacTestSupport.decodeAll(decoder, source.frames()).planes();
+                frameLength = decoder.frameLength();
+            }
+            for (var plane : decoded) {
+                for (var i = 0; i < plane.length; i++) {
+                    plane[i] = Math.clamp(plane[i], -1.0f, 8388607 / 8388608.0f);
+                }
+            }
+            var prefix = stream + (setting.equals("plain") ? "" : "_" + setting) + "_";
+            var references = com.github.auties00.smalt.testkit.Conformance.archive("mpeg4audio-ed2-references")
+                    .members().stream().map(member -> member.substring(member.lastIndexOf('/') + 1))
+                    .filter(name -> name.startsWith(prefix) && name.substring(prefix.length()).matches("[fbls]\\d\\d\\.wav"))
+                    .sorted().toList();
+            assertEquals(decoded.length, references.size(), stream + " " + setting + " references " + references);
+            var used = new java.util.HashSet<Integer>();
+            for (var name : references) {
+                var reference = AacTestSupport.readWav(com.github.auties00.smalt.testkit.Fixtures.read(
+                        Mpeg4AudioVectors.file(name)))[0];
+                var best = -1;
+                var bestRms = Double.POSITIVE_INFINITY;
+                for (var c = 0; c < decoded.length; c++) {
+                    var error = AacConformanceTest.error(reference, decoded[c], frameLength);
+                    if (error[0] < bestRms) {
+                        bestRms = error[0];
+                        best = c;
+                    }
+                }
+                assertTrue(used.add(best), name + " matches the channel of another reference");
+                AacConformanceTest.assertConformant(reference, decoded[best], frameLength, name);
+            }
         }
     }
 }

@@ -65,7 +65,7 @@ class ColorTest {
     @Test
     @DisplayName("the camera neutral of a DNG maps to the D50 white with a luminance of 1")
     void neutralMapsToWhite() {
-        try (var source = MediaSource.of(RawSamples.ADC_5D3_LOSSLESS.fetch())) {
+        try (var source = MediaSource.of(RawSamples.ADC_5D3_LOSSLESS.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var color = CameraColor.of(file.color, RawWhiteBalance.asShot(), null);
             assertArrayEquals(ColorMath.D50_XYZ, ColorMath.apply(color.balancedToPcs, new double[]{1, 1, 1}), 2e-3);
@@ -177,7 +177,7 @@ class ColorTest {
                 RawSamples.DNG_RICOH_GR, RawSamples.DNG_SAMSUNG_GX20, RawSamples.DNG_LEICA_M9, RawSamples.DNG_LEICA_X2};
         var matrices = new ArrayList<double[]>();
         for (var sample : samples) {
-            try (var source = MediaSource.of(sample.fetch())) {
+            try (var source = MediaSource.of(sample.path())) {
                 var color = RawParser.parse(source, MediaLimits.DEFAULT).color;
                 var index = color.illuminant[1] == 21 ? 1 : 0;
                 var matrix = color.colorMatrix[index].clone();

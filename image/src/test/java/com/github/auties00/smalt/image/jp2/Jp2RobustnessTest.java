@@ -67,7 +67,7 @@ class Jp2RobustnessTest {
             "input/conformance/file1.jp2", "input/conformance/file9.jp2"})
     @DisplayName("mutated conformance files fail only with media exceptions")
     void conformance(String path) {
-        mutate(Jp2TestVectors.fetch(path), path.hashCode(), 120);
+        mutate(Jp2TestVectors.vector(path), path.hashCode(), 120);
     }
 
     @Test

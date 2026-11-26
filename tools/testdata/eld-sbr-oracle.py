@@ -2,17 +2,19 @@
 """Writes the oracle files of smalt-mpeg's AacLowDelaySbrTest.
 
 1. libxaac's decodes of the AAC-ELD streams with low delay SBR of ISO/IEC 14496-26 (er_eld_sbr_*), which ship
-   without reference waveforms: <conformance cache>/eld-sbr-oracle/<stream>.wav.
+   without reference waveforms, read from the archive set mpeg4audio-ed2-streams-smoke of the hosted test data
+   (SMALT_TESTDATA, see tools/testdata/README.md):
+   <cache>/eld-sbr-oracle/<stream>.wav, where <cache> is SMALT_CACHE (default ~/.smalt/cache).
 2. AAC-ELD streams with low delay SBR and 480-sample frames, which no conformance stream covers, encoded from
    synthetic signals by libxaac's encoder and decoded by libxaac's decoder: <name>.raw (the AudioSpecificConfig
    followed by the access units), <name>.meta (their sizes) and <name>.wav in
-   <conformance cache>/eld-sbr-oracle/encoded.
+   <cache>/eld-sbr-oracle/encoded.
 3. With --fdk: the conformance streams and encodes of the Fraunhofer FDK AAC encoder (480-sample frames at dual
    rate and downsampled, which libxaac does not encode) decoded by the FDK AAC decoder into
-   <conformance cache>/eld-sbr-fdk, and the dual-rate ones also by libxaac into eld-sbr-oracle/encoded.
+   <cache>/eld-sbr-fdk, and the dual-rate ones also by libxaac into eld-sbr-oracle/encoded.
 4. The streams of Smalt's AAC-ELD encoder with low delay SBR that smalt-mpeg's AacLowDelaySbrEncoderTest pins
    (SMALT_STREAMS, the AudioSpecificConfig and access units in the .raw/.meta form below), decoded by libxaac into
-   <conformance cache>/eld-sbr-oracle/smalt and, with --fdk, by the FDK AAC decoder into eld-sbr-fdk/smalt.
+   <cache>/eld-sbr-oracle/smalt and, with --fdk, by the FDK AAC decoder into eld-sbr-fdk/smalt.
    On Windows the FDK library is the binary DLL of the MSYS2 package mingw-w64-ucrt-x86_64-fdk-aac 2.0.3-1
    (pinned by SHA-256), downloaded unless --fdk names a library; elsewhere --fdk names the system's
    libfdk-aac. The library is driven through its public API as a black box.
@@ -59,6 +61,8 @@ FDK_SHA256 = 'e08846148086d898d4affa0303a3fcccd0dc97017487017e4cb18dab95a10150'
 # silently codes no DRC
 DRC_CONFIG = 'impd_drc_config_params.txt'
 
+# the archive set of archives.tsv that holds the conformance streams
+ARCHIVE_SET = 'mpeg4audio-ed2-streams-smoke'
 STREAMS = ['er_eld_sbr_%s_%d_%s' % (signal, channels, rate) for signal in ('e', 'gh', 'i', 's')
            for channels in (1, 2) for rate in ('32', '44', '48')] + ['er_eld_sbr_twi_1_24', 'er_eld_sbr_twi_1_48']
 
@@ -91,14 +95,9 @@ ENCODED_SHA256 = {
 }
 
 
-def vector(name):
-    for row in testdata.read_tsv(testdata.VECTORS, testdata.VECTOR_COLUMNS):
-        if row['name'] == name:
-            path = os.path.join(testdata.conformance_dir(), name)
-            if not testdata.valid(path, row['sha256']):
-                testdata.download(row['url'], path, row['sha256'])
-            return path
-    raise SystemExit(name + ' is not in vectors.tsv')
+def stream_file(stream):
+    """Returns a conformance stream: a member of the ISO/IEC 14496-26 ed-2 archive set of the hosted test data."""
+    return testdata.member(ARCHIVE_SET, 'compressedMp4/' + stream + '.mp4')
 
 
 def fetch(url, target, expected):
@@ -451,9 +450,9 @@ class Fdk:
 
 def smalt_decodes(decoder, fdk):
     """Decodes the pinned streams of Smalt's encoder with libxaac and, when given, the FDK AAC decoder."""
-    oracle = os.path.join(testdata.conformance_dir(), 'eld-sbr-oracle', 'smalt')
+    oracle = os.path.join(testdata.cache_dir('eld-sbr-oracle'), 'smalt')
     os.makedirs(oracle, exist_ok=True)
-    reference = os.path.join(testdata.conformance_dir(), 'eld-sbr-fdk', 'smalt')
+    reference = os.path.join(testdata.cache_dir('eld-sbr-fdk'), 'smalt')
     if fdk:
         os.makedirs(reference, exist_ok=True)
     for file in sorted(os.listdir(SMALT_STREAMS)):
@@ -492,10 +491,9 @@ def fdk_library(work, named):
 
 def fdk_oracle(library, decoder, encoded):
     fdk = Fdk(library)
-    directory = os.path.join(testdata.conformance_dir(), 'eld-sbr-fdk')
-    os.makedirs(directory, exist_ok=True)
+    directory = testdata.cache_dir('eld-sbr-fdk')
     for stream in STREAMS:
-        config, units = access_units(vector('mpeg4audio-' + stream + '.mp4'))
+        config, units = access_units(stream_file(stream))
         target = os.path.join(directory, stream + '.wav')
         fdk.decode(config, units, target)
         print('wrote', target)
@@ -530,12 +528,11 @@ def main():
         rest = arguments[arguments.index('--fdk') + 1:]
         named = rest[0] if rest else None
     decoder, encoder = build(work)
-    directory = os.path.join(testdata.conformance_dir(), 'eld-sbr-oracle')
-    os.makedirs(directory, exist_ok=True)
+    directory = testdata.cache_dir('eld-sbr-oracle')
     inputs = os.path.join(work, 'inputs')
     os.makedirs(inputs, exist_ok=True)
     for stream in STREAMS:
-        config, units = access_units(vector('mpeg4audio-' + stream + '.mp4'))
+        config, units = access_units(stream_file(stream))
         raw, meta = write_raw(inputs, stream, config, units, 0)
         target = os.path.join(directory, stream + '.wav')
         subprocess.check_call([decoder, '-ifile:' + raw, '-imeta:' + meta, '-ofile:' + target, '-mp4:1'],

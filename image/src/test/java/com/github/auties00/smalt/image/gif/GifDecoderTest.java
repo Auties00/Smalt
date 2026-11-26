@@ -167,6 +167,29 @@ class GifDecoderTest {
                 }
             }
         }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"mei-gif-mspaint-10x10.gif", "mei-gif-pbar-ani-invalid-XMP.gif",
+                "mei-gif-photoshop-8x12-32colors-alpha.gif"})
+        @DisplayName("matches ffmpeg frame by frame on files of Paint, Photoshop and an animation with a broken XMP")
+        void thirdParty(String name) {
+            var path = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var data = Fixtures.read(path);
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var expected = RasterTesting.ffmpegFrames(path, "rgba");
+            try (var reader = GifDecoder.openAnimation(MediaSource.of(data), OPTIONS)) {
+                var frames = frames(reader);
+                var frameSize = reader.width() * reader.height() * 4;
+                assertEquals(expected.length / frameSize, frames.size(), "frame count");
+                for (var i = 0; i < frames.size(); i++) {
+                    RasterTesting.assertSameVisible(Arrays.copyOfRange(expected, i * frameSize, (i + 1) * frameSize),
+                            frames.get(i).pixels(), reader.width(), name + " frame " + i);
+                }
+            }
+            // the invalid XMP extension must not fail the still decode
+            assertEquals(GifDecoder.probe(MediaSource.of(data)).width(), GifDecoder.decode(MediaSource.of(data))
+                    .picture().width());
+        }
     }
 
     @Nested

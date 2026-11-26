@@ -186,4 +186,61 @@ class VoiceProcessorOracleTest {
         var key = OracleHarness.key(match.options(), streams);
         assertEquals(GOLDENS.get(key), result.oracleDigest(), "golden digest of the oracle output for " + key);
     }
+
+    /** The 17 clips of speakers p232 and p257 of the Edinburgh DataShare noisy speech test set (48 kHz). */
+    static Stream<String> edinburghClips() {
+        return com.github.auties00.smalt.testkit.Conformance.archive("edinburgh-noisy-testset-subset").members().stream()
+                .map(member -> member.substring(member.lastIndexOf('/') + 1));
+    }
+
+    /** Reads a 16-bit mono WAVE file of the Edinburgh test sets (noisy set; the clean set feeds OpusEncoderQualityTest). */
+    static short[] edinburgh(String set, String clip) {
+        try {
+            var data = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.archive(set)
+                    .member(set.contains("noisy") ? "noisy_testset_wav/" + clip : "clean_testset_wav/" + clip));
+            var buffer = java.nio.ByteBuffer.wrap(data).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            var offset = 12;
+            while (offset + 8 <= data.length) {
+                var id = new String(data, offset, 4, java.nio.charset.StandardCharsets.US_ASCII);
+                var size = buffer.getInt(offset + 4);
+                if (id.equals("fmt ")) {
+                    assertEquals(1, buffer.getShort(offset + 10), clip + " channels");
+                    assertEquals(48000, buffer.getInt(offset + 12), clip + " rate");
+                    assertEquals(16, buffer.getShort(offset + 22), clip + " bits");
+                } else if (id.equals("data")) {
+                    var samples = new short[Math.min(size, data.length - offset - 8) / 2];
+                    buffer.position(offset + 8);
+                    buffer.slice().order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(samples);
+                    return samples;
+                }
+                offset += 8 + size + (size & 1);
+            }
+            throw new AssertionError(clip + " has no data chunk");
+        } catch (java.io.IOException exception) {
+            throw new java.io.UncheckedIOException(exception);
+        }
+    }
+
+    private static final VoiceProcessorOptions SPEECH_NS = NOTHING.toBuilder().sampleRate(48000)
+            .noiseSuppression(NoiseSuppression.HIGH).build();
+
+    private static final VoiceProcessorOptions SPEECH_AGC = NOTHING.toBuilder().sampleRate(48000)
+            .noiseSuppression(NoiseSuppression.MODERATE).gainControl(GainControl.ADAPTIVE_DIGITAL).build();
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("edinburghClips")
+    @DisplayName("noise suppression and the digital gain controller are bit-exact on real noisy speech at 48 kHz")
+    void realNoisySpeech(String clip) {
+        var capture = edinburgh("edinburgh-noisy-testset-subset", clip);
+        var frames = capture.length / 480;
+        var streams = new RateScenarios.Streams("edinburgh " + clip, 48000, 1, 1, new short[frames * 480],
+                java.util.Arrays.copyOf(capture, frames * 480));
+        for (var options : List.of(SPEECH_NS, SPEECH_AGC)) {
+            var result = OracleHarness.run(options, streams);
+            assertEquals(0.0, result.maxDifference(), () -> clip + " " + OracleHarness.describe(options)
+                    + ": max |java - oracle| = " + result.maxDifference() + ", first mismatch in frame "
+                    + result.firstMismatchFrame());
+            assertEquals(result.oracleDigest(), result.javaDigest(), "digest of the Java output");
+        }
+    }
 }

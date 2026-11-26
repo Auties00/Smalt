@@ -81,7 +81,7 @@ class X3fReferenceTest {
     @Test
     @DisplayName("decodes the dp2 Quattro's layers and type 5 metadata block exactly as the X3F tools library does")
     void quattro() throws Exception {
-        var file = Files.readAllBytes(RawSamples.X3F_DP2_QUATTRO.fetch());
+        var file = Files.readAllBytes(RawSamples.X3F_DP2_QUATTRO.path());
         var raw = section(file, 0x00010023);
         var layout = X3fDecoder.trueLayout(raw, raw.length, true, 5888, 3672);
         assertEquals(Arrays.toString(new int[]{2944, 2944, 6272}), Arrays.toString(layout.columns()));
@@ -125,7 +125,7 @@ class X3fReferenceTest {
     })
     @DisplayName("interpolates over the sample files' bad pixels exactly as the X3F tools library does")
     void badPixels(RawSamples sample, String sha256) throws Exception {
-        var bytes = Files.readAllBytes(sample.fetch());
+        var bytes = Files.readAllBytes(sample.path());
         var file = RawParser.parse(MediaSource.of(bytes), MediaLimits.DEFAULT);
         var camf = camf(bytes);
         if (sample != RawSamples.X3F_DP2_QUATTRO) {
@@ -172,7 +172,7 @@ class X3fReferenceTest {
             }
         }
         assertFalse(expected.isEmpty(), name);
-        var file = RawParser.parse(MediaSource.of(Files.readAllBytes(sample.fetch())), MediaLimits.DEFAULT);
+        var file = RawParser.parse(MediaSource.of(Files.readAllBytes(sample.path())), MediaLimits.DEFAULT);
         assertNotNull(file.sensor.opcodes2, "the lens shading");
         var list = ByteBuffer.wrap(file.sensor.opcodes2);
         assertEquals(expected.size(), list.getInt());
@@ -230,7 +230,7 @@ class X3fReferenceTest {
     @DisplayName("renders the sample files, with their bad pixels and lens shading corrected, as the X3F tools "
             + "library does")
     void rendering(RawSamples sample) throws Exception {
-        var bytes = Files.readAllBytes(sample.fetch());
+        var bytes = Files.readAllBytes(sample.path());
         var exposure = RawParser.parse(MediaSource.of(bytes), MediaLimits.DEFAULT).color.baselineExposure;
         var options = RawDecoderOptions.builder().toneCurve(RawToneCurve.LINEAR).highlights(RawHighlights.CLIP)
                 .exposure(exposure).highBitDepth(true).build();

@@ -49,7 +49,7 @@ class ImscConformanceTest {
     Stream<DynamicTest> documents() throws IOException {
         var timelines = timelines();
         var documents = new LinkedHashMap<String, byte[]>();
-        try (var zip = new ZipInputStream(Conformance.open(Conformance.fetchListed(VECTOR)))) {
+        try (var zip = new ZipInputStream(Conformance.open(Conformance.vector(VECTOR)))) {
             for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
                 if (!entry.isDirectory() && entry.getName().endsWith(".ttml") && entry.getName().startsWith(PREFIX)) {
                     documents.put(entry.getName().substring(PREFIX.length()), zip.readAllBytes());

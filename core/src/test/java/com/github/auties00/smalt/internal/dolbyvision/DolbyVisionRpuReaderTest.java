@@ -156,8 +156,8 @@ class DolbyVisionRpuReaderTest {
     @Test
     @DisplayName("reads dovi_tool's T.35 payloads of real AV1 streams as their regular RPUs")
     void realAv1() throws IOException {
-        var payload = Files.readAllBytes(Conformance.fetchListed("dovi-tool-av1-p5-01.bin"));
-        var reference = Files.readAllBytes(Conformance.fetchListed("dovi-tool-av1-p5-01-ref.bin"));
+        var payload = Files.readAllBytes(Conformance.vector("dovi-tool-av1-p5-01.bin"));
+        var reference = Files.readAllBytes(Conformance.vector("dovi-tool-av1-p5-01-ref.bin"));
         var unescaped = NalUnits.unescape(reference, 4, reference.length - 4);
         var expected = DolbyVisionRpu.parse(unescaped, 0, unescaped.length);
         assertEquals(5, expected.profile());

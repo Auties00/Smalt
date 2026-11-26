@@ -187,8 +187,6 @@ class FuzzSeedWriter {
                 jpeg);
         reduce("arw", "rawpixls-sony-nex-6-12bit-12bit-compressed-3-2.arw", RawSeedReducer.Layout.ARW, jpeg);
         reduce("orf", "rawpixls-olympus-e-10-16bit-4-3.orf", RawSeedReducer.Layout.ORF, jpeg);
-        reduce("orf", "rawpixls-olympus-c5060wz-12bit-4-3.orf", RawSeedReducer.Layout.ORF, jpeg);
-        reduce("orf", "rawpixls-olympus-e-450-16bit-4-3.orf", RawSeedReducer.Layout.ORF, jpeg);
         reduce("rw2", "rawpixls-panasonic-dmc-lx3-1-1.rw2", RawSeedReducer.Layout.RW2, jpeg);
         reduce("rw2", "rawpixls-panasonic-dc-g9-4-3-2348.rw2", RawSeedReducer.Layout.RW2, jpeg);
         reduce("pef", "rawpixls-pentax-ist-dl-12bit-3-2.pef", RawSeedReducer.Layout.PEF, jpeg);

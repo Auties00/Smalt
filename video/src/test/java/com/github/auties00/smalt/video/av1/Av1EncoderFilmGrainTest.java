@@ -474,6 +474,60 @@ class Av1EncoderFilmGrainTest {
         }
 
         @Test
+        @DisplayName("estimates grain of the strength libaom estimates from real camera noise")
+        void libaomEstimatesNatural() throws IOException {
+            // libaom's noisy_clip_640_360.y4m: natural content with real sensor noise, which synthetic noise on a
+            // smooth picture does not stand for
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var clip = com.github.auties00.smalt.testkit.Conformance.vector("noisy_clip_640_360.y4m");
+            var pictures = new ArrayList<Picture>();
+            try (var source = com.github.auties00.smalt.io.MediaSource.of(clip);
+                 var reader = com.github.auties00.smalt.video.VideoReader.open(source)) {
+                for (var frame = reader.read(); frame != null && pictures.size() < 4; frame = reader.read()) {
+                    pictures.add(Av1EncoderPictureFormatTest.copy(frame.picture()));
+                }
+            }
+            assertEquals(4, pictures.size());
+            var output = Scratch.directory("av1-grain").resolve("libaom-denoise-natural.ivf");
+            Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), List.of("-v", "error", "-y", "-i", clip.toString(),
+                    "-frames:v", "4", "-c:v", "libaom-av1", "-cpu-used", "8", "-crf", "30", "-denoise-noise-level", "25",
+                    output.toString()));
+            var reference = new ArrayList<Packet>();
+            for (var unit : Av1Streams.units(Files.readAllBytes(output))) {
+                reference.add(new Packet(1, unit.data(), unit.pts(), unit.pts(), 1, false));
+            }
+            var options = base(Av1EncoderUsage.REALTIME).timeBase(TIME_BASE).denoise(25).build();
+            var packets = new ArrayList<Packet>();
+            try (var encoder = new Av1Encoder(640, 360, options)) {
+                for (var i = 0; i < pictures.size(); i++) {
+                    encoder.encode(new VideoFrame(pictures.get(i), i * 3000L, 3000, false), packets::add);
+                }
+            }
+            var theirs = deviation(reference, 640 * 360);
+            var ours = deviation(packets, 640 * 360);
+            System.out.printf("noisy_clip grain deviation: ours %.3f, libaom %.3f%n", ours, theirs);
+            assertTrue(theirs > 0, "libaom estimates grain");
+            assertTrue(ours > theirs * 0.6 && ours < theirs * 1.6,
+                    "synthesized grain deviation " + ours + ", libaom's " + theirs);
+        }
+
+        /** {@link #synthesizedDeviation} for frames of {@code lumaBytes} luma samples. */
+        static double deviation(List<Packet> packets, int lumaBytes) {
+            var plain = decode(packets, false);
+            var grainy = decode(packets, true);
+            double sum = 0;
+            var frames = 0;
+            for (var i = 0; i < grainy.size(); i++) {
+                if (grainy.get(i).grain()) {
+                    sum += meanSquaredDifference(Arrays.copyOf(plain.get(i).samples(), lumaBytes),
+                            Arrays.copyOf(grainy.get(i).samples(), lumaBytes), 8);
+                    frames++;
+                }
+            }
+            return frames == 0 ? 0 : Math.sqrt(sum / frames);
+        }
+
+        @Test
         @DisplayName("denoises: the frames coded without grain are closer to the clean picture than the noisy source")
         void denoises() {
             var sigma = 6.0;

@@ -330,7 +330,7 @@ class RawDecoderBehaviorTest {
     @DisplayName("camera raw files of the full tier, at least one per format: identical pictures and sensor data under every "
             + "source behavior and clean faults")
     void camera(String name) throws IOException {
-        harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
+        harness("vectors/" + name, Files.readAllBytes(Conformance.vector(name)))
                 .noScaled()
                 .maxFaultReads(4)
                 .timeout(Duration.ofMinutes(5))
@@ -345,7 +345,7 @@ class RawDecoderBehaviorTest {
             + "encrypted SR2 directory and of CRW table set 1: identical pictures and sensor data under every source "
             + "behavior and clean faults")
     void gaps(String name) throws IOException {
-        harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
+        harness("vectors/" + name, Files.readAllBytes(Conformance.vector(name)))
                 .noScaled()
                 .maxFaultReads(4)
                 .timeout(Duration.ofMinutes(5))
@@ -357,7 +357,7 @@ class RawDecoderBehaviorTest {
             + "faults")
     void nikonHighEfficiency() throws IOException {
         var name = "rawpixls-nikon-z6-3-8bit-compressed-3-2-7810.nef";
-        harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
+        harness("vectors/" + name, Files.readAllBytes(Conformance.vector(name)))
                 .noScaled()
                 .maxFaultReads(4)
                 .timeout(Duration.ofMinutes(5))
@@ -369,7 +369,7 @@ class RawDecoderBehaviorTest {
             + "source behavior and clean faults")
     void gpr() throws IOException {
         var name = "rawpixls-gopro-hero7-black-16bit-4-3-2908.gpr";
-        harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
+        harness("vectors/" + name, Files.readAllBytes(Conformance.vector(name)))
                 .noScaled()
                 .maxFaultReads(4)
                 .timeout(Duration.ofMinutes(5))
@@ -380,7 +380,7 @@ class RawDecoderBehaviorTest {
     @DisplayName("a smoke-tier DNG: identical pictures and sensor data under every source behavior and clean faults")
     void vector() throws IOException {
         var name = "rawpixls-canon-eos-5d-mark-iii-14bit-14bit-2.3471882640587.dng";
-        harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))
+        harness("vectors/" + name, Files.readAllBytes(Conformance.vector(name)))
                 .noScaled()
                 .maxFaultReads(6)
                 .timeout(Duration.ofMinutes(5))

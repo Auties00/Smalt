@@ -32,8 +32,8 @@ class Mp3RobustnessTest {
         seeds.add(Fixtures.read(Mp3Fixtures.lame(22050, 1, 0.5, "-q:a", "2")));
         seeds.add(Fixtures.read(Mp3Fixtures.lame(8000, 2, 0.6, "-b:a", "24k", "-write_xing", "0")));
         seeds.add(Fixtures.read(Mp3Fixtures.encode("mp2", 32000, 2, 0.4, List.of("-c:a", "mp2", "-b:a", "128k"))));
-        seeds.add(Mp3Vectors.read(Mp3Vectors.fetch("l1-fl4.bit")));
-        seeds.add(java.util.Arrays.copyOf(Mp3Vectors.read(Mp3Vectors.fetch("l3-he_free.bit")), 6000));
+        seeds.add(Mp3Vectors.read(Mp3Vectors.vector("l1-fl4.bit")));
+        seeds.add(java.util.Arrays.copyOf(Mp3Vectors.read(Mp3Vectors.vector("l3-he_free.bit")), 6000));
         return seeds;
     }
 

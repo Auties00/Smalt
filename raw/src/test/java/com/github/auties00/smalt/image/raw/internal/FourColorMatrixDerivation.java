@@ -400,7 +400,7 @@ final class FourColorMatrixDerivation {
      */
     static void main(String[] arguments) {
         for (var sample : new RawSamples[]{RawSamples.CRW_G1, RawSamples.NEF_E5700}) {
-            var fit = fit(sample.fetch());
+            var fit = fit(sample.path());
             var builder = new StringBuilder(sample.name()).append(" (").append(fit.patches()).append(" patches) ");
             for (var color : fit.planes()) {
                 builder.append(color).append(' ');

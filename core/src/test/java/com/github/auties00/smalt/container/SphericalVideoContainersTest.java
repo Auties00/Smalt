@@ -261,4 +261,49 @@ class SphericalVideoContainersTest {
                     && probe.contains("\"yaw\": -90"), probe);
         }
     }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"fate-mkv-spherical.mkv", "fate-mov-spherical.mov",
+            "fate-mov-spherical-vexu-orientation.mp4"})
+    @DisplayName("reads the spherical projection of third-party files as ffprobe does")
+    void fate(String name) {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var ours = com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe(name,
+                com.github.auties00.smalt.container.Containers::openDemuxer);
+        var video = (com.github.auties00.smalt.track.VideoTrack) ours.tracks().stream()
+                .filter(com.github.auties00.smalt.track.VideoTrack.class::isInstance).findFirst().orElseThrow();
+        var mapping = com.github.auties00.smalt.container.ThirdPartyDemux.sideData(
+                com.github.auties00.smalt.container.ThirdPartyDemux.sideData(file).get(0), "Spherical Mapping");
+        var spherical = video.spherical().orElseThrow();
+        var projection = org.junit.jupiter.api.Assertions.assertInstanceOf(
+                com.github.auties00.smalt.track.SphericalVideo.Equirectangular.class,
+                spherical.projection());
+        assertTrue(mapping.get("projection").endsWith("equirectangular"), mapping.toString());
+        if (mapping.get("projection").startsWith("tiled")) {
+            // the bounds are 0.32 fractions of the full projection the coded picture crops (Spherical Video V2
+            // equi); ffprobe prints them in pixels of that full projection
+            var scale = 0x1p32;
+            var width = (double) video.width() / (1 - (projection.left() + projection.right()) / scale);
+            var height = (double) video.height() / (1 - (projection.top() + projection.bottom()) / scale);
+            assertEquals(Long.parseLong(mapping.get("bound_left")), projection.left() / scale * width, 1.0);
+            assertEquals(Long.parseLong(mapping.get("bound_right")), projection.right() / scale * width, 1.0);
+            assertEquals(Long.parseLong(mapping.get("bound_top")), projection.top() / scale * height, 1.0);
+            assertEquals(Long.parseLong(mapping.get("bound_bottom")), projection.bottom() / scale * height, 1.0);
+        } else {
+            // the file has both a vexu projection, without a pose, and a Spherical Video V2 sv3d with a prhd pose;
+            // ffmpeg 7.1 reports the vexu one, ours the pose of the prhd box (16.16 degrees: yaw, pitch, roll)
+            assertEquals(0.0, Double.parseDouble(mapping.get("yaw")));
+            byte[] bytes;
+            try {
+                bytes = java.nio.file.Files.readAllBytes(file);
+            } catch (java.io.IOException exception) {
+                throw new java.io.UncheckedIOException(exception);
+            }
+            var prhd = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1).indexOf("prhd");
+            var pose = java.nio.ByteBuffer.wrap(bytes, prhd + 8, 12);
+            assertEquals(pose.getInt() / 65536.0, spherical.yaw(), 1e-6);
+            assertEquals(pose.getInt() / 65536.0, spherical.pitch(), 1e-6);
+            assertEquals(pose.getInt() / 65536.0, spherical.roll(), 1e-6);
+        }
+    }
 }

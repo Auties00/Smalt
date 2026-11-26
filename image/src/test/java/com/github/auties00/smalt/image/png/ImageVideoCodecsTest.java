@@ -151,6 +151,28 @@ class ImageVideoCodecsTest {
         EXACT.check(codec + " " + pixelFormat, Tolerance.Difference.of(expected, ours.toByteArray()));
     }
 
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"png-fate-corepng-partial.avi",
+            "png-samples-les_dns_xz.mov"})
+    @DisplayName("decodes PNG video of other writers (CorePNG AVI, PNG in QuickTime) pixel for pixel as ffmpeg does")
+    void thirdParty(String name) {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var stream = demux(file);
+        assertEquals(Codec.PNG, stream.track().codec());
+        // les_dns_xz.mov is 16-bit gray, compared at 16 bits as decodesFfmpeg compares wide formats
+        var wide = name.contains("les_dns_xz");
+        var ours = new ByteArrayOutputStream();
+        try (var decoder = VideoDecoders.create(stream.track(), VideoDecoderOptions.builder().highBitDepth(wide)
+                .build())) {
+            for (var packet : stream.packets()) {
+                decoder.decode(packet, frame -> ours.writeBytes(raw(frame.picture())));
+            }
+        }
+        var expected = ffmpegDecode(file, wide ? "rgba64le" : "rgba");
+        EXACT.check(name, Tolerance.Difference.of(expected, ours.toByteArray()));
+    }
+
     static Picture source(long seed, boolean alpha, boolean wide) {
         var random = new Random(seed);
         if (wide) {

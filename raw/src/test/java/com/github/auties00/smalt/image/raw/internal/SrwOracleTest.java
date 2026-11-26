@@ -64,7 +64,7 @@ class SrwOracleTest {
                     double width, double height) {
         byte[] bytes;
         try {
-            bytes = Files.readAllBytes(Conformance.fetchListed(sample));
+            bytes = Files.readAllBytes(Conformance.vector(sample));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
@@ -94,7 +94,7 @@ class SrwOracleTest {
     void photosites(Case test) {
         byte[] bytes;
         try {
-            bytes = Files.readAllBytes(Conformance.fetchListed(test.sample()));
+            bytes = Files.readAllBytes(Conformance.vector(test.sample()));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }

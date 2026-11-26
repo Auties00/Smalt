@@ -4,7 +4,7 @@
 export JAVA_HOME="$SMALT_JDK"
 export PATH="$JAVA_HOME/bin:$SMALT_MAVEN/bin:$PATH"
 python3 tools/fuzz/fuzz.py build --online
-# The smoke data tier adds seeds to the committed ones; a host that is down only costs its seeds.
-python3 tools/testdata/testdata.py fetch --tier smoke --no-clips || echo "warning: the smoke tier is incomplete"
+# The vectors of the hosted test data add seeds to the committed ones when SMALT_TESTDATA holds them; the build
+# downloads none.
 python3 tools/fuzz/fuzz.py seeds
 python3 tools/fuzz/fuzz.py package --no-build --out "$OUT"

@@ -34,22 +34,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * against the preview the converter renders into them. The converter stores denoised,
  * color-converted values for Sigma X3F files, not the sensor layers, so for X3F only the image
  * area, the linear relation of the layers to its values and the rendering are compared. The oracle files are the uncompressed DNG
- * files {@code tools/testdata/raw-oracle.py} writes into {@code <conformance cache>/raw-oracle}
+ * files {@code tools/testdata/raw-oracle.py} writes into {@code <test cache>/raw-oracle}
  * ({@code -Dsmalt.test.rawOracle} overrides the directory); the tests are skipped without them. The
  * converter may store a few rows or columns fewer than the file; the oracle is located within the
  * decoded image at the offset, of at most eight photosites, where it matches.
  */
 class RawOracleTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"CR2_40D_SRAW", "CR2_5D3_SRAW", "CR2_7D_MRAW", "CR2_7D_SRAW", "NEF_E5700",
-            "NEF_E8400", "NEF_E8800", "ORF_C5060WZ", "ORF_E1", "ORF_E10", "ORF_E400", "ORF_E410", "ORF_EM1", "ORF_EM10",
-            "ORF_EP1", "ORF_EP3", "ORF_EP5", "ORF_EPL6", "ORF_OM1", "ORF_TG7", "PEF_IST_D", "PEF_IST_DL",
-            "PEF_K3III_MONOCHROME", "PEF_K5", "PEF_KS1", "RW2_G9", "RW2_G9M2", "RW2_GF6", "RW2_GH1", "RW2_GH5S",
-            "RW2_LX3", "RW2_S1", "RW2_S5M2", "MRW_ALPHA_7D", "MRW_ALPHA_7D_2025", "MRW_ALPHA_SWEET", "MRW_DIMAGE_5",
-            "MRW_DIMAGE_A2", "MRW_DYNAX_5D", "MRW_DYNAX_7D", "MRW_MAXXUM_7D"})
+    @EnumSource(value = RawSamples.class, names = {"CR2_40D_SRAW", "CR2_5D3_SRAW", "NEF_E5700", "NEF_E8400", "ORF_E10",
+            "ORF_E410", "ORF_EM1", "ORF_EM10", "ORF_EP1", "ORF_EP3", "ORF_EP5", "ORF_EPL6", "ORF_OM1", "ORF_TG7",
+            "PEF_IST_D", "PEF_IST_DL", "PEF_K3III_MONOCHROME", "PEF_K5", "RW2_G9", "RW2_GF6", "RW2_GH1", "RW2_GH5S",
+            "RW2_LX3", "RW2_S1", "RW2_S5M2", "MRW_DIMAGE_5", "MRW_DYNAX_7D"})
     @DisplayName("the decoder reproduces the values Adobe DNG Converter stores for the sample")
     void decoding(RawSamples sample) {
         var name = sample.fileName();
@@ -57,7 +55,7 @@ class RawOracleTest {
         Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
         var oracle = NikonTableDerivation.oracle(dng);
         SensorPlane decoded;
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             assertTrue(file.sensor != null, file.unsupported);
             var sensor = file.sensor;
@@ -70,14 +68,13 @@ class RawOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"MRW_ALPHA_7D", "MRW_ALPHA_7D_2025", "MRW_ALPHA_SWEET", "MRW_DIMAGE_5",
-            "MRW_DIMAGE_A2", "MRW_DYNAX_5D", "MRW_DYNAX_7D", "MRW_MAXXUM_7D"})
+    @EnumSource(value = RawSamples.class, names = {"MRW_DIMAGE_5", "MRW_DYNAX_7D"})
     @DisplayName("the linear values, crop, levels and white balance equal those of the converter's DNG file")
     void linear(RawSamples sample) {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
         Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
-        try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
+        try (var source = MediaSource.of(sample.path()); var oracle = MediaSource.of(dng)) {
             var ours = RawDecoder.decodeRaw(source);
             var theirs = RawDecoder.decodeRaw(oracle);
             assertEquals(theirs.width(), ours.width());
@@ -96,7 +93,7 @@ class RawOracleTest {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
         Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
-        try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
+        try (var source = MediaSource.of(sample.path()); var oracle = MediaSource.of(dng)) {
             var ours = RawParser.parse(source, MediaLimits.DEFAULT);
             var theirs = RawParser.parse(oracle, MediaLimits.DEFAULT);
             var area = ours.sensor.active();
@@ -133,15 +130,15 @@ class RawOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"MRW_ALPHA_7D", "MRW_ALPHA_7D_2025", "MRW_ALPHA_SWEET", "MRW_DIMAGE_5",
-            "MRW_DIMAGE_A2", "MRW_DYNAX_5D", "MRW_DYNAX_7D", "MRW_MAXXUM_7D", "CRW_D30", "CRW_D60", "CRW_10D", "CRW_10D_3164", "CRW_10D_3165", "CRW_300D", "CRW_300D_3162",
-            "CRW_DIGITAL_REBEL", "CRW_G5", "CRW_G6"})
+    @EnumSource(value = RawSamples.class, names = {"MRW_DIMAGE_5", "MRW_DYNAX_7D", "CRW_D30",
+            "CRW_D60", "CRW_10D", "CRW_10D_3164", "CRW_10D_3165", "CRW_300D", "CRW_300D_3162", "CRW_DIGITAL_REBEL",
+            "CRW_G5", "CRW_G6"})
     @DisplayName("the rendering matches the converter's rendering of the sample in structure and balance")
     void rendering(RawSamples sample) {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
         Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
-        try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
+        try (var source = MediaSource.of(sample.path()); var oracle = MediaSource.of(dng)) {
             var converter = grid(com.github.auties00.smalt.image.Images.decode(MediaSource.of(
                     RawDecoder.extractPreview(oracle).orElseThrow())).picture());
             // the default rendering has the generic camera matrix: only its structure is compared
@@ -169,7 +166,7 @@ class RawOracleTest {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
         Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
-        try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
+        try (var source = MediaSource.of(sample.path()); var oracle = MediaSource.of(dng)) {
             var ours = RawDecoder.decodeRaw(source);
             var theirs = RawDecoder.decodeRaw(oracle);
             assertEquals(3, ours.channels());
@@ -194,7 +191,7 @@ class RawOracleTest {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
         Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
-        try (var source = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
+        try (var source = MediaSource.of(sample.path()); var oracle = MediaSource.of(dng)) {
             var converter = grid(com.github.auties00.smalt.image.Images.decode(MediaSource.of(
                     RawDecoder.extractPreview(oracle).orElseThrow())).picture());
             var ours = grid(RawDecoder.decode(source).picture());

@@ -29,6 +29,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
@@ -44,7 +45,7 @@ class Vp8RobustnessTest {
 
     static byte[] vector(String name) {
         try {
-            return Files.readAllBytes(Conformance.fetch(name, Vp8Vectors.BASE_URL + name, Vp8Vectors.SHA256.get(name)));
+            return Files.readAllBytes(Conformance.vector(name));
         } catch (IOException exception) {
             throw new AssertionError(exception);
         }
@@ -239,6 +240,38 @@ class Vp8RobustnessTest {
                                     fail("empty picture");
                                 }
                             }), name + " trial " + trial + " packet " + i);
+                        }
+                    }
+                }
+            });
+        }
+
+        /**
+         * The VP8 files of libvpx's invalid-file test ({@code test/invalid_file_test.cc}) with the per-frame result
+         * libvpx's decoder returns, one {@code vpx_codec_err_t} per line of the {@code .res} file next to each:
+         * {@code 0} ({@code VPX_CODEC_OK}) must decode, {@code 7} ({@code VPX_CODEC_CORRUPT_FRAME}) must be
+         * rejected as malformed, and decoding goes on with the next frame either way, as the libvpx test does.
+         */
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"invalid-bug-1443.ivf", "invalid-bug-148271109.ivf", "invalid-token-partition.ivf",
+                "invalid-vp80-00-comprehensive-018.ivf.2kf_0x6.ivf",
+                "invalid-vp80-00-comprehensive-s17661_r01-05_b6-.ivf"})
+        @DisplayName("returns libvpx's per-frame verdicts on libvpx's invalid files")
+        void libvpxInvalidFiles(String name) {
+            var ivf = Ivf.parse(vector(name));
+            var expected = new String(vector(name + ".res"), java.nio.charset.StandardCharsets.US_ASCII).lines()
+                    .map(String::strip).filter(line -> !line.isEmpty()).map(Integer::parseInt).toList();
+            assertEquals(expected.size(), ivf.frames().size(), "one verdict per frame");
+            assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
+                try (var decoder = new Vp8Decoder(Vp8ConformanceTest.track(ivf.width(), ivf.height()))) {
+                    for (var i = 0; i < ivf.frames().size(); i++) {
+                        var packet = new Packet(1, ivf.frames().get(i).data(), i, i, 1, false);
+                        var verdict = expected.get(i);
+                        switch (verdict) {
+                            case 0 -> decoder.decode(packet, frame -> assertTrue(((YuvPicture) frame.picture()).width() > 0));
+                            case 7 -> assertThrows(MediaException.Malformed.class,
+                                    () -> decoder.decode(packet, frame -> { }), name + " frame " + i);
+                            default -> fail("unexpected libvpx verdict " + verdict);
                         }
                     }
                 }

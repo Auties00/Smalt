@@ -585,7 +585,7 @@ class CrwParserTest {
     @Test
     @DisplayName("describes an EOS D30 file: the shot settings and the large preview")
     void d30() {
-        try (var source = MediaSource.of(RawSamples.CRW_D30.fetch())) {
+        try (var source = MediaSource.of(RawSamples.CRW_D30.path())) {
             var info = RawDecoder.info(source);
             assertEquals("Canon", info.make().orElseThrow());
             assertEquals("2016:12:23 17:05:30", info.captureTimeText().orElseThrow());
@@ -606,7 +606,7 @@ class CrwParserTest {
     @Test
     @DisplayName("describes a PowerShot G5 file: focal units, the preview and the thumbnail")
     void g5() {
-        try (var source = MediaSource.of(RawSamples.CRW_G5.fetch())) {
+        try (var source = MediaSource.of(RawSamples.CRW_G5.path())) {
             var info = RawDecoder.info(source);
             assertEquals(230 / 32.0, info.focalLength().orElseThrow(), 1e-9);
             assertEquals("7.2-28.8 mm", info.lens().orElseThrow());
@@ -623,7 +623,7 @@ class CrwParserTest {
     @Test
     @DisplayName("describes an EOS 300D file shot in portrait orientation")
     void portrait() {
-        try (var source = MediaSource.of(RawSamples.CRW_300D.fetch())) {
+        try (var source = MediaSource.of(RawSamples.CRW_300D.path())) {
             var info = RawDecoder.info(source);
             assertEquals(com.github.auties00.smalt.image.Orientation.ofExif(8), info.orientation());
             assertEquals("Canon EOS 300D DIGITAL", info.model().orElseThrow());

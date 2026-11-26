@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Generates the smartcrop.js reference crops of the attention strategy tests (SmartCropOracleTest).
 //
-// Downloads smartcrop.js 2.0.5 (MIT) from the npm registry's CDN mirror into the conformance cache,
-// builds deterministic synthetic RGBA pictures (a skin-toned ellipse, a saturated patch, a textured
-// area and a smooth gradient, placed differently in each picture), runs smartcrop.crop on each with
+// Downloads smartcrop.js 2.0.5 (MIT) from the npm registry's CDN mirror into <cache>/smartcrop (SMALT_CACHE,
+// default ~/.smalt/cache), builds deterministic synthetic RGBA pictures (a skin-toned ellipse, a
+// saturated patch, a textured area and a smooth gradient, placed differently in each picture), runs smartcrop.crop on each with
 // prescaling off (the Java test feeds the same pixels to the analysis directly), and writes into
 // core/src/test/resources/com/github/auties00/smalt/image/ops/smartcrop:
 //   <name>.bin : the raw RGBA input
@@ -19,7 +19,7 @@ const https = require('https');
 const VERSION = '2.0.5';
 const ROOT = path.resolve(__dirname, '..', '..');
 const OUT = path.join(ROOT, 'core/src/test/resources/com/github/auties00/smalt/image/ops/smartcrop');
-const CACHE = process.env.SMALT_CONFORMANCE_CACHE || path.join(os.homedir(), '.smalt', 'cache', 'conformance');
+const CACHE = path.join(process.env.SMALT_CACHE || path.join(os.homedir(), '.smalt', 'cache'), 'smartcrop');
 
 function download(url, file) {
   return new Promise((resolve, reject) => {

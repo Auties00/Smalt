@@ -743,6 +743,23 @@ class JxlEncoderTest {
         }
 
         @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"bicycles_restarts.jpg", "sideways_bench.jpg"})
+        @DisplayName("rebuilds libjxl's JPEGs with restart markers and an Exif orientation byte for byte")
+        void libjxlTestData(String name) {
+            var jpeg = read(com.github.auties00.smalt.testkit.Conformance.vector("jxl-testdata-" + name));
+            var jxl = JxlEncoder.recompressJpeg(MediaSource.of(jpeg));
+            assertArrayEquals(jpeg, JxlDecoder.reconstructJpeg(MediaSource.of(jxl)).orElseThrow(), "Smalt " + name);
+            assertEquals(com.github.auties00.smalt.image.jpeg.JpegDecoder.decode(MediaSource.of(jpeg)).orientation(),
+                    JxlDecoder.decode(MediaSource.of(jxl)).orientation(), "orientation");
+            Oracle.assume(Oracle.Tool.DJXL);
+            var in = scratch("rec-testdata-" + name + ".jxl");
+            var out = scratch("rec-testdata-" + name);
+            write(in, jxl);
+            Oracle.run(Oracle.Tool.DJXL, Duration.ofMinutes(2), List.of(in.toString(), out.toString(), "--quiet"));
+            assertArrayEquals(jpeg, read(out), "djxl " + name);
+        }
+
+        @ParameterizedTest(name = "{0}")
         @MethodSource("supported")
         @DisplayName("decodes to the pixels of the JPEG file")
         void pixels(String name) {

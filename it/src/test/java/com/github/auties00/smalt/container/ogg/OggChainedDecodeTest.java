@@ -110,4 +110,45 @@ class OggChainedDecodeTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("reads both links of a chained Theora and Vorbis file as ffprobe reads each link alone")
+    void chainedTheora(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        // Chromium's double-bear.ogv: the same Theora and Vorbis link twice; ffmpeg reads only the first link of a
+        // chain, so each link is cut out at its first beginning-of-stream page and probed alone
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("chromium-double-bear.ogv");
+        var bytes = java.nio.file.Files.readAllBytes(file);
+        var links = new ArrayList<Integer>();
+        for (var at = 0; at + 27 <= bytes.length; at++) {
+            if (bytes[at] == 'O' && bytes[at + 1] == 'g' && bytes[at + 2] == 'g' && bytes[at + 3] == 'S'
+                    && (bytes[at + 5] & 2) != 0 && (links.isEmpty() || at - links.getLast() > 1000)) {
+                links.add(at);
+            }
+        }
+        assertEquals(2, links.size(), links.toString());
+        var expected = new ArrayList<String>();
+        for (var index = 0; index < links.size(); index++) {
+            var end = index + 1 < links.size() ? links.get(index + 1) : bytes.length;
+            var link = directory.resolve("link" + index + ".ogv");
+            java.nio.file.Files.write(link, java.util.Arrays.copyOfRange(bytes, links.get(index), end));
+            for (var stream : List.of("v:0", "a:0")) {
+                for (var packet : com.github.auties00.smalt.testkit.audio.ProbedPacket.probe(link, stream)) {
+                    expected.add(packet.size() + "/" + packet.crc32());
+                }
+            }
+        }
+        var actual = new ArrayList<String>();
+        try (var demuxer = new OggDemuxer(MediaSource.of(bytes))) {
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                actual.add(packet.size() + "/"
+                        + com.github.auties00.smalt.testkit.audio.ProbedPacket.crc32(packet.data()));
+            }
+        }
+        // the order of the two streams' packets within a link may differ; each link's packets must match as a set
+        assertEquals(expected.size(), actual.size());
+        assertEquals(new java.util.HashSet<>(expected), new java.util.HashSet<>(actual));
+        java.util.Collections.sort(expected);
+        java.util.Collections.sort(actual);
+        assertEquals(expected, actual);
+    }
 }

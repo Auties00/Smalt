@@ -8,6 +8,7 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.HeifBuilder;
 import com.github.auties00.smalt.testkit.Oracle;
 import org.junit.jupiter.api.DisplayName;
@@ -17,7 +18,11 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
@@ -760,6 +765,208 @@ class HeifUncompressedTest {
             var unitType = HeifBuilder.fullBox("cmpC", 0, 0, new byte[]{'z', 'l', 'i', 'b', 5});
             assertThrows(MediaException.Unsupported.class, () -> decode(1, 1, new byte[1],
                     uncC(Layout.of(0, 0), Comp.of(0, 8)), cmpd(MONO), unitType));
+        }
+    }
+
+    @Nested
+    @DisplayName("libheif's uncompressed vectors")
+    class Libheif {
+        private static final String PREFIX = "heif-libheif-uncompressed_";
+
+        /** The interleavings libheif writes each layout in: component, pixel, row and tile. */
+        private static final List<String> INTERLEAVINGS = List.of("comp", "pix", "row", "tile");
+
+        private static HeifComponents read(String name) {
+            byte[] bytes;
+            try {
+                bytes = Files.readAllBytes(Conformance.vector(name));
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+            var source = MediaSource.of(bytes);
+            var file = HeifFile.parse(source, LIMITS);
+            var item = file.primaryItem();
+            var extent = item.property(HeifProperty.SpatialExtent.class);
+            assertNotNull(extent, name + " has no ispe");
+            return HeifUncompressed.decode("heif", file.readItem(source, item, LIMITS), item, (int) extent.width(),
+                    (int) extent.height(), LIMITS);
+        }
+
+        /** The vectors of one layout, in every interleaving and tiling libheif publishes it in. */
+        private static List<String> variants(String layout) {
+            var names = new ArrayList<String>();
+            for (var interleaving : INTERLEAVINGS) {
+                for (var suffix : List.of("", "_tiled", "_tiled_row_tile_align")) {
+                    var name = PREFIX + interleaving + "_" + layout + suffix + ".heif";
+                    if (Conformance.listed(name)) {
+                        names.add(name);
+                    }
+                }
+            }
+            assertTrue(names.size() >= 2, layout + ": " + names);
+            return names;
+        }
+
+        private static void assertSamePlanes(HeifComponents expected, HeifComponents actual, String name, int... types) {
+            assertEquals(expected.width(), actual.width(), name + " width");
+            assertEquals(expected.height(), actual.height(), name + " height");
+            for (var type : types) {
+                assertArrayEquals(plane(expected, type), plane(actual, type), name + " plane " + type);
+            }
+        }
+
+        /**
+         * Asserts that every interleaving, tiling and alignment of a layout decodes to the same planes: in ISO/IEC
+         * 23001-17 the interleaving, the tiling and the padding change only where the samples are stored.
+         */
+        private static HeifComponents assertLayout(String layout, int... types) {
+            var names = variants(layout);
+            var reference = read(names.getFirst());
+            assertEquals(types.length, reference.planes().size(), names.getFirst());
+            for (var name : names.subList(1, names.size())) {
+                assertSamePlanes(reference, read(name), name, types);
+            }
+            return reference;
+        }
+
+        /**
+         * Asserts that a plane of another depth holds the 8-bit reference plane scaled to its range, within the
+         * rounding of the scaling.
+         */
+        private static void assertDepth(HeifComponents reference, HeifComponents other, int type, String name) {
+            var plane = other.plane(type);
+            assertNotNull(plane, name + " plane " + type);
+            var expected = plane(reference, type);
+            var actual = plane(other, type);
+            var max = (1 << plane.bitDepth()) - 1;
+            for (var i = 0; i < expected.length; i++) {
+                assertEquals(expected[i] * max / 255.0, actual[i], 0.999, name + " plane " + type + " sample " + i);
+            }
+        }
+
+        @Test
+        @DisplayName("every interleaving of RGB, RGxB, ABGR and padded RGB(A) decodes to the same picture")
+        void rgb() {
+            var reference = assertLayout("RGB", R, G, B);
+            assertEquals(30, reference.width());
+            assertEquals(20, reference.height());
+            for (var layout : List.of("RGxB", "ABGR")) {
+                for (var name : variants(layout)) {
+                    assertSamePlanes(reference, read(name), name, R, G, B);
+                }
+            }
+            var alpha = assertLayout("ABGR", R, G, B, A);
+            for (var name : List.of("R8G8B8_bsz0_psz5", "R8G8B8_bsz0_psz10", "R8G8B8A8_bsz0_psz5",
+                    "R8G8B8A8_bsz0_psz10")) {
+                var file = PREFIX + "pix_" + name + "_tiled.heif";
+                var decoded = read(file);
+                assertSamePlanes(reference, decoded, file, R, G, B);
+                if (name.contains("A8")) {
+                    assertSamePlanes(alpha, decoded, file, A);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("16-, 7-, 6- and 5-bit RGB carry the bits of the 8-bit picture")
+        void depths() {
+            var reference = read(PREFIX + "comp_RGB.heif");
+            for (var layout : List.of("B16R16G16", "R7G7B7", "R7G7p1B7", "R7p1G7p1B7p1", "R5G6B5")) {
+                var decoded = assertLayout(layout, R, G, B);
+                for (var type : new int[]{R, G, B}) {
+                    assertDepth(reference, decoded, type, layout);
+                }
+            }
+            var packed = read(PREFIX + "pix_R5G6B5_tiled.heif");
+            assertEquals(5, packed.plane(R).bitDepth());
+            assertEquals(6, packed.plane(G).bitDepth());
+            assertEquals(5, packed.plane(B).bitDepth());
+        }
+
+        @Test
+        @DisplayName("every interleaving of monochrome decodes to the same picture")
+        void monochrome() {
+            assertLayout("M", MONO);
+        }
+
+        @Test
+        @DisplayName("4:4:4 YCbCr decodes alike in every interleaving and holds the full-range BT.601 luma of the RGB picture")
+        void yuv444() {
+            var yuv = assertLayout("YUV", Y, CB, CR);
+            var rgb = read(PREFIX + "comp_RGB.heif");
+            var r = plane(rgb, R);
+            var g = plane(rgb, G);
+            var b = plane(rgb, B);
+            var y = plane(yuv, Y);
+            var cb = plane(yuv, CB);
+            var cr = plane(yuv, CR);
+            var neutrals = 0;
+            for (var i = 0; i < r.length; i++) {
+                // ITU-T T.871 full-range BT.601 luma, off by one for the writer's fixed-point rounding; its chroma
+                // coefficients are rounded further, so only the chroma of the neutrals, which have none, is checked
+                assertEquals(clamp(0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i]), y[i], 1.0, "Y " + i);
+                if (r[i] == g[i] && g[i] == b[i]) {
+                    neutrals++;
+                    assertEquals(128, cb[i], 1.0, "Cb " + i);
+                    assertEquals(128, cr[i], 1.0, "Cr " + i);
+                }
+            }
+            assertTrue(neutrals > 0, "the picture has neutrals");
+        }
+
+        private static double clamp(double value) {
+            return Math.max(0, Math.min(255, value));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"420", "422"})
+        @DisplayName("subsampled YCbCr decodes alike in every component order, interleaving and depth")
+        void subsampled(String sampling) {
+            var reference = read(PREFIX + "comp_YUV_" + sampling + ".heif");
+            assertEquals(reference.width() / 2, reference.plane(CB).width());
+            assertEquals(sampling.equals("420") ? reference.height() / 2 : reference.height(),
+                    reference.plane(CB).height());
+            for (var order : List.of("YUV", "YVU", "VUY")) {
+                for (var interleaving : List.of("comp", "mix")) {
+                    var name = PREFIX + interleaving + "_" + order + "_" + sampling + ".heif";
+                    assertSamePlanes(reference, read(name), name, Y, CB, CR);
+                }
+            }
+            var deep = read(PREFIX + "comp_Y16U16V16_" + sampling + ".heif");
+            assertSamePlanes(deep, read(PREFIX + "mix_Y16U16V16_" + sampling + ".heif"),
+                    "mix_Y16U16V16_" + sampling, Y, CB, CR);
+            for (var type : new int[]{Y, CB, CR}) {
+                assertEquals(16, deep.plane(type).bitDepth());
+                var expected = plane(reference, type);
+                var actual = plane(deep, type);
+                for (var i = 0; i < expected.length; i++) {
+                    // the same picture converted at 16 bits: scaled to 8 bits it rounds within one of the 8-bit one
+                    assertEquals(expected[i], actual[i] / 257.0, 1.0, "plane " + type + " sample " + i);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("generic compression (brotli, deflate, zlib; whole, by row and by tile) decodes to one picture")
+        void genericCompression() {
+            var names = List.of("brotli", "defl", "tile_deflate", "zlib", "zlib_rows", "zlib_tiled");
+            var reference = read("heif-libheif-rgb_generic_compressed_" + names.getFirst() + ".heif");
+            assertEquals(128, reference.width());
+            assertEquals(72, reference.height());
+            for (var name : names.subList(1, names.size())) {
+                assertSamePlanes(reference, read("heif-libheif-rgb_generic_compressed_" + name + ".heif"), name, R, G,
+                        B);
+            }
+        }
+
+        @Test
+        @DisplayName("the cases read every libheif uncompressed vector")
+        void covered() {
+            var all = Conformance.vectors(PREFIX);
+            assertEquals(79, all.size(), all.toString());
+            for (var name : all) {
+                assertNotNull(read(name), name);
+            }
         }
     }
 

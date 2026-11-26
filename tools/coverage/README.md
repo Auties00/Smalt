@@ -1,7 +1,7 @@
 # Coverage
 
 Line and branch coverage is a map, not a gate on a percentage: a decoder branch no test reaches is a spec feature
-no conformance vector or test exercises, which says which vector to fetch or which reference encoder option to
+no conformance vector or test exercises, which says which vector to add or which reference encoder option to
 generate one with.
 
 ## Running it
@@ -21,10 +21,8 @@ coverage and the methods with the most missed branches.
 
 ## In CI
 
-- The nightly workflow's coverage job runs the suite of every module with the profile on the smoke data tier, with
-  the clips and the oracle data files the pull request jobs have (so that it measures the tests they run) and the
-  full MPEG-D DRC and USAC conformance sets (`iso-23003-*`, 1.4 GB), the only tests of most of those tools,
-  publishes the summary on the run page and uploads the reports and the summary as the `coverage-report` artifact.
+- The nightly workflow's coverage job runs the suite of every module with the profile on the hosted test data and
+  the oracle data files the pull request jobs have (so that it measures the tests they run), publishes the summary on the run page and uploads the reports and the summary as the `coverage-report` artifact.
   It fails when an area's branch coverage falls more than two points below `baseline.tsv`.
 - `package.yml` takes `coverage=true` to run the chosen modules with the profile and upload their reports.
 
@@ -32,4 +30,4 @@ coverage and the methods with the most missed branches.
 
 `baseline.tsv` holds the branch coverage of each area the nightly job measured. It only grows: after a change that
 adds tests, `coverage.py REPORT --update tools/coverage/baseline.tsv` raises the areas that improved and keeps the
-others. An area that falls is a test that stopped running or a vector that stopped being fetched.
+others. An area that falls is a test that stopped running or a vector that was removed.

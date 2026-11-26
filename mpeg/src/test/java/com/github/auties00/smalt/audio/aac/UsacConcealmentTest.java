@@ -433,7 +433,7 @@ class UsacConcealmentTest {
         var archive = Conformance.archive("iso-23003-3-usac-smoke");
         return archive.members().stream().filter(member -> member.endsWith(".mp4")).sorted()
                 .map(member -> DynamicTest.dynamicTest(member.substring(member.indexOf('/') + 1), () -> {
-                    var stream = AacTestSupport.parseMp4(Fixtures.read(archive.fetch(member)));
+                    var stream = AacTestSupport.parseMp4(Fixtures.read(archive.member(member)));
                     var packets = packets(stream);
                     var count = packets.size();
                     var lost = PacketLoss.bursts(count / 4, 1, count / 2, 2, 3 * count / 4, 12);

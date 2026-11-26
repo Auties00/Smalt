@@ -43,9 +43,8 @@ class FlacCompressionTest {
                 new Clip("music 44.1 kHz 16-bit", () -> FlacConformanceCorpus.vector("subset", "25"), 25, 44_100, 2, 16),
                 new Clip("music 48 kHz 16-bit", () -> FlacConformanceCorpus.vector("subset", "53"), 60, 48_000, 2, 16),
                 new Clip("music 96 kHz 24-bit", () -> FlacConformanceCorpus.vector("subset", "30"), 8, 96_000, 2, 24),
-                new Clip("speech 22.05 kHz 16-bit", () -> Conformance.fetch("librivox-art_of_war_03-04_64kb.mp3",
-                        "https://archive.org/download/art_of_war_librivox/art_of_war_03-04_sun_tzu_64kb.mp3",
-                        "57e879fe7822578fd22010f1280185799a119a3482e025d9a71f49878ff45ba7"), 120, 22_050, 1, 16));
+                new Clip("piano recording 96 kHz 24-bit", () -> Conformance.vector("opengoldberg-05-variatio4.flac"), 30, 96_000, 2, 24),
+                new Clip("speech 22.05 kHz 16-bit", () -> Conformance.vector("librivox-art_of_war_03-04_64kb.mp3"), 120, 22_050, 1, 16));
         var cases = new ArrayList<Arguments>();
         for (var clip : clips) {
             for (var level : new int[]{0, 5, 8}) {

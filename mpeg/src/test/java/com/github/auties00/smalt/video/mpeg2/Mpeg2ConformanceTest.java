@@ -61,7 +61,7 @@ class Mpeg2ConformanceTest {
             "mpeg2-fate-matrixbench_mpeg2.lq1.mpg", "mpeg2-fate-t.mpg"})
     @DisplayName("decodes every sample as the reference decoder does")
     void conformance(String name) {
-        var stream = elementary(name, Conformance.fetchListed(name));
+        var stream = elementary(name, Conformance.vector(name));
         if (name.equals(CUT_SAMPLE) || name.equals(STRAY_END_SAMPLE)) {
             stream = Arrays.copyOf(stream, lastGroup(stream));
         }
@@ -76,7 +76,7 @@ class Mpeg2ConformanceTest {
     @Test
     @DisplayName("conceals the picture a sample cut short ends with and reports it once")
     void cutSample() {
-        var stream = elementary(CUT_SAMPLE, Conformance.fetchListed(CUT_SAMPLE));
+        var stream = elementary(CUT_SAMPLE, Conformance.vector(CUT_SAMPLE));
         var expected = Mpeg2TestStreams.reference(stream, false);
         var decoded = Mpeg2TestStreams.decodeElementary(stream);
         assertEquals(1, decoded.failures().size(), "failures: " + decoded.failures());

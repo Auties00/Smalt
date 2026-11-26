@@ -74,6 +74,16 @@ class WebpConformanceTest {
     }
 
     @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"bryce.webp", "lossless_big_random_alpha.webp"})
+    @DisplayName("the big corpus files libwebp_tests.md5 does not list decode to dwebp's RGBA")
+    void bigFiles(String name) {
+        // a 3.5 MB lossy VP8 image and a 14 MB lossless VP8L image with alpha
+        var expected = WebpTestSupport.dwebpRgba(LibwebpTestData.vector(name));
+        var picture = WebpTestSupport.withVp8(() -> WebpTestSupport.decodeRgba(LibwebpTestData.read(name)));
+        assertArrayEquals(expected, WebpTestSupport.tightRgba(picture), name);
+    }
+
+    @ParameterizedTest(name = "{0}")
     @MethodSource("pamListed")
     @DisplayName("every corpus file decodes to the RGBA whose MD5 libwebp_tests.md5 lists")
     void pamMd5(String name) {

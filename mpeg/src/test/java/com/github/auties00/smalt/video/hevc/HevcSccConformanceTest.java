@@ -43,10 +43,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * decoded picture hash SEI message verified on the way. The expected MD5s are those of the output of HM-16.21+SCM-8.8
  * (with {@code RExt__HIGH_BIT_DEPTH_SUPPORT} for the extended precision stream), equal to the MD5s the archives ship,
  * except for {@code Slice_ACT_QP_Offsets_A_Qualcomm_2}, whose archive hashes the RGB-ordered planes and whose expected
- * MD5 here is that of the decoded planes in coded order. Each archive is pinned by its SHA-256 and cached by
- * {@link Conformance#fetch}.
+ * MD5 here is that of the decoded planes in coded order. Each archive is read from the hosted test data by
+ * {@link Conformance#vector}.
  *
- * <p>The suite's archives are fetched, never committed, so short streams the HM-SCM reference encoder coded from
+ * <p>The suite's archives are hosted with the test data, never committed, so short streams the HM-SCM reference encoder coded from
  * ffmpeg's {@code testsrc} pattern are kept with the test ({@code scc/scc.tsv}, written by
  * {@code tools/testdata/hevc-scc/make-vectors.py}, which checks that HM verified every picture hash): all intra and low
  * delay 4:4:4 at 8 bits with palette mode, predictor initializers in the SPS and the PPS, intra block copy, the
@@ -59,30 +59,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("HEVC conformance bitstreams (ITU-T H.265.1, screen content coding)")
 class HevcSccConformanceTest {
-    private static final String BASE = "https://www.itu.int/wftp3/av-arch/jctvc-site/bitstream_exchange/draft_conformance/SCC/";
-
     /**
-     * Name | SHA-256 of the archive | bitstream entry | output frames | MD5 of the output.
+     * Name | bitstream entry | output frames | MD5 of the output.
      */
     private static final String MANIFEST = """
-            Bipred_8by8_A_Qualcomm_2|ddcede6a4f68c6758afe01627805f5e96231ad9379cfea6cfc2b8ab2a57c6360|Bipred_8by8_A_Qualcomm_2.bit|3|77ca7bf37442cdc5a468797f8597aa07
-            DPB_Loop_Filters_A_MediaTek_2|4aab798e6e4458139f6407f0957b40e35403686f341802b370da0651459f36f3|DPB_Loop_Filters_A_MediaTek_2.bit|10|8dba33e8843e05bca8eb8c0fb4131a6b
-            Delta_QP_Chroma_QP_Offsets_A_Qualcomm_2|d83387f525e3c22410e21d6e95b0a623d3e27b36f3fa2974c5a919215cee109f|Delta_QP_Chroma_QP_Offsets_A_Qualcomm_2.bit|2|b5535b153c9ea0a01b22236d9a753e0c
-            HT_A_SCC_Apple_2|5190f537362160bc1bcc20766d981c4652d55fdafb23a387b10afbfa6af85c36|HT_A_SCC_Apple_2.bit|3|ec93dfc5ca3fc54bdc948b6e33f7863d
-            HT_B_SCC_Apple_3|064d8cec3c49812b576984ba9ff7dbed8c29abc6ba252401c7e36c87558ca244|HT_B_SCC_Apple_3.bit|3|eb55b86d87b76690a41f9f7b28fe3bb7
-            HT_C_SCC_Apple_3|4f50c637ec8afe24078fb1ac1082cb43c75605756ba26cf114b8c6f59455c471|HT_C_SCC_Apple_3.bit|3|270a7fe953a82fd3ac71d364a85279d0
-            IBF_Disabled_A_MediaTek_2|0493e8fdce70b2b53d3e8518b0dd79a144cb5895358db1dfcf7509ccad24759b|IBF_Disabled_A_MediaTek_2.bit|33|cf2d0bf228b256b8f70fe4b4d2e7f90d
-            IBF_Disabled_B_MediaTek_2|1ad506252895fa9664868b9d77f0b75083b88fbe198e7d0d9cf6d410b1df4c8e|IBF_Disabled_B_MediaTek_2.bit|33|44bcdae6a7357c23f10dea63769e7598
-            MVRESIDC_A_MS_2|5abab0a04c1efaca94f66695a031291e2b1a5068a84421f32f88dca28c4a5419|MVRESIDC_A_MS_2.bit|9|ea1cd8869c86bf56e89e20516c1abb26
-            MVRESIDC_B_MS_2|1ec54e45db7512e5cb9f5ca0f06b00218fd1a9b90e5472e7ef781cf611331211|MVRESIDC_B_MS_2.bit|9|478cb2d63bc753db71abeca08975094e
-            MVRESIDC_C_MS_3|e78affc826fc7386f81791974d024154c9de205838b29acd205feb0b62df49ad|MVRESIDC_C_MS_3.bit|9|2098828aaab226883c4226b6efac85e7
-            PPI_A_InterDigital_2|8592f1b9073874c9b386b6d5472dfdb1b8b1c492b02bf3ac05fcdd7701699f05|PPI_A_InterDigital_2.bit|33|220400063b5369438ba85b90e7ca0ae3
-            PPI_B_InterDigital_2|4126a3101d627aaeaf70a47fbebd942a805c27001b10f4b0553484e759baaac1|PPI_B_InterDigital_2.bit|33|1b11363ec651d23985dae30033ffb20f
-            Slice_ACT_QP_Offsets_A_Qualcomm_2|f10a758f73b930a49e12cc94e9ce23b376a73713ad4300972ef6152f092d20fd|Slice_ACT_QP_Offsets_A_Qualcomm_2.bit|2|4c5a48f2bbdcf0ad625701a997134eeb
-            Zero_and_One_Palette_Size_A_Canon_2|a707590d1dd9770a6c5544a421de44c384bfa22d68e5513911a2f8b7c13aca80|Zero_and_One_Palette_Size_A_Canon_2.bit|1|a7794b555c9ba89f7f01bb0ce5b66676
+            Bipred_8by8_A_Qualcomm_2|Bipred_8by8_A_Qualcomm_2.bit|3|77ca7bf37442cdc5a468797f8597aa07
+            DPB_Loop_Filters_A_MediaTek_2|DPB_Loop_Filters_A_MediaTek_2.bit|10|8dba33e8843e05bca8eb8c0fb4131a6b
+            Delta_QP_Chroma_QP_Offsets_A_Qualcomm_2|Delta_QP_Chroma_QP_Offsets_A_Qualcomm_2.bit|2|b5535b153c9ea0a01b22236d9a753e0c
+            HT_A_SCC_Apple_2|HT_A_SCC_Apple_2.bit|3|ec93dfc5ca3fc54bdc948b6e33f7863d
+            HT_B_SCC_Apple_3|HT_B_SCC_Apple_3.bit|3|eb55b86d87b76690a41f9f7b28fe3bb7
+            HT_C_SCC_Apple_3|HT_C_SCC_Apple_3.bit|3|270a7fe953a82fd3ac71d364a85279d0
+            IBF_Disabled_A_MediaTek_2|IBF_Disabled_A_MediaTek_2.bit|33|cf2d0bf228b256b8f70fe4b4d2e7f90d
+            IBF_Disabled_B_MediaTek_2|IBF_Disabled_B_MediaTek_2.bit|33|44bcdae6a7357c23f10dea63769e7598
+            MVRESIDC_A_MS_2|MVRESIDC_A_MS_2.bit|9|ea1cd8869c86bf56e89e20516c1abb26
+            MVRESIDC_B_MS_2|MVRESIDC_B_MS_2.bit|9|478cb2d63bc753db71abeca08975094e
+            MVRESIDC_C_MS_3|MVRESIDC_C_MS_3.bit|9|2098828aaab226883c4226b6efac85e7
+            PPI_A_InterDigital_2|PPI_A_InterDigital_2.bit|33|220400063b5369438ba85b90e7ca0ae3
+            PPI_B_InterDigital_2|PPI_B_InterDigital_2.bit|33|1b11363ec651d23985dae30033ffb20f
+            Slice_ACT_QP_Offsets_A_Qualcomm_2|Slice_ACT_QP_Offsets_A_Qualcomm_2.bit|2|4c5a48f2bbdcf0ad625701a997134eeb
+            Zero_and_One_Palette_Size_A_Canon_2|Zero_and_One_Palette_Size_A_Canon_2.bit|1|a7794b555c9ba89f7f01bb0ce5b66676
             """;
 
-    record Vector(String name, String sha256, String bitstream, int frames, String md5) {
+    record Vector(String name, String bitstream, int frames, String md5) {
         @Override
         public String toString() {
             return name;
@@ -93,7 +91,7 @@ class HevcSccConformanceTest {
         var result = new ArrayList<Vector>();
         for (var line : MANIFEST.strip().split("\n")) {
             var parts = line.strip().split("\\|");
-            result.add(new Vector(parts[0], parts[1], parts[2], Integer.parseInt(parts[3]), parts[4]));
+            result.add(new Vector(parts[0], parts[1], Integer.parseInt(parts[2]), parts[3]));
         }
         return result;
     }
@@ -108,8 +106,7 @@ class HevcSccConformanceTest {
     }
 
     static byte[] bitstream(Vector vector) throws IOException {
-        var archive = Conformance.fetch("hevc-scc-" + vector.name() + ".zip", BASE + vector.name() + ".zip",
-                vector.sha256());
+        var archive = Conformance.vector("hevc-scc-" + vector.name() + ".zip");
         try (var zip = new ZipFile(archive.toFile())) {
             return zip.getInputStream(zip.getEntry(vector.bitstream())).readAllBytes();
         }

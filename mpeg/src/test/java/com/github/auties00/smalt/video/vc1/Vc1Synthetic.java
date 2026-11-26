@@ -10,7 +10,7 @@ import java.util.Random;
 
 /**
  * Writes small VC-1 streams bit by bit from SMPTE ST 421, for tests that need streams with a known licence (the test
- * vectors of the FATE suite are fetched, never committed) and for the fuzz seeds: an advanced profile elementary
+ * vectors of the FATE suite are hosted test data, never committed) and for the fuzz seeds: an advanced profile elementary
  * stream and a simple profile stream with its STRUCT_C.
  *
  * <p>The pictures are I pictures whose intra blocks code only a DC differential drawn from a seeded generator, P

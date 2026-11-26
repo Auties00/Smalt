@@ -374,7 +374,7 @@ class DualPixelTest {
     @Test
     @DisplayName("the EOS R5 dual pixel sample: one photodiode's image lies below the main image, at about half of it")
     void sample() {
-        var data = RawSamples.CR3_EOS_R5_RAW_1_6_CROP_DUAL_PIXEL.fetch();
+        var data = RawSamples.CR3_EOS_R5_RAW_1_6_CROP_DUAL_PIXEL.path();
         assertTrue(RawDecoder.info(MediaSource.of(data)).hasDualPixelImage());
         var main = RawDecoder.decodeRaw(MediaSource.of(data));
         var dual = RawDecoder.decodeRaw(MediaSource.of(data), DUAL);

@@ -300,6 +300,73 @@ public class HeicGainMapTest {
         }
     }
 
+    /**
+     * Reads a signed rational tag of the Apple maker note in an EXIF block, independently of the decoder: the note
+     * starts with {@code Apple iOS}, holds a big-endian IFD from its byte 14, and its value offsets count from the
+     * start of the note.
+     */
+    private static double makerRational(byte[] exif, int tag) {
+        var marker = "Apple iOS".getBytes(StandardCharsets.US_ASCII);
+        var start = -1;
+        for (var i = 0; i + marker.length <= exif.length && start < 0; i++) {
+            if (java.util.Arrays.equals(exif, i, i + marker.length, marker, 0, marker.length)) {
+                start = i;
+            }
+        }
+        assertTrue(start >= 0, "Apple maker note");
+        var buffer = java.nio.ByteBuffer.wrap(exif).order(java.nio.ByteOrder.BIG_ENDIAN);
+        var count = buffer.getShort(start + 14) & 0xFFFF;
+        for (var entry = 0; entry < count; entry++) {
+            var at = start + 16 + entry * 12;
+            if ((buffer.getShort(at) & 0xFFFF) == tag) {
+                assertEquals(10, buffer.getShort(at + 2), "type of tag " + tag);
+                var offset = start + buffer.getInt(at + 8);
+                return (double) buffer.getInt(offset) / buffer.getInt(offset + 4);
+            }
+        }
+        throw new AssertionError("no maker note tag " + tag);
+    }
+
+    @Test
+    @DisplayName("an iPhone HDR photo lists its gain map and converts it with the headroom of its maker note")
+    void iphone() {
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var bytes = HeicVectors.read(com.github.auties00.smalt.testkit.Conformance.vector(
+                "heic-apple-hdr-heic-hdr-sample.heic"));
+        var source = MediaSource.of(bytes);
+        var listed = HeicDecoder.auxiliaryImages(source);
+        var gainMap = listed.stream().filter(image -> image.type() == AuxiliaryImageType.GAIN_MAP).findFirst()
+                .orElseThrow();
+        assertEquals(APPLE, gainMap.identifier());
+        var decoded = HeicDecoder.decode(source);
+        var maker33 = makerRational(decoded.exif().orElseThrow(), 33);
+        var maker48 = makerRational(decoded.exif().orElseThrow(), 48);
+        double stops;
+        if (maker33 < 1) {
+            stops = maker48 <= 0.01 ? -20 * maker48 + 1.8 : -0.101 * maker48 + 1.601;
+        } else {
+            stops = maker48 <= 0.01 ? -70 * maker48 + 3 : -0.303 * maker48 + 2.303;
+        }
+        var metadata = HeicDecoder.decodeGainMap(source).orElseThrow().metadata();
+        assertEquals(stops, metadata.alternateHeadroom(), 1e-9);
+        assertEquals(0, metadata.baseHeadroom());
+        // the gain map image itself decodes as ffmpeg decodes its HEVC payload
+        var file = com.github.auties00.smalt.internal.heif.HeifFile.parse(source,
+                com.github.auties00.smalt.MediaLimits.DEFAULT, false);
+        var item = file.items().stream().filter(candidate -> {
+            var type = candidate.property(com.github.auties00.smalt.internal.heif.HeifProperty.AuxiliaryType.class);
+            return type != null && type.urn().equals(APPLE);
+        }).findFirst().orElseThrow();
+        var picture = HeicDecoder.decodeAuxiliaryImage(source, gainMap.index()).picture();
+        var actual = HeicReference.Planes.of(picture);
+        var expected = HeicReference.reconstructed(source, file, item, actual);
+        assertEquals(expected.width() + "x" + expected.height(), actual.width() + "x" + actual.height());
+        for (var plane = 0; plane < 3; plane++) {
+            org.junit.jupiter.api.Assertions.assertArrayEquals(expected.planes()[plane], actual.planes()[plane],
+                    "gain map plane " + plane);
+        }
+    }
+
     @Test
     @DisplayName("never fails with an unchecked exception on damaged files")
     void damaged() {

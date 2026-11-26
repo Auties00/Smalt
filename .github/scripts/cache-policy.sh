@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # Decides whether a job saves a cache entry that it did not restore, and writes <output>=true or false to the step's
-# GITHUB_OUTPUT. The oracle and test data actions call it on a miss, before they build or fetch the entry.
+# GITHUB_OUTPUT. The oracle actions call it on a miss, before they build the entry.
 #
-# The default branch owns the oracle tools, the ffmpeg builds, the smoke vectors and the clips: warm-caches.yml
+# The default branch owns the oracle tools and the ffmpeg builds: warm-caches.yml
 # fills them there (and CI and the nightly on the default branch save what they miss), and every branch restores
 # them from it. The pkg/* snapshot branches are restore-only, so that each one does not keep its own copy of every
 # entry in the 10 GB repository cache, with one exception: an entry whose family the default branch holds under
 # another key, which means that the branch changed the files the key hashes (oracles.tsv, the ffmpeg build
-# script, the smoke rows of vectors.tsv, clips.tsv), is saved on the branch, since the default branch can never
-# hold it (an entry of the default branch whose key extends this one, such as the smoke tier's "-partial" twin,
-# counts as this one). Other branches and tags (the default branch, pull requests, releases) save what they miss.
+# script), is saved on the branch, since the default branch can never hold it (an entry of the default branch whose
+# key extends this one counts as this one). Other branches and tags (the default branch, pull requests, releases) save what they miss.
 #
 # Usage: cache-policy.sh <output> <mode> <key> <family>
 #   output  the name of the step output to write

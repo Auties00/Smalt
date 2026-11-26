@@ -117,7 +117,7 @@ final class DtsDemuxerTest {
     @Test
     @DisplayName("a core frame carrying X96 is declared at twice the core rate")
     void x96Rate() {
-        var file = Conformance.fetchListed("dts-x96_51_24_96_1509.dtshd");
+        var file = Conformance.vector("dts-x96_51_24_96_1509.dtshd");
         try (var demuxer = new DtsDemuxer(MediaSource.of(file))) {
             assertEquals(96000, ((AudioTrack) demuxer.tracks().getFirst()).sampleRate());
         }
@@ -130,7 +130,7 @@ final class DtsDemuxerTest {
         try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
             assertEquals(ContainerFormat.DTS, demuxer.format());
         }
-        var hd = Conformance.fetchListed("dts-xll_51_24_48_none.dtshd");
+        var hd = Conformance.vector("dts-xll_51_24_48_none.dtshd");
         try (var demuxer = Containers.openDemuxer(MediaSource.of(hd))) {
             assertEquals(ContainerFormat.DTS, demuxer.format());
         }
@@ -142,7 +142,7 @@ final class DtsDemuxerTest {
     @DisplayName("DTS-HD files split into access units as ffprobe counts them")
     void dtshd(String name) throws IOException {
         Oracle.assume(Oracle.Tool.FFPROBE);
-        var file = Conformance.fetchListed("dts-" + name + ".dtshd");
+        var file = Conformance.vector("dts-" + name + ".dtshd");
         var probe = new String(Oracle.run(Oracle.Tool.FFPROBE, Duration.ofMinutes(1), List.of("-v", "error",
                 "-select_streams", "a:0", "-show_entries", "packet=size", "-of", "csv=p=0", file.toString())));
         var sizes = probe.lines().filter(line -> !line.isBlank()).mapToInt(Integer::parseInt).toArray();
@@ -157,7 +157,7 @@ final class DtsDemuxerTest {
     @Test
     @DisplayName("a stream without core is timed by its extension substream frame duration")
     void withoutCore() {
-        var file = Conformance.fetchListed("dts-xll_51_24_48_none.dtshd");
+        var file = Conformance.vector("dts-xll_51_24_48_none.dtshd");
         try (var demuxer = new DtsDemuxer(MediaSource.of(file))) {
             var track = (AudioTrack) demuxer.tracks().getFirst();
             assertEquals(48000, track.sampleRate());
@@ -227,7 +227,7 @@ final class DtsDemuxerTest {
     @DisplayName("MPEG-TS, MP4 and Matroska carry DTS-HD access units unchanged")
     void hdContainers(String name, String extension) throws IOException {
         Oracle.assume(Oracle.Tool.FFMPEG);
-        var raw = Conformance.fetchListed("dts-" + name + ".dtshd");
+        var raw = Conformance.vector("dts-" + name + ".dtshd");
         var file = Scratch.directory("dts-demuxer").resolve(name + "." + extension);
         var arguments = new ArrayList<>(List.of("-v", "error", "-y", "-i", raw.toString(), "-c", "copy"));
         if (extension.equals("m2ts")) {

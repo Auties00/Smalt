@@ -524,4 +524,34 @@ class Ffv1DifferentialTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("an FFV1 stream of 2006 ffmpeg is decoded fully or rejected as malformed, as today's ffmpeg rejects it")
+    void earlyBitstream() {
+        // ffv1_mp3.avi: a version 0 stream written by 2006 ffmpeg, whose quant tables today's ffmpeg refuses
+        // ("read_quant_table error"); no decoder remains to say what it shows, so it either decodes to full 256x144
+        // gray pictures or fails with a media exception, never anything else
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("ffv1-samples-ffv1_mp3.avi");
+        var outcome = new StringBuilder();
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(60), () -> {
+            try {
+                var stream = IntraTesting.demux(file);
+                var frames = new int[1];
+                try (var decoder = new Ffv1Decoder(stream.track(), VideoDecoderOptions.defaults())) {
+                    for (var packet : stream.packets()) {
+                        decoder.decode(packet, frame -> {
+                            assertEquals(256, frame.picture().width());
+                            assertEquals(144, frame.picture().height());
+                            frames[0]++;
+                        });
+                    }
+                }
+                assertEquals(stream.packets().size(), frames[0], "decoded frames");
+                outcome.append("decoded ").append(frames[0]).append(" frames");
+            } catch (com.github.auties00.smalt.MediaException rejected) {
+                outcome.append("rejected: ").append(rejected.getMessage());
+            }
+        });
+        System.out.println("ffv1_mp3.avi: " + outcome);
+    }
 }

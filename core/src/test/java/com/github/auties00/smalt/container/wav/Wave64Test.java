@@ -269,4 +269,11 @@ class Wave64Test {
         assertTrue(Containers.isMuxable(ContainerFormat.W64, Codec.MP3));
         assertTrue(!Containers.isMuxable(ContainerFormat.W64, Codec.H264));
     }
+
+    @Test
+    @DisplayName("reads FATE's Wave64 file as ffprobe does")
+    void fate() {
+        com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe("fate-w64-w64-pcm16.w64",
+                com.github.auties00.smalt.container.Containers::openDemuxer);
+    }
 }

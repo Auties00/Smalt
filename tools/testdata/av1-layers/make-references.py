@@ -2,7 +2,7 @@
 """Writes the per operating point references of smalt-video's Av1LayersTest.
 
 The libaom scalability test vectors (av1-1-b8-22-svc-L1T2, -L2T1-2 and -L2T2-2, pinned in tools/testdata/vectors.tsv
-and cached by the tests' Conformance.fetch) declare several operating points. For every operating point the sequence
+and read from the hosted test data) declare several operating points. For every operating point the sequence
 headers declare, plus one they do not declare, and with and without --all-layers, the script decodes each vector
 with libaom's aomdec (BSD-2-Clause, used as a black box) into one raw file per frame and records the size and MD5 of
 every frame, in output order, in layers.tsv:
@@ -12,8 +12,10 @@ every frame, in output order, in layers.tsv:
 Made with aomdec 3.13.1 built from the v3.13.1 tag of https://aomedia.googlesource.com/aom (cmake, MSYS2 UCRT64
 gcc, nasm). The output of a conforming decoder does not depend on the aomdec version.
 
-    python -I tools/testdata/av1-layers/make-references.py <aomdec> <conformance cache> \\
+    python -I tools/testdata/av1-layers/make-references.py <aomdec> <vectors> \\
         <video/src/test/resources/com/github/auties00/smalt/video/av1/layers>
+
+<vectors> is the vectors directory of the hosted test data (SMALT_TESTDATA/vectors, default ~/.smalt/testdata/vectors).
 """
 import glob
 import hashlib

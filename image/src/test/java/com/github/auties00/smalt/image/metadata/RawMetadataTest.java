@@ -189,7 +189,7 @@ class RawMetadataTest {
     class Camera {
         static byte[] vector(String name) {
             try {
-                return Files.readAllBytes(Conformance.fetchListed(name));
+                return Files.readAllBytes(Conformance.vector(name));
             } catch (IOException exception) {
                 throw new UncheckedIOException(exception);
             }

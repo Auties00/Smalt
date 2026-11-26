@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.video.vp9;
 
-import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoFrame;
@@ -26,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * the encoder's decisions, coefficients or entropy coding shows up here, so a speed optimization
  * that claims identical output is checked byte for byte. The digests hold for the Vector API
  * kernels and for their scalar twins alike: the suite's scalar leg ({@code -Dsmalt.test.simd=false})
- * runs the same digests. Natural-clip configurations skip when the Xiph clips are not cached.
+ * runs the same digests.
  */
 @DisplayName("real-time VP9 encoder golden bitstreams")
 class Vp9EncoderGoldenTest {
@@ -145,9 +144,8 @@ class Vp9EncoderGoldenTest {
     @DisplayName("a natural clip encodes to the recorded bitstream")
     void natural(String name, String clip, Vp9Setup setup, String expected) throws IOException {
         var path = Vp9TestVideo.clip(clip);
-        Skip.unless(path != null, "data:clip", "clip " + clip + " is not cached");
         var frames = Vp9TestVideo.read(path, setup.width(), setup.height(), 0, 40);
-        Skip.unless(frames.size() == 40, "data:clip", "clip " + clip + " is too short");
+        assertEquals(40, frames.size(), "clip " + clip + " is too short");
         assertEquals(expected, digest(setup, frames, List.of()), name);
     }
 }

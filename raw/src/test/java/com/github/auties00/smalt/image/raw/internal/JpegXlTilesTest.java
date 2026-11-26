@@ -71,9 +71,7 @@ class JpegXlTilesTest {
     @Test
     @DisplayName("an 8-bit lossless RGB codestream fills a linear raw image, extra channels ignored")
     void losslessRgb() throws Exception {
-        var jxl = Conformance.fetch("jxl-conformance-patches_lossless.jxl",
-                "https://raw.githubusercontent.com/libjxl/conformance/b1d0f990b03e57bf6d137c365cd5dc8b470b9191/testcases/patches_lossless/input.jxl",
-                "2a47b6766264ac6243a43bbb85684688717591bb3bd9b4c2db56226192418b4e");
+        var jxl = Conformance.vector("jxl-conformance-patches_lossless.jxl");
         var plane = read(wrap(jxl, 3, 8).write());
         assertEquals(3, plane.samplesPerPixel);
         assertScaled(jxl, plane, 8);
@@ -82,9 +80,7 @@ class JpegXlTilesTest {
     @Test
     @DisplayName("a lossy gray codestream fills a 16-bit image, clamped to the sample range")
     void lossyGray() throws Exception {
-        var jxl = Conformance.fetch("jxl-conformance-grayscale.jxl",
-                "https://raw.githubusercontent.com/libjxl/conformance/b1d0f990b03e57bf6d137c365cd5dc8b470b9191/testcases/grayscale/input.jxl",
-                "78fbbba852e99946d187dcf0bcbd7fb0e7c22be2f0852523aaae6ed91e7e3c39");
+        var jxl = Conformance.vector("jxl-conformance-grayscale.jxl");
         var plane = read(wrap(jxl, 1, 16).write());
         assertScaled(jxl, plane, 16);
     }
@@ -101,7 +97,7 @@ class JpegXlTilesTest {
     @Test
     @DisplayName("the JPEG XL enhanced image of a CC0 DNG 1.7 file matches its embedded preview")
     void enhancedImage() {
-        try (var source = MediaSource.of(RawSamples.DNG_7D2_JPEG_XL.fetch())) {
+        try (var source = MediaSource.of(RawSamples.DNG_7D2_JPEG_XL.path())) {
             var reader = TiffReader.open(source, 0, MediaLimits.DEFAULT);
             Ifd enhanced = null;
             for (var ifd : new TiffTree(reader).directories) {

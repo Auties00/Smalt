@@ -88,8 +88,10 @@ class CodecPartsTest {
     @Test
     @DisplayName("DNG 24-bit floats convert exactly")
     void float24() {
-        assertEquals(1.0f, TiffSamples.float24(64 << 16));
-        assertEquals(-2.5f, TiffSamples.float24(1 << 23 | 65 << 16 | 0x4000));
+        // the values dng_validate (DNG SDK 1.7.1) reads: 1.m * 2^(e - 63), and 0.m * 2^-62 for e = 0
+        assertEquals(1.0f, TiffSamples.float24(63 << 16));
+        assertEquals(-2.5f, TiffSamples.float24(1 << 23 | 64 << 16 | 0x4000));
+        assertEquals(0x8000 / 65536f * (float) Math.pow(2, -62), TiffSamples.float24(0x8000));
         assertEquals(0f, TiffSamples.float24(0));
         assertEquals(Float.POSITIVE_INFINITY, TiffSamples.float24(0x7F << 16));
     }

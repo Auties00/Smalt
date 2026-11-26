@@ -162,7 +162,7 @@ class LosslessVariantsTest {
         private static final int[][] FACTORS = {{1, 1}, {1, 2}, {3, 1}, {1, 4}};
 
         static byte[] entry(String name) {
-            var archive = Conformance.fetchListed("itu-t83-data-files.zip");
+            var archive = Conformance.vector("itu-t83-data-files.zip");
             try (var zip = new ZipFile(archive.toFile())) {
                 var entry = zip.getEntry(name);
                 try (var input = zip.getInputStream(entry)) {

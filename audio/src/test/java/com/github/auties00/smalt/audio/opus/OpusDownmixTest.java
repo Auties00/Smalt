@@ -311,4 +311,32 @@ class OpusDownmixTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("mixes a real film 5.1 Opus track to stereo with the RFC 7845 matrix over its decoded channels")
+    void realFilm() {
+        // the first 1500 packets (30 s at 20 ms) of opusenc's 5.1 Sintel mix
+        var stream = OggOpusIO.read(com.github.auties00.smalt.testkit.Fixtures.read(
+                com.github.auties00.smalt.testkit.Conformance.vector("xiph-sintel-master-51.opus")));
+        var head = OpusHead.parse(stream.head(), MediaLimits.DEFAULT);
+        assertEquals(1, head.mappingFamily());
+        assertEquals(6, head.channels());
+        var packets = stream.packets().subList(0, Math.min(1500, stream.packets().size()));
+        var stereo = decodeTrack(stream.head(), packets, OpusDecoderOptions.builder().channels(2).build());
+        var full = decodeTrack(stream.head(), packets, OpusDecoderOptions.defaults());
+        var matrix = OpusDownmix.matrix(1, 6, 2);
+        assertEquals(full[0].length, stereo[0].length, "frames");
+        var energy = 0.0;
+        for (var i = 0; i < full[0].length; i++) {
+            for (var row = 0; row < 2; row++) {
+                var expected = 0.0;
+                for (var c = 0; c < 6; c++) {
+                    expected += matrix[row][c] * full[head.wavePosition(c)][i];
+                }
+                assertEquals(expected, stereo[row][i], 1e-5, "row " + row + " sample " + i);
+                energy += expected * expected;
+            }
+        }
+        assertTrue(energy > 0, "the excerpt is silent");
+    }
 }

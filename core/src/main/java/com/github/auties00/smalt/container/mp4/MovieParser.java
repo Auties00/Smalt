@@ -7,6 +7,7 @@ import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.heif.DataReferences;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.internal.tags.QuickTimeCompressedMovie;
 import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
@@ -325,9 +326,16 @@ final class MovieParser {
     private Mp4Track parseTrack(BoxCursor trak) {
         var track = new Mp4Track();
         BoxCursor mdia = null;
+        BoxCursor trackPiffSenc = null;
         while (trak.hasBox()) {
             var box = trak.nextBox();
             switch (box.type()) {
+                case BoxTypes.UUID -> {
+                    // PIFF 1.1 writers (and ffmpeg) put the sample encryption box of an unfragmented track in the trak
+                    if (trackPiffSenc == null && isPiffSampleEncryption(box)) {
+                        trackPiffSenc = box;
+                    }
+                }
                 case BoxTypes.TKHD -> parseTrackHeader(box, track);
                 case BoxTypes.EDTS -> parseEdits(box, track);
                 case BoxTypes.UDTA -> parseTrackUserData(box, track);
@@ -384,7 +392,7 @@ final class MovieParser {
         if (stbl == null) {
             throw new MediaException.Malformed("track " + track.fileId + " has no stbl");
         }
-        parseSampleTable(stbl, track, dinf == null ? null : readDataReferences(dinf));
+        parseSampleTable(stbl, track, dinf == null ? null : readDataReferences(dinf), trackPiffSenc);
         return track;
     }
 
@@ -477,7 +485,9 @@ final class MovieParser {
             var count = elst.u32();
             var entrySize = version == 1 ? 20 : 12;
             if (count * entrySize > elst.remaining()) {
-                throw new MediaException.Malformed("elst declares " + count + " entries in " + elst.remaining() + " bytes");
+                // a count past the box (written by some muxers) keeps the entries the box holds: the edit list
+                // describes the presentation, and the samples stay readable either way
+                count = elst.remaining() / entrySize;
             }
             var durations = new long[(int) count];
             var mediaTimes = new long[(int) count];
@@ -565,12 +575,15 @@ final class MovieParser {
      * @param stbl the box payload
      * @param track the track being built
      * @param references the data references of the track, or {@code null} when the track has no {@code dref}
+     * @param trackPiffSenc the PIFF sample encryption box of the {@code trak}, or {@code null}
      * @throws MediaException.Unsupported if the samples are stored in another file that no resolver supplies
      */
-    private void parseSampleTable(BoxCursor stbl, Mp4Track track, List<DataReferences.Entry> references) {
+    private void parseSampleTable(BoxCursor stbl, Mp4Track track, List<DataReferences.Entry> references,
+                                  BoxCursor trackPiffSenc) {
         BoxCursor stsd = null, stts = null, ctts = null, stss = null, stps = null, sdtp = null;
         BoxCursor stsz = null, stz2 = null, stsc = null, stco = null, co64 = null, randomAccess = null;
-        BoxCursor saiz = null, saio = null, senc = null, piffSenc = null, seigGroups = null, seigSamples = null;
+        BoxCursor saiz = null, saio = null, senc = null, piffSenc = trackPiffSenc, seigGroups = null;
+        BoxCursor seigSamples = null;
         while (stbl.hasBox()) {
             var box = stbl.nextBox();
             var body = box;
@@ -642,7 +655,7 @@ final class MovieParser {
             return;
         }
         var capacity = (int) Math.min(Math.min(sampleCount, coverable(chunkOffsets, stscEntries)), Integer.MAX_VALUE);
-        var table = new SampleTable(limits, capacity);
+        var table = new SampleTable(limits, capacity, track.entry.kind() == TrackKind.VIDEO);
         track.samples = table;
         var filled = placeSamples(table, sizes, chunkOffsets, stscEntries, sampleCount, track.entries.length);
         applyTiming(table, timing, composition, filled);
@@ -1245,9 +1258,10 @@ final class MovieParser {
                 packets += (rest + PCM_FRAMES_PER_PACKET - 1) / PCM_FRAMES_PER_PACKET;
                 covered = sampleCount;
             }
-            LimitChecks.checkFrames(limits, packets);
+            // audio frames: the memory limits bound the table, maxFrames bounds video and animations
+            LimitChecks.checkAllocation(limits, packets * 8);
         }
-        var table = new SampleTable(limits, (int) packets);
+        var table = new SampleTable(limits, (int) Math.min(packets, Integer.MAX_VALUE), false);
         var frame = 0L;
         for (var entry = 0; entry < entries && frame < sampleCount; entry++) {
             var first = stsc[entry * 3] - 1;

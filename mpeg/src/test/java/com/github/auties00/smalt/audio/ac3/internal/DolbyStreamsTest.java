@@ -26,24 +26,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * does not use the tool.
  */
 class DolbyStreamsTest {
-    private static final String KIT = "https://ott.dolby.com/OnDelKits/DDP/"
-            + "Dolby_Digital_Plus_Online_Delivery_Kit_v1.4.1/Test_Signals/elementary_streams/audio.zip";
+    // the 88 kbit/s encode, which uses enhanced coupling
+    private static final String CODED = "88";
 
-    private static final String TICKET = "https://trac.ffmpeg.org/raw-attachment/ticket/10958/"
-            + "08%20-%20It%27s%20Not%20Unusual_";
-
-    // the SHA-256 of the 88 kbit/s encode, which uses enhanced coupling
-    private static final String CODED = "492ae82a936ec2f88695102ecfe98dcdbef1d2f5b20a36d0712d2baeed2b8576";
-
-    // the SHA-256 of the 96 kbit/s encode of the same song, which does not
-    private static final String PLAIN = "c76ce7fa7c62360c9378c5f9078c5c984c4c2c6104b892b7ee40267f25168d9d";
+    // the 96 kbit/s encode of the same song, which does not
+    private static final String PLAIN = "96";
 
     // frames of the kit streams the vector check reads, about 19 seconds
     private static final int FRAMES = 600;
 
     private static Path kit() {
-        return Conformance.fetch("dolby-ddp-odk-1.4.1-audio.zip", KIT,
-                "f94d5e3e933f756856686546763f42a8a5f16b10c264fc7af1d228acc09baa62");
+        return Conformance.vector("dolby-ddp-odk-1.4.1-audio.zip");
     }
 
     private static byte[] entry(Path zip, String name) {
@@ -56,10 +49,9 @@ class DolbyStreamsTest {
         }
     }
 
-    private static byte[] ticket(String rate, String sha256) {
+    private static byte[] ticket(String rate) {
         try {
-            return Files.readAllBytes(Conformance.fetch("ffmpeg-trac-10958-its-not-unusual-" + rate + ".ec3",
-                    TICKET + rate + ".ec3", sha256));
+            return Files.readAllBytes(Conformance.vector("ffmpeg-trac-10958-its-not-unusual-" + rate + ".ec3"));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
@@ -211,7 +203,7 @@ class DolbyStreamsTest {
     @Test
     @DisplayName("parses every frame of a Dolby stream coupled with enhanced coupling from mantissa 13")
     void enhancedCouplingFrames() throws ReflectiveOperationException {
-        var stream = ticket("88", CODED);
+        var stream = ticket(CODED);
         var decoder = new FrameDecoder(Ac3Kernels.scalar());
         var header = new FrameHeader();
         var blocksField = FrameDecoder.class.getDeclaredField("blocks");
@@ -237,8 +229,8 @@ class DolbyStreamsTest {
     @DisplayName("rebuilds the enhanced coupling band close to an encode of the same song without it")
     void enhancedCouplingBand() {
         var invalid = new int[1];
-        var coupled = decode(DitherClearing.clear(ticket("88", CODED)), 3745, invalid);
-        var plain = decode(DitherClearing.clear(ticket("96", PLAIN)), 3745, invalid);
+        var coupled = decode(DitherClearing.clear(ticket(CODED)), 3745, invalid);
+        var plain = decode(DitherClearing.clear(ticket(PLAIN)), 3745, invalid);
         assertEquals(0, invalid[0]);
         var transform = new Transform(Ac3Kernels.scalar());
         double signal = 0, noise = 0;

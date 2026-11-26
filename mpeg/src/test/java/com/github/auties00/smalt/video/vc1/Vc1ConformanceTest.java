@@ -71,7 +71,7 @@ class Vc1ConformanceTest {
             "vc1-fate-ilaced_twomv.vc1"})
     @DisplayName("decodes every elementary stream sample as ffmpeg does")
     void elementary(String name) throws IOException {
-        var file = Conformance.fetchListed(name);
+        var file = Conformance.vector(name);
         var bytes = Files.readAllBytes(file);
         var stream = name.endsWith(".rcv") ? Vc1TestStreams.rcv(bytes) : Vc1TestStreams.elementary(bytes);
         var decoded = Vc1TestStreams.decode(stream);
@@ -87,7 +87,7 @@ class Vc1ConformanceTest {
             "vc1-samples-wmv9-bloodyback.wmv", "vc1-samples-wmv9-psychonauts.wmv"})
     @DisplayName("decodes the VC-1 track of a container file as ffmpeg does")
     void container(String name) throws IOException {
-        var file = Conformance.fetchListed(name);
+        var file = Conformance.vector(name);
         var limit = name.endsWith(".m2ts") ? 40 : name.endsWith(".wmv") ? 300 : Integer.MAX_VALUE;
         var decoded = demuxAndDecode(file, limit);
         if (!name.endsWith(".wmv")) {
@@ -130,7 +130,7 @@ class Vc1ConformanceTest {
             "vc1-samples-wmv9-niceday.wmv", "vc1-samples-wmv9-video-smoothing.wmv"})
     @DisplayName("a stream of a pre-release Windows Media Video 9 encoder (STRUCT_C Reserved6 0) is refused")
     void preRelease(String name) {
-        var file = Conformance.fetchListed(name);
+        var file = Conformance.vector(name);
         try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
             var track = (VideoTrack) demuxer.tracks().stream().filter(t -> t.codec() == Codec.VC1).findFirst()
                     .orElseThrow();
@@ -148,7 +148,7 @@ class Vc1ConformanceTest {
             "vc1-fate-SA00050.vc1, asf"})
     @DisplayName("decodes a stream ffmpeg copied into a container as ffmpeg decodes the elementary stream")
     void remuxed(String name, String extension, @TempDir Path directory) throws IOException {
-        var file = Conformance.fetchListed(name);
+        var file = Conformance.vector(name);
         var remuxed = directory.resolve("remuxed." + extension);
         Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), List.of("-v", "error", "-y", "-i", file.toString(),
                 "-map", "0:v:0", "-c", "copy", remuxed.toString()));
@@ -160,7 +160,7 @@ class Vc1ConformanceTest {
     @Test
     @DisplayName("a Windows Media Video 9 complex profile stream is refused")
     void complexProfile() {
-        var file = Conformance.fetchListed("vc1-samples-wmv9-complex-cp.wmv");
+        var file = Conformance.vector("vc1-samples-wmv9-complex-cp.wmv");
         try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
             var track = (VideoTrack) demuxer.tracks().stream().filter(t -> t.codec() == Codec.VC1).findFirst()
                     .orElseThrow();

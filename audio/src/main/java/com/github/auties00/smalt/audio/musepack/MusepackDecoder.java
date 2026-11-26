@@ -23,7 +23,8 @@ import java.util.function.Consumer;
  * <p>Packets and the configuration are as {@link Codec#MUSEPACK7} and {@link Codec#MUSEPACK8} describe. The output
  * floats are bit-identical to those of libmpcdec r475 in its floating-point build: the decoder drops the first 481
  * samples (the delay of the synthesis filter bank) and the leading silence of a version 8 stream, and ends the
- * output at the stream's length as that library does, which for a version 7 stream ends with its last frame. A
+ * output at the stream's length as that library does: a version 7 stream whose last frame's samples and the delay
+ * exceed one frame ends with the first samples of one more frame of silent subbands, which {@link #flush} outputs. A
  * version 7 decode that starts after the first frame converges after a few frames; a version 8 decode starting at
  * any packet is exact after its first frame. A frame whose bitstream does not fill its declared length exactly, or
  * that codes invalid values, raises {@link MediaException.Malformed}.
@@ -63,6 +64,11 @@ public final class MusepackDecoder implements AudioDecoder {
     private final MusepackFrameDecoder frames;
 
     private long skip;
+
+    /**
+     * The samples a version 7 stream has decoded, with the delay, after its latest frame, or -1 before the first.
+     */
+    private long decodedSv7 = -1;
 
     private final float[][] frame;
 
@@ -255,6 +261,7 @@ public final class MusepackDecoder implements AudioDecoder {
                 var start = frames.position();
                 frames.readFrame(false);
                 decoded = decodeSv7Tail(decoded, left, index, start, length);
+                decodedSv7 = decoded;
             }
         } catch (MediaException exception) {
             throw exception;
@@ -344,9 +351,41 @@ public final class MusepackDecoder implements AudioDecoder {
         output.accept(floats);
     }
 
+    /**
+     * Synthesizes, after the last frame of a version 7 stream, the samples its length still holds beyond the frames:
+     * when the last frame's samples and the filter bank's delay exceed one frame, libmpcdec decodes one more frame,
+     * of silent subbands, whose first samples end the stream. Sets {@link #stagedFrames}.
+     */
+    private void flushSv7() {
+        stagedFrames = 0;
+        if (sv8 || decodedSv7 < 0) {
+            return;
+        }
+        var left = samples - decodedSv7 + SYNTH_DELAY;
+        decodedSv7 = -1;
+        if (left <= 0 || skip >= FRAME + SYNTH_DELAY) {
+            return;
+        }
+        frames.silence();
+        frames.synthesize(frame, 0);
+        stage(left);
+    }
+
     @Override
     public void flush(Consumer<AudioBuffer> output) {
         Objects.requireNonNull(output, "output");
+        flushSv7();
+        if (stagedFrames == 0) {
+            return;
+        }
+        if (floats == null || floats.capacity() < stagedFrames) {
+            floats = new AudioBuffer(layout, sampleRate, stagedFrames);
+        }
+        for (var c = 0; c < channels; c++) {
+            System.arraycopy(staged[c], 0, floats.plane(c), 0, stagedFrames);
+        }
+        floats.setFrames(stagedFrames);
+        output.accept(floats);
     }
 
     /**
@@ -381,5 +420,21 @@ public final class MusepackDecoder implements AudioDecoder {
     @Override
     public void flushDoubles(Consumer<DoubleAudioBuffer> output) {
         Objects.requireNonNull(output, "output");
+        flushSv7();
+        if (stagedFrames == 0) {
+            return;
+        }
+        if (doubles == null || doubles.capacity() < stagedFrames) {
+            doubles = new DoubleAudioBuffer(layout, sampleRate, stagedFrames);
+        }
+        for (var c = 0; c < channels; c++) {
+            var source = staged[c];
+            var target = doubles.plane(c);
+            for (var i = 0; i < stagedFrames; i++) {
+                target[i] = source[i];
+            }
+        }
+        doubles.setFrames(stagedFrames);
+        output.accept(doubles);
     }
 }

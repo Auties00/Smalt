@@ -138,7 +138,7 @@ final class Gsm0610 {
      * @param x the value
      * @return the word
      */
-    private static short sat(long x) {
+    static short sat(long x) {
         return (short) (x < MIN_WORD ? MIN_WORD : x > MAX_WORD ? MAX_WORD : x);
     }
 
@@ -148,7 +148,7 @@ final class Gsm0610 {
      * @param a the first word
      * @param b the second word
      */
-    private static short add(int a, int b) {
+    static short add(int a, int b) {
         return sat((long) a + b);
     }
 
@@ -158,7 +158,7 @@ final class Gsm0610 {
      * @param a the first word
      * @param b the second word
      */
-    private static short sub(int a, int b) {
+    static short sub(int a, int b) {
         return sat((long) a - b);
     }
 
@@ -168,7 +168,7 @@ final class Gsm0610 {
      * @param a the first word
      * @param b the second word
      */
-    private static short multR(int a, int b) {
+    static short multR(int a, int b) {
         return (short) (((long) a * b + 16384) >> 15);
     }
 
@@ -178,7 +178,7 @@ final class Gsm0610 {
      * @param a the first word
      * @param b the second word
      */
-    private static short mult(int a, int b) {
+    static short mult(int a, int b) {
         return (short) (((long) a * b) >> 15);
     }
 
@@ -188,7 +188,7 @@ final class Gsm0610 {
      * @param a the first word
      * @param b the second word
      */
-    private static short multGuarded(int a, int b) {
+    static short multGuarded(int a, int b) {
         return a == MIN_WORD && b == MIN_WORD ? MAX_WORD : mult(a, b);
     }
 
@@ -197,7 +197,7 @@ final class Gsm0610 {
      *
      * @param a the word
      */
-    private static short abs(int a) {
+    static short abs(int a) {
         return (short) (a < 0 ? (a == MIN_WORD ? MAX_WORD : -a) : a);
     }
 
@@ -207,7 +207,7 @@ final class Gsm0610 {
      * @param a the first value
      * @param b the second value
      */
-    private static long lAdd(long a, long b) {
+    static long lAdd(long a, long b) {
         var sum = a + b;
         return sum < Integer.MIN_VALUE ? Integer.MIN_VALUE : Math.min(sum, Integer.MAX_VALUE);
     }
@@ -218,7 +218,7 @@ final class Gsm0610 {
      * @param a the value, nonzero
      * @return the number of redundant sign bits
      */
-    private static int norm(long a) {
+    static int norm(long a) {
         if (a < 0) {
             if (a <= -1073741824) {
                 return 0;
@@ -235,7 +235,7 @@ final class Gsm0610 {
      * @param denum the denominator
      * @return the quotient
      */
-    private static short div(int num, int denum) {
+    static short div(int num, int denum) {
         if (num == 0) {
             return 0;
         }
@@ -258,7 +258,7 @@ final class Gsm0610 {
      * @param a the word
      * @param n the count
      */
-    private static short asr(int a, int n) {
+    static short asr(int a, int n) {
         if (n >= 16) {
             return (short) (a < 0 ? -1 : 0);
         }
@@ -274,7 +274,7 @@ final class Gsm0610 {
      * @param a the word
      * @param n the count
      */
-    private static short asl(int a, int n) {
+    static short asl(int a, int n) {
         if (n >= 16) {
             return 0;
         }

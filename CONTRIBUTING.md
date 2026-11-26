@@ -45,19 +45,20 @@ You need **JDK 26** (as `JAVA_HOME`), **Maven** and **Python 3**. There is no Ma
 
 ### Test data and oracles
 
-Tests read test vectors (sample files) and compare with oracles (reference tools such as ffmpeg). A missing
-vector downloads on first use; a missing oracle skips the test.
+Tests read test vectors (sample files) and compare with oracles (reference tools such as ffmpeg). The vectors are
+the project's hosted test data: pull it once into `~/.smalt/testdata` (`SMALT_TESTDATA`) with `oras pull` of each
+artifact that `tools/testdata/artifacts.tsv` pins, as [tools/testdata](tools/testdata/README.md#pulling-the-data)
+describes. Tests never download; a missing vector fails its test, and a missing oracle skips it.
 
 | Command | What it does |
 |---|---|
-| `python tools/testdata/testdata.py fetch --tier smoke` | Downloads the vectors CI's pull request jobs use (about 1.1 GB) |
-| `python tools/testdata/testdata.py fetch --tier full --clips-only` | Downloads the clips CI also uses (about 1.3 GB, needs ffmpeg) |
-| `python tools/testdata/testdata.py fetch --tier full` | Downloads everything, about 50 GB (needs ffmpeg) |
-| `python tools/testdata/testdata.py size` | Prints the exact sizes |
+| `python tools/testdata/testdata.py verify` | Checks the pulled test data against the manifests |
+| `python tools/testdata/testdata.py size` | Prints the size of each area of the test data |
 | `python tools/testdata/oracles.py install` | Installs the oracles that differential tests compare with |
 | `python tools/testdata/oracles.py versions` | Prints the installed oracle versions |
 
-- `-Dsmalt.conformance.download=false` (or `SMALT_CONFORMANCE_DOWNLOAD=false`) turns automatic downloads off.
+- `SMALT_TESTDATA` (or `-Dsmalt.testdata`) names another test data directory, and `SMALT_CACHE` (or `-Dsmalt.cache`,
+  default `~/.smalt/cache`) the directory of the files tests derive from it.
 - `-Dsmalt.test.requireOracles=true` (or a comma-separated list of tool names) makes a missing oracle fail; CI sets it to the tools it installs.
 - Skip only through the test kit's `Skip`, with a reason id `family:name` (the message reads `[family:name] detail`).
 - `python tools/testdata/skips.py check --job <job>` fails if a build skips more than the baseline.

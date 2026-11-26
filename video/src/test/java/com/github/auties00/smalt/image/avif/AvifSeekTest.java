@@ -57,7 +57,7 @@ class AvifSeekTest {
     @Test
     @DisplayName("Netflix's alpha_video.avif seeks through its color and alpha tracks")
     void netflix() throws IOException {
-        var data = Files.readAllBytes(Conformance.fetchListed("avif-Netflix-avis-alpha_video.avif"));
+        var data = Files.readAllBytes(Conformance.vector("avif-Netflix-avis-alpha_video.avif"));
         AnimationSeeks.assertMatchesSequential(() -> AvifDecoder.openAnimation(MediaSource.of(data)), 3);
     }
 
@@ -146,5 +146,21 @@ class AvifSeekTest {
             assertArrayEquals(expected, (byte[]) AnimationSeeks.pixels(again.picture()));
             assertNull(reader.read());
         }
+    }
+
+    /**
+     * libavif's image sequences: key frames at 0, 2 and 3 of a 12-bit sequence, and 8-bit sequences with alpha or
+     * depth auxiliary tracks, Exif and XMP, and an audio track.
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"libavif-colors-animated-8bpc.avif", "libavif-colors-animated-8bpc-alpha-exif-xmp.avif",
+            "libavif-colors-animated-8bpc-depth-exif-xmp.avif", "libavif-colors-animated-8bpc-audio.avif",
+            "libavif-colors-animated-12bpc-keyframes-0-2-3.avif"})
+    @DisplayName("libavif's sequences read the same frames after a seek as from the start")
+    void libavif(String vector) {
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        var options = vector.contains("12bpc") ? WIDE : com.github.auties00.smalt.image.ImageDecoderOptions.defaults();
+        AnimationSeeks.assertMatchesSequential(() -> AvifDecoder.openAnimation(MediaSource.of(data), options),
+                vector.hashCode());
     }
 }

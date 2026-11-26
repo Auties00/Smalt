@@ -29,8 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("MPEG-4 Part 2 samples and elementary streams")
 class Mpeg4SamplesTest {
-    private static final String FATE = "https://fate-suite.ffmpeg.org/mpeg4/";
-
     static void assertWithinNoiseFloor(Path file, Mpeg4TestStreams.Decoded decoded) {
         var expected = Mpeg4TestStreams.ffmpeg(file, "int");
         var simple = Mpeg4TestStreams.ffmpeg(file, "simple");
@@ -50,8 +48,7 @@ class Mpeg4SamplesTest {
         @Test
         @DisplayName("decodes a packed bitstream with B-VOPs in AVI in display order")
         void packedBframes() {
-            var file = Conformance.fetch("fate-mpeg4-packed_bframes.avi", FATE + "packed_bframes.avi",
-                    "450a89377f024ce11d176d2be0fa3756df005aa45294866b383fee18a17cbf48");
+            var file = Conformance.vector("fate-mpeg4-packed_bframes.avi");
             var decoded = Mpeg4TestStreams.decode(file, Mpeg4Decoder::new);
             assertEquals(544, decoded.width());
             assertEquals(352, decoded.height());
@@ -63,8 +60,7 @@ class Mpeg4SamplesTest {
         @Test
         @DisplayName("decodes a raw Simple Profile elementary stream")
         void demo() {
-            var file = Conformance.fetch("fate-mpeg4-demo.m4v", FATE + "demo.m4v",
-                    "da1983816306e0e4003da606e139896fe9394564df17fc9be1171f1f5c7e2441");
+            var file = Conformance.vector("fate-mpeg4-demo.m4v");
             var decoded = Mpeg4TestStreams.decodeElementary(file, Mpeg4Decoder::new);
             assertEquals(320, decoded.width());
             assertWithinNoiseFloor(file, decoded);
@@ -73,8 +69,7 @@ class Mpeg4SamplesTest {
         @Test
         @DisplayName("decodes a Simple Studio Profile stream")
         void studioProfile() {
-            var file = Conformance.fetch("fate-mpeg4-mpeg4_sstp_dpcm.m4v", FATE + "mpeg4_sstp_dpcm.m4v",
-                    "c7389f15ceb3381be18ab21c932ef3cda952466bcd2ade824faf36a880ea860e");
+            var file = Conformance.vector("fate-mpeg4-mpeg4_sstp_dpcm.m4v");
             var options = com.github.auties00.smalt.video.VideoDecoderOptions.builder().highBitDepth(true).build();
             var frames = new java.util.ArrayList<com.github.auties00.smalt.image.Picture>();
             try (var source = MediaSource.of(file); var stream = Mpeg4ElementaryStream.open(source);

@@ -235,6 +235,52 @@ class ExrSamplesTest {
         }
     }
 
+    /** {@return the hosted OpenEXR sample images that openexr-images.tsv records} */
+    static List<String> openExrImages() {
+        return rows().stream().map(row -> row[0]).distinct().toList();
+    }
+
+    private static List<String[]> rows() {
+        return new String(resource("openexr-images.tsv"), java.nio.charset.StandardCharsets.US_ASCII).lines()
+                .filter(line -> !line.isBlank() && !line.startsWith("#")).map(line -> line.strip().split("\t"))
+                .toList();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.MethodSource("openExrImages")
+    @DisplayName("decodes the samples OpenEXR decodes from its own sample images")
+    void openExrSampleImages(String name) throws IOException, NoSuchAlgorithmException {
+        // openexr-images.tsv records, per part and channel, the SHA-256 of the first level's samples that OpenEXR
+        // 3.5.2 decodes (deep parts flattened as ExrDecoder documents, NaNs as the canonical NaN), written by
+        // tools/testdata/behavior/exr-reference-digests.py
+        var expected = rows().stream().filter(row -> row[0].equals(name)).toList();
+        var file = ExrFile.read(java.nio.file.Files.readAllBytes(
+                com.github.auties00.smalt.testkit.Conformance.vector(name)), limits());
+        assertEquals(expected.stream().map(row -> row[1]).distinct().count(), file.parts().size(), "part count");
+        for (var row : expected) {
+            var part = Integer.parseInt(row[1]);
+            var header = file.parts().get(part);
+            var channel = -1;
+            for (var index = 0; index < header.channels().size(); index++) {
+                if (header.channels().get(index).name().equals(row[2])) {
+                    channel = index;
+                }
+            }
+            assertTrue(channel >= 0, name + " part " + part + " has channel " + row[2]);
+            var planes = ExrSamples.read(file, part, 0, 0, limits());
+            var plane = planes.planes()[channel];
+            assertEquals(Integer.parseInt(row[3]), planes.widths()[channel], name + " " + row[2] + " width");
+            assertEquals(Integer.parseInt(row[4]), planes.heights()[channel], name + " " + row[2] + " height");
+            var bytes = ByteBuffer.allocate(plane.length * 4).order(ByteOrder.LITTLE_ENDIAN);
+            for (var value : plane) {
+                // NaNs hash as the canonical NaN, as floatToIntBits compares them elsewhere in this test
+                bytes.putInt(Float.floatToIntBits(value));
+            }
+            var digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes.array()));
+            assertEquals(row[5], digest, name + " part " + part + " channel " + row[2] + " samples");
+        }
+    }
+
     private static String hash(short[] table) throws NoSuchAlgorithmException {
         var bytes = new byte[table.length * 2];
         for (var index = 0; index < table.length; index++) {

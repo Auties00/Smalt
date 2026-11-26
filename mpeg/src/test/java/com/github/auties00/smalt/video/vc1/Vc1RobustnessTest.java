@@ -179,7 +179,7 @@ class Vc1RobustnessTest {
     @DisplayName("decodes conformance streams with corrupted packets")
     @Timeout(value = 4, unit = TimeUnit.MINUTES)
     void corruptedConformance(String name) throws IOException {
-        var bytes = Files.readAllBytes(Conformance.fetchListed(name));
+        var bytes = Files.readAllBytes(Conformance.vector(name));
         var stream = name.endsWith(".rcv") ? Vc1TestStreams.rcv(bytes) : Vc1TestStreams.elementary(bytes);
         var packets = stream.packets().subList(0, Math.min(8, stream.packets().size()));
         var head = new Vc1TestStreams.Stream(stream.config(), stream.width(), stream.height(), packets);

@@ -328,7 +328,7 @@ class MaceConformanceTest {
         })
         @DisplayName("decode real files of public archives to QuickTime's samples")
         void realFiles(String name, int samples, String digest) throws IOException {
-            var actual = read(Files.readAllBytes(Conformance.fetchListed(name)));
+            var actual = read(Files.readAllBytes(Conformance.vector(name)));
             assertEquals(samples, actual.length);
             assertEquals(digest, sha256(actual));
         }
@@ -338,7 +338,7 @@ class MaceConformanceTest {
                 "mace-surge-2-8-MAC6.mov"})
         @DisplayName("seek in real files to the samples of a decode from the start, and declare their duration")
         void realFileSeek(String name) throws IOException {
-            var file = Files.readAllBytes(Conformance.fetchListed(name));
+            var file = Files.readAllBytes(Conformance.vector(name));
             assertDuration(file);
             var linear = read(file);
             var options = AudioReaderOptions.builder().sampleFormat(SampleFormat.INTEGER).build();

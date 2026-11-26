@@ -99,6 +99,11 @@ final class SampleTable {
     int count;
 
     /**
+     * Whether {@link MediaLimits#maxFrames()} bounds the number of samples.
+     */
+    final boolean framesBounded;
+
+    /**
      * Constructs an empty table.
      *
      * @param limits the limits bounding the sample count
@@ -106,7 +111,22 @@ final class SampleTable {
      * @throws MediaException.LimitExceeded if {@code capacity} exceeds the limits
      */
     SampleTable(MediaLimits limits, int capacity) {
+        this(limits, capacity, true);
+    }
+
+    /**
+     * Constructs an empty table.
+     *
+     * @param limits the limits bounding the sample count
+     * @param capacity the initial capacity; non-negative
+     * @param framesBounded whether {@link MediaLimits#maxFrames()} bounds the sample count: true for the frames of a
+     * video or an animation, which it is defined for, false for audio and data samples, which only the memory limits
+     * bound
+     * @throws MediaException.LimitExceeded if {@code capacity} exceeds the limits
+     */
+    SampleTable(MediaLimits limits, int capacity, boolean framesBounded) {
         this.limits = limits;
+        this.framesBounded = framesBounded;
         checkCapacity(capacity);
         this.offsets = new long[capacity];
         this.sizes = new int[capacity];
@@ -123,7 +143,9 @@ final class SampleTable {
      * @throws MediaException.LimitExceeded if the count or the memory it needs exceeds the limits
      */
     private void checkCapacity(long capacity) {
-        LimitChecks.checkFrames(limits, capacity);
+        if (framesBounded) {
+            LimitChecks.checkFrames(limits, capacity);
+        }
         LimitChecks.checkAllocation(limits, capacity * 8);
         if (capacity * BYTES_PER_SAMPLE > limits.maxBytes()) {
             throw new MediaException.LimitExceeded("sample table of " + capacity + " samples exceeds the "

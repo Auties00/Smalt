@@ -3,6 +3,8 @@ package com.github.auties00.smalt.video.vp8;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.testkit.Conformance;
+import org.junit.jupiter.api.Assertions;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -97,15 +99,15 @@ final class RtTestVideo {
     }
 
     /**
-     * Returns the path of a cached raw clip, or {@code null} when absent.
-     *
-     * <p>Clips are looked up in the directory named by the {@code smalt.test.clips} system property, by
-     * default {@code ~/.smalt/cache/clips}; the tests that need one skip when it is missing.
+     * Returns the path of a raw clip of the hosted test data ({@link Conformance#clips()}), failing the test when it
+     * is missing.
      */
     static Path clip(String name) {
-        var root = Path.of(System.getProperty("smalt.test.clips",
-                Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips").toString()));
-        var candidate = root.resolve(name);
-        return Files.isRegularFile(candidate) ? candidate : null;
+        var candidate = Conformance.clips().resolve(name);
+        if (!Files.isRegularFile(candidate)) {
+            Assertions.fail("clip " + name + " is missing from " + Conformance.clips()
+                    + "; pull the hosted test data (see tools/testdata/README.md)");
+        }
+        return candidate;
     }
 }

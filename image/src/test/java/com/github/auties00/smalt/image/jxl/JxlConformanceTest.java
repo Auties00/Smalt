@@ -36,11 +36,11 @@ class JxlConformanceTest {
     void conformance(JxlVectors.Case test) {
         var data = JxlVectors.read(test.input());
         var codestream = JxlCodestream.open(data, MediaLimits.DEFAULT);
-        if (test.referenceSha256() == null) {
+        if (test.reference() == null) {
             assertNotNull(codestream.nextKeyframe(), "the case decodes");
             return;
         }
-        var reference = test.reference();
+        var reference = test.referenceDecode();
         var orientation = codestream.header().orientation();
         var frames = 0;
         var worstRmse = 0.0;

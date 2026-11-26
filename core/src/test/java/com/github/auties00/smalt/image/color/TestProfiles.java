@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Fetches the pinned test profiles of {@code lcms/profiles.tsv} and builds the deterministic input
+ * Reads the test profiles of {@code lcms/profiles.tsv} from the hosted test data and builds the deterministic input
  * sets of {@code tools/testdata/lcms-oracle.py}.
  */
 final class TestProfiles {
@@ -49,9 +49,11 @@ final class TestProfiles {
     }
 
     static byte[] bytes(String name) {
-        var row = PROFILES.get(name);
+        if (!PROFILES.containsKey(name)) {
+            throw new IllegalArgumentException(name + " is not in lcms/profiles.tsv");
+        }
         try {
-            return Files.readAllBytes(Conformance.fetch(name, row[2], row[1]));
+            return Files.readAllBytes(Conformance.vector(name));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }

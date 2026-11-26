@@ -30,7 +30,7 @@ public class RawBenchmark {
 
     @Setup
     public void load() throws IOException {
-        bytes = Files.readAllBytes(RawSamples.valueOf(sample).fetch());
+        bytes = Files.readAllBytes(RawSamples.valueOf(sample).path());
     }
 
     @Benchmark

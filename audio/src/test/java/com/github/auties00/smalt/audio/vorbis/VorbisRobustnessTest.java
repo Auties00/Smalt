@@ -51,21 +51,11 @@ class VorbisRobustnessTest {
             }
             samples.add(new Sample("random-" + seed, stream.config(), packets));
         }
-        String[][] vectors = {
-                {"48k-mono", "f51459d9bdd04ca3ec6f6732b8a01efcdc83e5c6fc79c7d5347527bfd4948e9e"},
-                {"lsp-test", "ad1b07b68576ae2c85178475ef3607e1a96c09e96296cae83ee7a9726f8311eb"},
-                {"test-short", "183510552403021fb90ce43796fcc88e16c8bb4ae5d0d72a316b8e51afc395fa"},
-                {"rc3-test", "edd984e84c7c2a59af7801f3e8d2db11a6619134fd8d0274d1289e70bf60cde7"}};
-        for (var vector : vectors) {
-            try {
-                var file = Conformance.fetch("vorbis-" + vector[0] + ".ogg",
-                        "https://people.xiph.org/~xiphmont/test-vectors/vorbis/" + vector[0] + ".ogg", vector[1]);
-                var link = OggVorbis.read(Files.readAllBytes(file)).getFirst();
-                var audio = link.audio();
-                samples.add(new Sample(vector[0], link.codecConfig(), new ArrayList<>(audio.subList(0, Math.min(12, audio.size())))));
-            } catch (org.opentest4j.TestAbortedException offline) {
-                // the vector is unavailable offline; the synthetic samples still run
-            }
+        for (var name : new String[]{"48k-mono", "lsp-test", "test-short", "rc3-test"}) {
+            var file = Conformance.vector("vorbis-" + name + ".ogg");
+            var link = OggVorbis.read(Files.readAllBytes(file)).getFirst();
+            var audio = link.audio();
+            samples.add(new Sample(name, link.codecConfig(), new ArrayList<>(audio.subList(0, Math.min(12, audio.size())))));
         }
         return samples;
     }

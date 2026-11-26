@@ -106,7 +106,7 @@ class Jp2HtConformanceTest {
     }
 
     static byte[] insert(String path) {
-        var archive = Conformance.fetchListed(ARCHIVE);
+        var archive = Conformance.vector(ARCHIVE);
         try (var zip = new ZipFile(archive.toFile())) {
             var entry = zip.getEntry(path);
             if (entry == null) {

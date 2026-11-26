@@ -389,4 +389,47 @@ class VobSubDemuxerTest {
             assertFalse(VobSubMuxer.supports(Codec.PGS));
         }
     }
+
+    @Test
+    @DisplayName("reads FATE's VobSub pair as ffprobe reads its index")
+    void fate() throws Exception {
+        var idx = com.github.auties00.smalt.testkit.Conformance.vector("fate-sub-vobsub.idx");
+        var sub = com.github.auties00.smalt.testkit.Conformance.vector("fate-sub-vobsub.sub");
+        // ffmpeg's vobsub demuxer opens the .sub of the same name next to the index
+        var directory = java.nio.file.Files.createTempDirectory("vobsub");
+        try {
+            var copy = java.nio.file.Files.copy(idx, directory.resolve("fate-sub-vobsub.idx"));
+            java.nio.file.Files.copy(sub, directory.resolve("fate-sub-vobsub.sub"));
+            var probe = com.github.auties00.smalt.container.ContainerProbe.probe(copy);
+            try (var demuxer = new VobSubDemuxer(MediaSource.of(idx), MediaSource.of(sub),
+                    com.github.auties00.smalt.container.DemuxerOptions.defaults())) {
+                var ours = com.github.auties00.smalt.container.ContainerProbe.demuxAll(demuxer);
+                assertEquals(probe.streams().size(), ours.tracks().size());
+                var expected = probe.packets();
+                var actual = ours.order();
+                assertEquals(expected.size(), actual.size());
+                var track = ours.tracks().getFirst();
+                for (var index = 0; index < expected.size(); index++) {
+                    var want = expected.get(index);
+                    var got = actual.get(index);
+                    assertEquals(want.size(), got.size(), "packet " + index);
+                    assertEquals(want.hash(), com.github.auties00.smalt.container.ContainerProbe.crc32(got.data()),
+                            "packet " + index);
+                    // ffmpeg's index timestamps are milliseconds
+                    var millis = track.timeBase().rescale(got.pts(),
+                            com.github.auties00.smalt.track.Rational.timeBaseOf(1000));
+                    assertEquals(want.pts() - expected.getFirst().pts(), millis - track.timeBase().rescale(
+                            actual.getFirst().pts(), com.github.auties00.smalt.track.Rational.timeBaseOf(1000)), 1,
+                            "pts of " + index);
+                }
+            }
+        } finally {
+            try (var files = java.nio.file.Files.list(directory)) {
+                for (var file : files.toList()) {
+                    java.nio.file.Files.delete(file);
+                }
+            }
+            java.nio.file.Files.delete(directory);
+        }
+    }
 }

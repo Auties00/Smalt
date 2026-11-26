@@ -415,6 +415,18 @@ class PnmCodecTest {
             Tolerance.exact().assertWithin(variant + " " + plain, theirs, ours);
         }
 
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"ascii.pbm", "ascii.pgm", "ascii.ppm", "raw.pbm", "raw.pgm", "raw.ppm"})
+        @DisplayName("Smalt reads GIMP's plain and raw files as ffmpeg does")
+        void gimp(String name) throws java.io.IOException {
+            var file = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "mei-netpbm-gimp-export-" + name));
+            var ours = RasterTesting.tight(PnmDecoder.decode(MediaSource.of(file)).picture());
+            var extension = name.substring(name.length() - 3);
+            var theirs = RasterFixtures.ffmpegDecode(file, extension, "rgba");
+            Tolerance.exact().assertWithin(name, theirs, ours);
+        }
+
         @ParameterizedTest
         @CsvSource({"PGM", "PPM", "PAM"})
         @DisplayName("ffmpeg reads Smalt's 16-bit files to the same samples")

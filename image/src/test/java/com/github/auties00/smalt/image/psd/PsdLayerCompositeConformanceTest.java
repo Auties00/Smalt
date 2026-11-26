@@ -71,7 +71,7 @@ class PsdLayerCompositeConformanceTest {
     }
 
     private static byte[] fixture(String name) throws IOException {
-        return Files.readAllBytes(Conformance.fetchListed("psdtools-" + name));
+        return Files.readAllBytes(Conformance.vector("psdtools-" + name));
     }
 
     /**
@@ -212,6 +212,12 @@ class PsdLayerCompositeConformanceTest {
             "effects-blend-modes.psd|layer effects",
             "effects-effects-enabled.psd|layer effects",
             "transparency-fill-opacity.psd|layer effects",
+            "clipping-order-clipping-grouped.psd|layer effects",
+            "clipping-order-clipping-independent.psd|layer effects",
+            "clipping-order-clipping-interior-grouped.psd|layer effects",
+            "clipping-order-clipping-interior-independent.psd|layer effects",
+            "clipping-order-clipping-overlay-disabled.psd|clipped layers do not blend as a group",
+            "masks-2.psd|without their pixels",
             "transparency-knockout-deep-normal.psd|knockout",
             "transparency-knockout-shallow-nested.psd|knockout",
             "transparency-knockout-isolated-groups.psd|knockout",
@@ -263,6 +269,44 @@ class PsdLayerCompositeConformanceTest {
             expected = in.readAllBytes();
         }
         assertEquals(expected.length, actual.length);
+        var flattened = !image.picture().hasAlpha();
+        for (var at = 0; at < expected.length; at += 4) {
+            if (flattened) {
+                var alpha = expected[at + 3] & 0xFF;
+                for (var channel = 0; channel < 3; channel++) {
+                    expected[at + channel] = (byte) Math.round(((expected[at + channel] & 0xFF) * alpha
+                            + 255 * (255 - alpha)) / 255.0);
+                }
+                expected[at + 3] = (byte) 255;
+            }
+            if (expected[at + 3] == 0 && actual[at + 3] == 0) {
+                java.util.Arrays.fill(expected, at, at + 3, (byte) 0);
+                java.util.Arrays.fill(actual, at, at + 3, (byte) 0);
+            }
+        }
+        Tolerance.offByOne().assertWithin(name, expected, actual);
+    }
+
+    /**
+     * The psd-tools documents that come with a reference render (a PNG of the same name next to them, the expected
+     * output of psd-tools' compositing tests): the clipping masks over semi-transparent bases of
+     * {@code clipping-alpha} ({@code masks/2}, saved without a composite and with shape layers that carry no pixels,
+     * is among the refused documents, so its render {@code masks-2.png} has nothing to be compared with).
+     * Each is rendered from its layers (its saved composite removed) and
+     * compared with the PNG, pixels transparent in both ignored, flattened onto white where Smalt's render is opaque.
+     */
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"clipping-alpha-nested_fill_inner_clip_normal", "clipping-alpha-nested_masked_inner_clip_normal",
+            "clipping-alpha-opaque_control_normal", "clipping-alpha-ordinary_normal",
+            "clipping-alpha-ordinary_passthrough", "clipping-alpha-pixel_base_mask_normal"})
+    @DisplayName("renders the documents psd-tools ships a reference render of as that render")
+    void againstReferenceRender(String name) throws IOException {
+        var file = PsdFiles.withoutComposite(fixture(name + ".psd"));
+        var image = PsdDecoder.decode(MediaSource.of(file));
+        var actual = RasterTesting.tight(image.picture());
+        var expected = RasterTesting.tight(com.github.auties00.smalt.image.png.PngDecoder.decode(MediaSource.of(
+                fixture(name + ".png")), ImageDecoderOptions.defaults()).picture());
+        assertEquals(expected.length, actual.length, "size");
         var flattened = !image.picture().hasAlpha();
         for (var at = 0; at < expected.length; at += 4) {
             if (flattened) {

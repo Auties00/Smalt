@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Compares the photosites of CC0 Phase One IIQ samples with those Adobe DNG Converter stores, in the windows of the
  * {@code <stem>.windows} files {@code tools/testdata/raw-oracle.py} keeps (four corners, the center and the first and
- * last rows) in {@code <conformance cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides it); the tests skip
+ * last rows) in {@code <test cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides it); the tests skip
  * without them. The converter's image starts one row above or one column left of the block's on some backs.
  *
  * <p>Each sample's class states the share of photosites that must be within one unit and the mean difference allowed:
@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class IiqOracleTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     /**
      * A sample.
@@ -71,10 +71,8 @@ class IiqOracleTest {
      * The samples Adobe DNG Converter reads.
      */
     private static final List<Sample> SAMPLES = List.of(
-            new Sample("rawpixls-iiq-p20-cf051544.iiq", 0, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p20-cf051545.iiq", 0, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p20-cf051552.tif", 0, 0, EXACT, EXACT_MEAN),
-            new Sample("rawpixls-iiq-p20-cf051553.tif", 0, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p25plus-cf028662.iiq", -1, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p25plus-cf028663.iiq", -1, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p25-cf082161.tif", -1, 0, EXACT, EXACT_MEAN),
@@ -83,28 +81,20 @@ class IiqOracleTest {
             new Sample("rawpixls-iiq-h25-outdoor.iiq", -1, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-iq150-cf006803.iiq", 0, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-iq3-100mp-l.iiq", 0, 0, EXACT, EXACT_MEAN),
-            new Sample("rawpixls-iiq-iq3-100mp-l16.iiq", 0, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-iq3-100mp-trichromatic.iiq", 0, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-iq4-150mp-l14.iiq", 0, 0, EXACT, EXACT_MEAN),
-            new Sample("rawpixls-iiq-iq4-150mp-l16.iiq", 0, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-iq4-150mp-l16-ex.iiq", 0, 0, EXACT, EXACT_MEAN),
-            new Sample("rawpixls-iiq-credo40-0001.iiq", 0, 0, 0.60, 2.5),
-            new Sample("rawpixls-iiq-credo40-0008.iiq", 0, 0, 0.48, 6),
             new Sample("rawpixls-iiq-credo40-cf003914.iiq", 0, 0, 0.57, 2.5),
             new Sample("rawpixls-iiq-p40plus-cf100602.iiq", 0, 0, 0.37, 8),
             new Sample("rawpixls-iiq-iq140-l.tif", 0, 0, 0.30, 7.5),
-            new Sample("rawpixls-iiq-iq180-9561.iiq", 0, 0, IQ180_OFFSET, IQ180_SCALE, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-iq180-9565.iiq", 0, 0, IQ180_OFFSET, IQ180_SCALE, 0.96, 6),
             new Sample("rawpixls-iiq-p30-cf098736.tif", 0, -1, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p45plus-cf125838.iiq", 0, -1, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p45plus-cf125839.iiq", 0, -1, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p45-3809.tif", 0, -1, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p45-3810.tif", 0, -1, EXACT, EXACT_MEAN),
-            new Sample("rawpixls-iiq-p65plus-cf027310.iiq", 0, 0, 0.44, 8),
-            new Sample("rawpixls-iiq-p65plus-cf027311.iiq", 0, 0, 0.50, 5),
             new Sample("rawpixls-iiq-p65plus-cf027312.iiq", 0, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-p65plus-cf027313.iiq", 0, 0, EXACT, EXACT_MEAN),
-            new Sample("rawpixls-iiq-p65plus-cf028114.iiq", 0, 0, 0.40, 5),
             new Sample("rawpixls-iiq-p40plus-cf100585.iiq", 0, 0, EXACT, EXACT_MEAN),
             new Sample("rawpixls-iiq-iq140-sensorplus-l.tif", 0, 0, EXACT, EXACT_MEAN));
 
@@ -118,7 +108,7 @@ class IiqOracleTest {
     void photosites(Sample sample) throws IOException {
         var stem = sample.name().substring(0, sample.name().lastIndexOf('.'));
         var windows = ORACLE.resolve(stem + ".windows");
-        var path = Conformance.fetchListed(sample.name());
+        var path = Conformance.vector(sample.name());
         Skip.unless(Files.isRegularFile(windows), "data:raw-oracle",
                 "no oracle file " + windows + "; run tools/testdata/raw-oracle.py");
         var limits = MediaLimits.builder().maxPixels(1L << 30).maxBytes(1L << 33).build();

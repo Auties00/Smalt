@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * decoding, or, for the layers marked {@code jsvm}, that of the JSVM 9.19.15 decoder: their decoding
  * predates the deblocking rule of ITU-T H.264 F.8.7.4.3 for the transform coefficients of the reference
  * layer in Scalable Baseline streams, which the JSVM decoder and this decoder apply
- * ({@code tools/testdata/README.md}). Only the sub-bitstreams of each archive are downloaded, through
+ * ({@code tools/testdata/README.md}). Only the sub-bitstreams of each archive are hosted, as
  * the archive sets {@code h264-SVC-*} of {@code tools/testdata/archives.tsv}.
  */
 @DisplayName("H.264 SVC conformance bitstreams (ITU-T H.264.1)")
@@ -174,7 +174,7 @@ class H264SvcConformanceTest {
         var entry = vector.stem() + "-" + layer.label() + ".264";
         var member = archive.members().stream().filter(name -> name.equals(entry) || name.endsWith("/" + entry))
                 .findFirst().orElseThrow(() -> new AssertionError(vector + " has no member " + entry));
-        return Files.readAllBytes(archive.fetch(member));
+        return Files.readAllBytes(archive.member(member));
     }
 
     static void assertLayer(Vector vector, Layer layer, H264SvcStreamsTest.Output output) {

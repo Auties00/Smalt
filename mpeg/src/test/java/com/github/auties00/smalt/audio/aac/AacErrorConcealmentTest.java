@@ -25,7 +25,7 @@ class AacErrorConcealmentTest {
     private static final int MARGIN = 4;
 
     static List<AacTestSupport.Stream> tracks(String name) {
-        return AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4")));
+        return AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.file(name + ".mp4")));
     }
 
     static List<float[][]> decodeWindow(List<AacTestSupport.Stream> tracks, int first, int last, int corruptBlock,

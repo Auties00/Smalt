@@ -242,9 +242,7 @@ class DnxhdAlphaTest {
         @DisplayName("reads the raw 8-bit alpha after a DNxHR SQ frame")
         void rawAlpha() {
             // Avid-encoded DNxHR SQ 480x270 with "straight" alpha, attached to ffmpeg trac ticket 8427
-            var file = Conformance.fetch("ffmpeg-trac-8427-dnxhd_with_alpha_straight.mov",
-                    "https://trac.ffmpeg.org/raw-attachment/ticket/8427/dnxhd_with_alpha_straight.mov",
-                    "10d46a0f07ac9ec5093dc7deac30446b5c42d86685e6bbc475ff05c570fb71a4");
+            var file = Conformance.vector("ffmpeg-trac-8427-dnxhd_with_alpha_straight.mov");
             var stream = IntraTesting.demux(file);
             var data = stream.packets().getFirst().data();
             var videoSize = (data[data.length - 4] & 0xFF) << 24 | (data[data.length - 3] & 0xFF) << 16
@@ -275,9 +273,7 @@ class DnxhdAlphaTest {
         @DisplayName("reads the raw 8-bit alpha after a 10-bit two-field DNxHD frame as 10-bit alpha")
         void rawAlphaTenBit() {
             // Avid-encoded DNxHD 1241 1080i, alpha area sized for 10-bit samples, ffmpeg trac ticket 3707
-            var file = Conformance.fetch("ffmpeg-trac-3707-untitled_dnhd.mov",
-                    "https://samples.ffmpeg.org/ffmpeg-bugs/trac/ticket3707/Untitled_dnhd.mov",
-                    "ff237238ca50fe68bae53876e98d69507b07439b9323bd5271f305e52cbb8092");
+            var file = Conformance.vector("ffmpeg-trac-3707-untitled_dnhd.mov");
             var stream = IntraTesting.demux(file);
             var data = stream.packets().getFirst().data();
             assertEquals(917504 + 1920 * 1080 * 10 / 8 + 4, data.length);
@@ -295,9 +291,7 @@ class DnxhdAlphaTest {
         void codedAlpha(@TempDir Path directory) throws Exception {
             Oracle.assume(Oracle.Tool.FFMPEG);
             // Avid "DNxHD RGB Codec" export, ID 1238 with its alpha in a second coding unit, ffmpeg trac ticket 3707
-            var file = Conformance.fetch("ffmpeg-trac-3707-dnxhd_alpha.mov",
-                    "https://samples.ffmpeg.org/ffmpeg-bugs/trac/ticket3707/DNxHD%20Alpha.mov",
-                    "e52d761169e71fab3c413fec66543a61cfafa4472c1c7860444ba2058600b2c6");
+            var file = Conformance.vector("ffmpeg-trac-3707-dnxhd_alpha.mov");
             var stream = IntraTesting.demux(file);
             var data = stream.packets().get(50).data();
             assertEquals(917504 * 2 + 4, data.length);

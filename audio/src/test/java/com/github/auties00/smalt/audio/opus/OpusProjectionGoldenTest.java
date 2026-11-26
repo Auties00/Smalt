@@ -271,4 +271,39 @@ class OpusProjectionGoldenTest {
             throw new AssertionError(exception);
         }
     }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({
+            "xiph-opus-slsgjkl-family3.opus, 9, 5, 4, 3050, 13927, 13369920, aa5318278f0626e39254cf0d0ebc449232d095821f063c7a8894b94f546e7cf7",
+            "xiph-opus-haydn-trio-family3.opus, 4, 2, 2, 0, 46247, 44397120, dad492e557b1ada5f92d749c759585e1142a3154211c6371e83aae1de1c20454"})
+    @DisplayName("decodes real family 3 files, second and first order, to the samples of libopus's projection decoder")
+    void realFiles(String name, int channels, int streams, int coupled, int gain, int packetCount, long samples,
+                   String sha256) {
+        // the reference: tools/testdata/opus-oracle msdec with the file's demixing matrix and output gain (proj,
+        // 48 kHz, f32) over its packets, untrimmed; every sample of every packet, in coded channel order
+        var stream = OggOpusIO.read(com.github.auties00.smalt.testkit.Fixtures.read(
+                com.github.auties00.smalt.testkit.Conformance.vector(name)));
+        var head = OpusHead.parse(stream.head(), MediaLimits.DEFAULT);
+        assertEquals(3, head.mappingFamily());
+        assertEquals(channels, head.channels());
+        assertEquals(streams, head.streamCount());
+        assertEquals(coupled, head.coupledCount());
+        assertEquals(gain, head.outputGain());
+        assertEquals(packetCount, stream.packets().size());
+        var decoder = new OpusDecoder(track(stream.head(), 48000), OpusDecoderOptions.builder().sampleRate(48000).build());
+        assertEquals(channels, decoder.layout().channels());
+        var pcm = new float[5760 * channels];
+        var decoded = ByteBuffer.allocate(4 * pcm.length).order(ByteOrder.LITTLE_ENDIAN);
+        var digest = sha256Digest();
+        long total = 0;
+        for (var p : stream.packets()) {
+            var n = decoder.decode(p, 0, p.length, pcm, 0, 5760);
+            decoded.clear();
+            decoded.asFloatBuffer().put(pcm, 0, n * channels);
+            digest.update(decoded.array(), 0, 4 * n * channels);
+            total += n;
+        }
+        assertEquals(samples, total, "samples per channel");
+        assertEquals(sha256, HexFormat.of().formatHex(digest.digest()), "libopus projection decode of " + name);
+    }
 }

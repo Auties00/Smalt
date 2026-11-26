@@ -259,9 +259,7 @@ class TiffColorTest {
     class Profiles {
         static byte[] cmykProfile() {
             try {
-                return Files.readAllBytes(Conformance.fetch("skia-icc-misc-US_Web_Coated_SWOP_CMYK.icc",
-                        "https://raw.githubusercontent.com/google/skia/0c98530bf7d68e59147c2f1b06d8825c4302af8c/resources/icc_profiles/misc/US_Web_Coated_SWOP_CMYK.icc",
-                        "4855b8fabb96bdc6495d45d089bb8c8efb1ae18389e0dc9e75a5f701a9c0b662"));
+                return Files.readAllBytes(Conformance.vector("skia-icc-misc-US_Web_Coated_SWOP_CMYK.icc"));
             } catch (IOException exception) {
                 throw new UncheckedIOException(exception);
             }
@@ -322,9 +320,7 @@ class TiffColorTest {
         @Test
         @DisplayName("an RGB page with a profile converts as ImageOps.toSrgb converts it")
         void rgbConverted() throws IOException {
-            var icc = Files.readAllBytes(Conformance.fetch("skia-icc-AdobeRGB1998.icc",
-                    "https://raw.githubusercontent.com/google/skia/0c98530bf7d68e59147c2f1b06d8825c4302af8c/resources/icc_profiles/AdobeRGB1998.icc",
-                    "304f569a83c1e5eddaddac54e99ed03339333db013738bb499ab64f049887e28"));
+            var icc = Files.readAllBytes(Conformance.vector("skia-icc-AdobeRGB1998.icc"));
             var values = TiffFiles.pattern(WIDTH, HEIGHT, 3, 255, 23);
             var file = TiffFiles.of(WIDTH, HEIGHT, 3, 8).undefined(34675, icc)
                     .data(TiffFiles.pack(values, WIDTH, HEIGHT, 3, 8, true)).bytes();

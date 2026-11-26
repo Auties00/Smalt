@@ -53,8 +53,6 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 @DisplayName("H.264 4:4:4 and lossless decoding")
 class H264Chroma444Test {
-    private static final String BASE = "https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/Professional_profiles/";
-
     private static final Map<String, List<String>> GOLDEN = loadGolden();
 
     private static Map<String, List<String>> loadGolden() {
@@ -80,7 +78,7 @@ class H264Chroma444Test {
      * An ITU-T H.264.1 Professional_profiles 4:4:4 conformance bitstream: a raw {@code .bits} file,
      * or an entry of a {@code .zip} archive.
      */
-    record Vector(String name, String file, String sha256, String entry) {
+    record Vector(String name, String file, String entry) {
         @Override
         public String toString() {
             return name;
@@ -91,55 +89,55 @@ class H264Chroma444Test {
         return Stream.of(
                 // separate color planes, 14 bits, 1920x1080, CAVLC 4:4:4 Intra, High 4:4:4 Intra and Predictive
                 new Vector("PPCV444I4_Mitsubishi_A", "PPCV444I4_Mitsubishi_A.zip",
-                        "efb23464b231f0b875a9b04f06ac6622a1a162d7d4bd08690fb3b05073d49f26", "PPCV444I4_Mitsubishi_A.264"),
+                        "PPCV444I4_Mitsubishi_A.264"),
                 new Vector("PPCV444I5_Mitsubishi_A", "PPCV444I5_Mitsubishi_A.zip",
-                        "5c47f46f6d69c306a1a11909f10e4e9a4bf0398aee4bc217337196fb37e45e57", "PPCV444I5_Mitsubishi_A.264"),
+                        "PPCV444I5_Mitsubishi_A.264"),
                 new Vector("PPCV444I6_Mitsubishi_A", "PPCV444I6_Mitsubishi_A.zip",
-                        "891b5835a73c6f5befe4f7c2a78ee757658c478d39237cee0da65dace505409a", "PPCV444I6_Mitsubishi_A.264"),
+                        "PPCV444I6_Mitsubishi_A.264"),
                 new Vector("PPH444I4_Mitsubishi_A", "PPH444I4_Mitsubishi_A.zip",
-                        "2d80e731478e99b53d7d4cf45894c66017cbddc99a7f8b0126768f474b9019a2", "PPH444I4_Mitsubishi_A.264"),
+                        "PPH444I4_Mitsubishi_A.264"),
                 new Vector("PPH444I5_Mitsubishi_A", "PPH444I5_Mitsubishi_A.zip",
-                        "c55c784af7014b45c6b6ad96c7542dd3b143c27c375dc1ff342e0d505d20b436", "PPH444I5_Mitsubishi_A.264"),
+                        "PPH444I5_Mitsubishi_A.264"),
                 new Vector("PPH444I6_Mitsubishi_A", "PPH444I6_Mitsubishi_A.zip",
-                        "fb3454b6a33ba918383765ac12d0cfe91325bb2780ed4fa7c7d0e7cb6bfd6661", "PPH444I6_Mitsubishi_A.264"),
+                        "PPH444I6_Mitsubishi_A.264"),
                 new Vector("PPH444P6_Mitsubishi_A", "PPH444P6_Mitsubishi_A.zip",
-                        "9bf0e858a95025db7f6ee3062b732ad405855860ff50d5ee7accaebda0245d14", "PPH444P6_Mitsubishi_A.264"),
+                        "PPH444P6_Mitsubishi_A.264"),
                 new Vector("PPH444P7_Mitsubishi_A", "PPH444P7_Mitsubishi_A.zip",
-                        "a1b66b70ebbfdd5937486836439fb91d94b952364c9b373d3a072f8442db18fa", "PPH444P7_Mitsubishi_A.264"),
+                        "PPH444P7_Mitsubishi_A.264"),
                 new Vector("PPH444P8_Mitsubishi_A", "PPH444P8_Mitsubishi_A.zip",
-                        "6ff783ccd0edbbf22ea88820c77b31d66fd36b7c60c42ddf9728d6bda418e86b", "PPH444P8_Mitsubishi_A.264"),
+                        "PPH444P8_Mitsubishi_A.264"),
                 new Vector("PPH444P9_Mitsubishi_A", "PPH444P9_Mitsubishi_A.zip",
-                        "54044fa3d999f12cc1535fd0edc671f7edb251942785ad09638781b40430a1b1", "PPH444P9_Mitsubishi_A.264"),
+                        "PPH444P9_Mitsubishi_A.264"),
                 // separate color planes, lossless, 14 bits, 176x144
                 new Vector("PPCV444I7_SejongUniv_A", "PPCV444I7_SejongUniv_A.zip",
-                        "f80dfb9191f13c903d1b4b12d0ada1a3b0dd840d730bd7dfd8e9977446587586", "PPCV444I-7.264"),
+                        "PPCV444I-7.264"),
                 new Vector("PPH444I7_SejongUniv_A", "PPH444I7_SejongUniv_A.zip",
-                        "681c4c144f7018e60e9649841747a7bee4e1510180e5aedd5cc9e03adcb9bf43", "PPH444I-7.264"),
+                        "PPH444I-7.264"),
                 new Vector("PPH444P10_SejongUniv_A", "PPH444P10_SejongUniv_A.zip",
-                        "ad7b0f3c1130267ea28fc4dfdd70c7f4e38b33476ce1d0672f1a301ced9c1d4f", "PPH444P-10.264"),
+                        "PPH444P-10.264"),
                 // color planes coded together, 14 bits, 1920x1080, 118 to 120 frames
                 new Vector("PPCV444I1_2008", "PPCV444I1_2008.bits",
-                        "e4ac11cf201734e403435fd03af1f499a6c1a5769a151f38f9e8b8518d390f68", null),
+                        null),
                 new Vector("PPCV444I2_2008", "PPCV444I2_2008.bits",
-                        "95a6bc8c82c958c4e0af79cfd7775a9194aab26270cfaddbd3dbb11a8645288f", null),
+                        null),
                 new Vector("PPCV444I3_2008", "PPCV444I3_2008.bits",
-                        "e45845ce2886ba5bd4961d3809cb22a1a308481f5688d949ed158a76e54ae705", null),
+                        null),
                 new Vector("PPH444I1_2008", "PPH444I1_2008.bits",
-                        "25c73da54f8f66900b08607b5f437476ff06b21472f80f417f6381ff25a3df72", null),
+                        null),
                 new Vector("PPH444I2_2008", "PPH444I2_2008.bits",
-                        "1be5a6dc3629df641ac3ecdd2c4eb29612d5cf9155ae56c664f128e22f84980a", null),
+                        null),
                 new Vector("PPH444I3_2008", "PPH444I3_2008.bits",
-                        "08d597d744e57a4b7fbfad5f27b2a9b4e61b92815b77e27013cad6a08eb7d282", null),
+                        null),
                 new Vector("PPH444P1_2008", "PPH444P1_2008.bits",
-                        "3738831430d47468db55b852b9074372173ec62b1f4550b571d91d00b4dd09f7", null),
+                        null),
                 new Vector("PPH444P2_2008", "PPH444P2_2008.bits",
-                        "52e88fe0c3b6017c8ffa3dd2357110fd6c835486deabadfbc4b4301e4131a35f", null),
+                        null),
                 new Vector("PPH444P3_2008", "PPH444P3_2008.bits",
-                        "37cd73a73de777441a281774485adf229297732eb9ee3bb755a21e3d14f2902b", null),
+                        null),
                 new Vector("PPH444P4_2008", "PPH444P4_2008.bits",
-                        "3f356ccc3ce0e087026c2dae3dda8cc2a83e7595a2493922638539019b560259", null),
+                        null),
                 new Vector("PPH444P5_2008", "PPH444P5_2008.bits",
-                        "8dac60e7b49cfaa42a79a9e78e9959cf13006f0b91b03de1202c396b134f39c9", null));
+                        null));
     }
 
     static Stream<Vector> threadedConformance() {
@@ -148,8 +146,7 @@ class H264Chroma444Test {
     }
 
     static byte[] bitstream(Vector vector) {
-        var file = Conformance.fetch("h264-Professional_profiles-" + vector.file(), BASE + vector.file(),
-                vector.sha256());
+        var file = Conformance.vector("h264-Professional_profiles-" + vector.file());
         try {
             if (vector.entry() == null) {
                 return Files.readAllBytes(file);

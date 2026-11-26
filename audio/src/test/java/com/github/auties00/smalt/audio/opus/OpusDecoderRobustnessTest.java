@@ -168,4 +168,40 @@ class OpusDecoderRobustnessTest {
             assertSame(thrown, error);
         }
     }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"xiph-opus-malformed-psycho1.opus", "xiph-opus-malformed-psycho3.opus",
+            "xiph-opus-malformed-psycho4.opus"})
+    @DisplayName("rejects the invalid packets of real malformed files with a MediaException and decodes the rest")
+    void malformedFiles(String name) {
+        // psycho1 holds a CELT code 3 packet that breaks RFC 6716 condition R7, psycho3 a 60 ms SILK code 1 packet of
+        // odd size (R3), psycho4 an 8-channel packet whose self-delimited streams disagree on their duration: libopus
+        // returns OPUS_INVALID_PACKET for each, so the decoder must reject at least one packet
+        var stream = OggOpusIO.read(Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(name)));
+        var rejected = new int[1];
+        var decoded = new long[1];
+        assertTimeoutPreemptively(Duration.ofSeconds(120), () -> {
+            try (var decoder = new OpusDecoder(track(stream.head()))) {
+                for (var packet : stream.packets()) {
+                    try {
+                        decoder.decode(new Packet(1, packet, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, true), buffer -> {
+                            for (var c = 0; c < buffer.channels(); c++) {
+                                var plane = buffer.plane(c);
+                                for (var i = 0; i < buffer.frames(); i++) {
+                                    assertTrue(Float.isFinite(plane[i]), "non-finite sample");
+                                }
+                            }
+                            decoded[0] += buffer.frames();
+                        });
+                    } catch (MediaException expected) {
+                        assertNotNull(expected.getMessage());
+                        rejected[0]++;
+                    }
+                }
+            }
+        });
+        assertTrue(rejected[0] > 0, name + ": no packet rejected");
+        assertTrue(decoded[0] > 0, name + ": nothing decoded");
+        System.err.printf("[opus-malformed] %s: %d of %d packets rejected%n", name, rejected[0], stream.packets().size());
+    }
 }

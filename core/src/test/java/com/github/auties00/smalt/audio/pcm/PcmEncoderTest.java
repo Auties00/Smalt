@@ -228,4 +228,26 @@ class PcmEncoderTest {
             assertTrue(Math.abs(ours.getShort(index * 2) - theirs.getShort(index * 2)) <= 1, "sample " + index);
         }
     }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({"PCM_ALAW, g711-stl-sweep-r.a", "PCM_MULAW, g711-stl-sweep-r.u"})
+    @DisplayName("encodes the ITU-T STL G.711 sweep to the reference encoder's codes")
+    void stlReference(Codec codec, String reference) {
+        var source = PcmDecoderTest.stlWords("g711-stl-sweep.src");
+        var expected = PcmDecoderTest.stlWords(reference);
+        var samples = new float[source.length];
+        for (var index = 0; index < source.length; index++) {
+            samples[index] = source[index] / 32768f;
+        }
+        var encoder = new PcmEncoder(PcmEncoderOptions.of(codec, 8000, ChannelLayout.MONO));
+        var out = new java.io.ByteArrayOutputStream();
+        for (var packet : encode(encoder, new float[][]{samples}, samples.length, 4096)) {
+            out.writeBytes(packet.data());
+        }
+        var codes = out.toByteArray();
+        assertEquals(expected.length, codes.length);
+        for (var index = 0; index < expected.length; index++) {
+            assertEquals(expected[index], codes[index] & 0xFF, "code " + index + " of " + source[index]);
+        }
+    }
 }

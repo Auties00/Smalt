@@ -6,7 +6,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.hvxc.internal.HvxcObject;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.io.MediaSource;
-import com.github.auties00.smalt.testkit.Conformance;
+import com.github.auties00.smalt.audio.aac.Mpeg4AudioVectors;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -57,7 +57,7 @@ final class HvxcTestSupport {
     }
 
     static Stream stream(String name) {
-        return stream(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + name + ".mp4")));
+        return stream(Fixtures.read(Mpeg4AudioVectors.file(name + ".mp4")));
     }
 
     static Stream stream(byte[] file) {
@@ -145,7 +145,7 @@ final class HvxcTestSupport {
     }
 
     static float[] reference(String name) {
-        return readWav(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + name + ".wav")));
+        return readWav(Fixtures.read(Mpeg4AudioVectors.file(name + ".wav")));
     }
 
     /**

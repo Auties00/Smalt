@@ -245,6 +245,82 @@ class MjpegDecoderTest {
         }
     }
 
+    /**
+     * Motion-JPEG written by other encoders (ffmpeg's FATE and samples archive): camera AVIs (Canon, Fuji without
+     * Huffman tables), Avid AVRn, QuickTime formats A and B (Apple, Media 100) and an AVI of two fields per frame.
+     * The first frames are held to ffmpeg's decode in the stream's own sampling, within ffmpeg's IDCT tolerance
+     * (its 8-bit IDCT is not libjpeg's: at most 3 apart, under 0.6 on average).
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"mjpeg-samples-AVID_CODEC_encoded.06.AVI", "mjpeg-samples-Minolta-MJPEG.mov",
+            "mjpeg-samples-canon-ixus-MVI_0005.AVI", "mjpeg-samples-fuji-s602-mjpeg.avi", "mjpeg-samples-mjpa.mov",
+            "mjpeg-fate-mjpeg_field_order.avi", "mjpeg-fate-media100.mov", "mjpeg-fate-mjpegb_part.mov"})
+    @DisplayName("decodes third-party Motion-JPEG as ffmpeg does")
+    void thirdParty(String name) throws IOException {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var path = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var limit = 6;
+        var decoded = new ArrayList<YuvPicture>();
+        try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(MediaSource.of(
+                Files.readAllBytes(path)))) {
+            var track = (VideoTrack) demuxer.tracks().stream().filter(VideoTrack.class::isInstance).findFirst()
+                    .orElseThrow();
+            try (var decoder = VideoDecoders.create(track, VideoDecoderOptions.defaults())) {
+                for (var packet = demuxer.read(); packet != null && decoded.size() < limit; packet = demuxer.read()) {
+                    if (packet.trackId() == track.id()) {
+                        decoder.decode(packet, frame -> decoded.add((YuvPicture) frame.picture()));
+                    }
+                }
+            }
+        }
+        assertTrue(!decoded.isEmpty(), "frames decoded");
+        var first = decoded.getFirst();
+        var format = switch (first.chromaFormat()) {
+            case YUV420 -> "yuvj420p";
+            case YUV422 -> "yuvj422p";
+            case YUV444 -> "yuvj444p";
+            case MONOCHROME -> "gray";
+            default -> throw new AssertionError(first.chromaFormat());
+        };
+        var raw = Oracle.decodeVideo(path, format, decoded.size());
+        var width = first.width();
+        var height = first.height();
+        var chromaWidth = first.chromaFormat() == ChromaFormat.YUV444 ? width : (width + 1) / 2;
+        var chromaHeight = first.chromaFormat() == ChromaFormat.YUV420 ? (height + 1) / 2 : height;
+        var planes = first.chromaFormat() == ChromaFormat.MONOCHROME ? 0 : 2;
+        var frameSamples = width * height + planes * chromaWidth * chromaHeight;
+        assertEquals(decoded.size() * frameSamples, raw.length, "ffmpeg's frames have the same size");
+        for (var f = 0; f < decoded.size(); f++) {
+            var picture = decoded.get(f);
+            var base = f * frameSamples;
+            var largest = 0;
+            var total = 0L;
+            for (var y = 0; y < height; y++) {
+                for (var x = 0; x < width; x++) {
+                    var difference = Math.abs((raw[base + y * width + x] & 0xFF)
+                            - (picture.y()[y * picture.yStride() + x] & 0xFF));
+                    largest = Math.max(largest, difference);
+                    total += difference;
+                }
+            }
+            for (var plane = 0; plane < planes; plane++) {
+                var samples = plane == 0 ? picture.u() : picture.v();
+                var at = base + width * height + plane * chromaWidth * chromaHeight;
+                for (var y = 0; y < chromaHeight; y++) {
+                    for (var x = 0; x < chromaWidth; x++) {
+                        var difference = Math.abs((raw[at + y * chromaWidth + x] & 0xFF)
+                                - (samples[y * picture.uvStride() + x] & 0xFF));
+                        largest = Math.max(largest, difference);
+                        total += difference;
+                    }
+                }
+            }
+            assertTrue(largest <= 3, name + " frame " + f + " differs from ffmpeg by " + largest);
+            assertTrue(total < 0.6 * frameSamples, name + " frame " + f + " differs from ffmpeg by " + total
+                    + " in all");
+        }
+    }
+
     @Test
     @DisplayName("rejects other codecs, corrupt frames and frames over the limits")
     void rejects() {

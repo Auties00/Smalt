@@ -8,6 +8,7 @@ import org.junit.jupiter.api.TestFactory;
 
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -49,8 +50,8 @@ class UsacConformanceTest {
             }
             return Stream.of(DynamicTest.dynamicTest(name, () -> {
                 var stream = streamOf(name);
-                var mp4 = streams.computeIfAbsent(stream, key -> archive.fetch("compressedMp4/" + key + ".mp4"));
-                check(name, mp4, archive.fetch(member));
+                var mp4 = streams.computeIfAbsent(stream, key -> archive.member("compressedMp4/" + key + ".mp4"));
+                check(name, mp4, archive.member(member));
             }));
         });
     }
@@ -59,7 +60,7 @@ class UsacConformanceTest {
     @DisplayName("the DRC sequence plays under every effect request and target level")
     Stream<DynamicTest> drcEffects() {
         var archive = Conformance.archive("iso-23003-3-usac-smoke");
-        var mp4 = archive.fetch("compressedMp4/Ext_2_c1_LnDrc1_0x03.mp4");
+        var mp4 = archive.member("compressedMp4/Ext_2_c1_LnDrc1_0x03.mp4");
         var stream = AacTestSupport.parseMp4(Fixtures.read(mp4));
         return Stream.of(EFFECTS).map(effect -> DynamicTest.dynamicTest(effect.name(), () -> {
             for (var target : new int[]{-1, 4 * 16, 4 * 31}) {
@@ -93,7 +94,7 @@ class UsacConformanceTest {
         return streams.members().stream().sorted().map(member -> {
             var stream = member.substring(member.indexOf('/') + 1, member.lastIndexOf('.'));
             return DynamicTest.dynamicTest(stream, () -> {
-                var mp4 = streams.fetch(member);
+                var mp4 = streams.member(member);
                 var refs = referenceOf.get(stream);
                 if (refs == null) {
                     var decoded = AacTestSupport.decodeAll(AacTestSupport.parseMp4(Fixtures.read(mp4)));
@@ -102,7 +103,7 @@ class UsacConformanceTest {
                 }
                 for (var reference : refs.split("\n")) {
                     var name = reference.substring(reference.indexOf('/') + 1, reference.lastIndexOf('.'));
-                    check(name, mp4, references.fetch(reference));
+                    check(name, mp4, references.member(reference));
                 }
             });
         });
@@ -211,6 +212,150 @@ class UsacConformanceTest {
             }
             var snr = segments == 0 ? 80 : sum / segments;
             assertTrue(snr >= limit, reference + " channel " + c + ": segmental SNR " + snr + " dB below " + limit);
+        }
+    }
+
+    /** Decodes the first track of a file through {@link com.github.auties00.smalt.container.Containers}. */
+    static float[][] decodeContainer(byte[] data, AacDecoderOptions options) {
+        var chunks = new java.util.ArrayList<float[][]>();
+        try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(
+                com.github.auties00.smalt.io.MediaSource.of(data))) {
+            var track = (com.github.auties00.smalt.track.AudioTrack) demuxer.tracks().getFirst();
+            try (var decoder = new AacDecoder(track, options)) {
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    decoder.decode(packet, buffer -> chunks.add(AacTestSupport.copy(buffer)));
+                }
+                decoder.flush(buffer -> chunks.add(AacTestSupport.copy(buffer)));
+            }
+        }
+        var channels = chunks.getFirst().length;
+        var length = chunks.stream().mapToInt(chunk -> chunk[0].length).sum();
+        var planes = new float[channels][length];
+        var position = 0;
+        for (var chunk : chunks) {
+            for (var c = 0; c < channels; c++) {
+                System.arraycopy(chunk[c], 0, planes[c], position, chunk[c].length);
+            }
+            position += chunk[0].length;
+        }
+        return planes;
+    }
+
+    /**
+     * Real-world xHE-AAC: FATE's stream with loudness metadata, against FATE's 16-bit reference decode, and the
+     * Fraunhofer xHE-AAC bitrate switching set of the DASH-IF multichannel audio vectors (Sintel, 16 to 128 kbit/s,
+     * the first 12 segments of 5.12 s, each starting with an AudioPreRoll), whose MPD declares bitstream switching.
+     */
+    @org.junit.jupiter.api.Nested
+    @DisplayName("real-world xHE-AAC")
+    class RealWorld {
+        private static final String SET = "dashif-mca-fhg-xheaac-sintel_audio_only_brs";
+
+        private static final String[] RATES = {"16", "32", "64", "128"};
+
+        private static final int SEGMENTS = 12;
+
+        @org.junit.jupiter.api.Test
+        @DisplayName("the loudness metadata stream matches FATE's 16-bit reference within the 16-bit criterion")
+        void targetLevel() {
+            // FATE's reference is ffmpeg's decode, which applies none of the stream's MPEG-D DRC and loudness
+            // metadata: the decoder is asked for neither
+            var decoded = decodeContainer(Fixtures.read(Conformance.vector("aac-usac-xhe_target_level.m4a")),
+                    AacDecoderOptions.builder().noTargetLevel().drcEffect(AacDrcEffect.NONE).build());
+            var raw = Fixtures.read(Conformance.vector("aac-usac-xhe_target_level.s16"));
+            var shorts = java.nio.ByteBuffer.wrap(raw).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer();
+            var channels = decoded.length;
+            assertEquals(2, channels, "channels");
+            var frames = shorts.remaining() / channels;
+            var expected = new float[channels][frames];
+            for (var i = 0; i < frames; i++) {
+                for (var c = 0; c < channels; c++) {
+                    expected[c][i] = shorts.get(i * channels + c) / 32768.0f;
+                }
+            }
+            // ffmpeg drops the priming the edit list of the file names, as check() does for the conformance streams
+            var offset = (int) Math.max(0, AacTestSupport.parseMp4(Fixtures.read(Conformance.vector(
+                    "aac-usac-xhe_target_level.m4a"))).skip());
+            assertRmsLsb("xhe_target_level", expected, decoded, offset, 16);
+        }
+
+        private static List<String> segments(String rate, int first, int last) {
+            var names = new java.util.ArrayList<String>();
+            for (var n = first; n <= last; n++) {
+                names.add(SET + "-eng-2-xheaac-" + rate + "kbps_" + n + ".m4s");
+            }
+            return names;
+        }
+
+        @org.junit.jupiter.api.Test
+        @DisplayName("the MPD declares the switching set the segments come from")
+        void manifest() throws java.io.IOException {
+            var mpd = java.nio.file.Files.readString(Conformance.vector(SET + ".mpd"));
+            assertTrue(mpd.contains("bitstreamSwitching=\"true\""), "bitstream switching");
+            assertTrue(mpd.contains("codecs=\"mp4a.40.42\""), "xHE-AAC");
+            assertTrue(mpd.contains("duration=\"245760\"") && mpd.contains("timescale=\"48000\""), "segment duration");
+            for (var rate : RATES) {
+                assertTrue(mpd.contains("<Representation id=\"eng-2-xheaac-" + rate + "kbps\""), rate + " kbit/s");
+            }
+        }
+
+        @org.junit.jupiter.params.ParameterizedTest(name = "{0} kbit/s")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"16", "32", "64", "128"})
+        @DisplayName("each representation decodes to stereo 48 kHz for the duration of its segments")
+        void representation(String rate) {
+            var names = new java.util.ArrayList<String>();
+            names.add(SET + "-eng-2-xheaac-" + rate + "kbps_init.mp4");
+            names.addAll(segments(rate, 0, SEGMENTS - 1));
+            var decoded = decodeContainer(StreamingVectors.join(names), AacDecoderOptions.defaults());
+            assertEquals(2, decoded.length, "channels");
+            var expected = 245760L * SEGMENTS;
+            assertTrue(Math.abs(decoded[0].length - expected) <= 4096, decoded[0].length + " samples for " + expected);
+            for (var plane : decoded) {
+                double energy = 0;
+                for (var sample : plane) {
+                    assertTrue(Float.isFinite(sample), "finite samples");
+                    energy += (double) sample * sample;
+                }
+                assertTrue(energy > 0, "signal");
+            }
+        }
+
+        /**
+         * Switching representation at every segment boundary, after the first representation's initialization
+         * segment, must give each segment the samples of that representation's own decode once the AudioPreRoll of
+         * the segment has primed the decoder: the segments of the switched stream are compared with the same segments
+         * of the representation decoded alone, under the 14-bit criterion of the USAC tables.
+         */
+        @org.junit.jupiter.api.Test
+        @DisplayName("switching representation at every segment gives each segment the decode of its representation")
+        void switching() {
+            var alone = new java.util.HashMap<String, float[][]>();
+            for (var rate : RATES) {
+                var names = new java.util.ArrayList<String>();
+                names.add(SET + "-eng-2-xheaac-" + rate + "kbps_init.mp4");
+                names.addAll(segments(rate, 0, SEGMENTS - 1));
+                alone.put(rate, decodeContainer(StreamingVectors.join(names), AacDecoderOptions.defaults()));
+            }
+            var names = new java.util.ArrayList<String>();
+            names.add(SET + "-eng-2-xheaac-16kbps_init.mp4");
+            for (var n = 0; n < SEGMENTS; n++) {
+                names.addAll(segments(RATES[n % RATES.length], n, n));
+            }
+            var switched = decodeContainer(StreamingVectors.join(names), AacDecoderOptions.defaults());
+            assertEquals(alone.get("16")[0].length, switched[0].length, "length of the switched stream");
+            var segment = 245760;
+            for (var n = 1; n < SEGMENTS; n++) {
+                var reference = alone.get(RATES[n % RATES.length]);
+                var start = n * segment;
+                var length = Math.min(segment, switched[0].length - start);
+                var expected = new float[2][length];
+                var actual = new float[2][length];
+                for (var c = 0; c < 2; c++) {
+                    System.arraycopy(reference[c], start, expected[c], 0, length);
+                    System.arraycopy(switched[c], start, actual[c], 0, length);
+                }
+                assertRmsLsb("segment " + n + " at " + RATES[n % RATES.length] + " kbit/s", expected, actual, 0, 14);
+            }
         }
     }
 }

@@ -80,7 +80,7 @@ public final class DashValidator {
         if (schema == null) {
             var files = new HashMap<String, Path>();
             for (var entry : SCHEMAS.entrySet()) {
-                files.put(entry.getKey(), Conformance.fetchListed(entry.getValue()));
+                files.put(entry.getKey(), Conformance.vector(entry.getValue()));
             }
             try {
                 var factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);

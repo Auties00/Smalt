@@ -1,8 +1,10 @@
 package com.github.auties00.smalt.video.vp9;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.video.vp9.internal.Vp9FrameDecoder;
+import com.github.auties00.smalt.video.vp9.internal.Vp9TestVideo;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -21,17 +23,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Times full decodes of 60-frame libvpx-vp9 clips of natural video: the Xiph {@code stockholm}
- * 720p clip at 2 Mbit/s and the {@code parkrun} clip scaled to 1080p at 6 Mbit/s, both with
+ * 720p clip (the hosted stockholm720.yuv) at 2 Mbit/s and the {@code parkrun} clip scaled to 1080p at 6 Mbit/s, both with
  * four tile columns (the libvpx default for these sizes) and alternate reference frames, on
  * the calling thread alone and with the module's helper threads.
  *
  * <p>Run with {@code org.openjdk.jmh.Main Vp9DecoderBenchmark} from the sandbox directory; the
- * Xiph clips must be cached in {@code Conformance.directory()}. The setup writes each
+ * Xiph clips are read from the hosted test data. The setup writes each
  * clip to {@code target/vp9-bench/<stream>.webm}, so the same input can be timed with
  * {@code ffmpeg -threads 1 -c:v vp9 -benchmark -i <file> -f null -} and with
  * {@code -c:v libvpx-vp9}. The time per frame is the score divided by 60. One decoder decodes the clip
@@ -62,13 +65,18 @@ public class Vp9DecoderBenchmark {
             return target;
         }
         Files.createDirectories(directory);
-        var cache = Path.of(com.github.auties00.smalt.testkit.Conformance.directory().toString());
-        var source = cache.resolve(stream.startsWith("720p") ? "720p5994_stockholm_ter.y4m" : "720p50_parkrun_ter.y4m");
+        var input = stream.startsWith("720p")
+                ? List.of("-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", "1280x720", "-r", "60000/1001", "-i",
+                        Vp9TestVideo.clip("stockholm720.yuv").toString())
+                : List.of("-i", Conformance.vector("720p50_parkrun_ter.y4m").toString());
         var temporary = directory.resolve(stream + ".tmp.webm");
-        Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(20), List.of("-v", "error", "-y", "-i", source.toString(),
+        var arguments = new ArrayList<>(List.of("-v", "error", "-y"));
+        arguments.addAll(input);
+        arguments.addAll(List.of(
                 "-vf", stream.startsWith("720p") ? "null" : "scale=1920:1080", "-frames:v", "60", "-c:v", "libvpx-vp9",
                 "-b:v", stream.startsWith("720p") ? "2M" : "6M", "-tile-columns", "2", "-cpu-used", "2",
                 "-auto-alt-ref", "1", "-lag-in-frames", "16", "-an", "-f", "webm", temporary.toString()));
+        Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(20), arguments);
         Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
         return target;
     }

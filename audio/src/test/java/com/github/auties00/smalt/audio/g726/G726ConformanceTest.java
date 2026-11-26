@@ -51,7 +51,7 @@ class G726ConformanceTest {
 
     private static int[] words(String name) {
         try {
-            var data = Files.readAllBytes(Conformance.fetchListed("g726-stl-" + name));
+            var data = Files.readAllBytes(Conformance.vector("g726-stl-" + name));
             var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
             var words = new int[data.length / 2];
             for (var i = 0; i < words.length; i++) {

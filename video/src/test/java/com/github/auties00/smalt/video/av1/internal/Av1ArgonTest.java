@@ -151,12 +151,12 @@ class Av1ArgonTest {
     private static Verdict check(Conformance.Archive archive, java.util.Set<String> members, String group, String name)
             throws IOException {
         var base = ROOT + group + "/";
-        var stream = Files.readAllBytes(archive.fetch(base + "streams/" + name + ".obu"));
-        var command = new String(Files.readAllBytes(archive.fetch(base + "ref_cmd/" + name + ".sh")),
+        var stream = Files.readAllBytes(archive.member(base + "streams/" + name + ".obu"));
+        var command = new String(Files.readAllBytes(archive.member(base + "ref_cmd/" + name + ".sh")),
                 StandardCharsets.UTF_8);
         var threading = threading(name);
         if (group.contains("large_scale_tile")) {
-            return checkTileLists(stream, command, md5(archive.fetch(base + "md5_ref/" + name + ".md5")), threading);
+            return checkTileLists(stream, command, md5(archive.member(base + "md5_ref/" + name + ".md5")), threading);
         }
         var annexB = command.contains("--annexb");
         var units = annexB ? annexBUnits(stream) : sectionFiveUnits(stream);
@@ -169,14 +169,14 @@ class Av1ArgonTest {
             return new Verdict(List.of());
         }
         var problems = new ArrayList<String>();
-        var reference = md5(archive.fetch(base + "md5_ref/" + name + ".md5"));
+        var reference = md5(archive.member(base + "md5_ref/" + name + ".md5"));
         var decoded = decode(units, annexB, 0, true, threading);
         if (!reference.equals(decoded.md5())) {
             problems.add("operating point 0: MD5 " + decoded.md5() + ", reference " + reference);
         }
         var plain = base + "md5_no_film_grain/" + name + ".md5";
         if (members.contains(plain)) {
-            var withoutGrain = md5(archive.fetch(plain));
+            var withoutGrain = md5(archive.member(plain));
             if (!withoutGrain.equals(reference)) {
                 var ungrained = decode(units, annexB, 0, false, threading).md5();
                 if (!withoutGrain.equals(ungrained)) {
@@ -189,7 +189,7 @@ class Av1ArgonTest {
             if (!members.contains(layer)) {
                 continue;
             }
-            var expected = md5(archive.fetch(layer));
+            var expected = md5(archive.member(layer));
             if (point >= decoded.operatingPoints()) {
                 // an undeclared operating point selects operating point 0
                 if (!expected.equals(reference)) {

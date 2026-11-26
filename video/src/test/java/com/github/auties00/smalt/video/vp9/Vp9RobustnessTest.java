@@ -25,6 +25,7 @@ import java.util.Random;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
@@ -265,6 +266,87 @@ class Vp9RobustnessTest {
             for (var i = keyAfter; i < damaged.size(); i++) {
                 assertEquals(clean.get(i), outputs.get(i), "trial " + trial + " frame " + i + " after corrupting " + victim);
             }
+        }
+    }
+
+    /**
+     * libvpx's invalid-file vectors (test/invalid_file_test.cc): fuzzed and Chromium bug streams, each with the decode
+     * result libvpx expects per frame in {@code <name>.res} (0 for a frame that decodes, a nonzero
+     * {@code vpx_codec_err_t} for one that is rejected); the three damaged frame parallel streams have none.
+     */
+    static final List<String> INVALID = List.of(
+            "invalid-crbug-1558.ivf",
+            "invalid-crbug-1562.ivf",
+            "invalid-crbug-629481.webm",
+            "invalid-crbug-667044.webm",
+            "invalid-vp90-01-v3.webm",
+            "invalid-vp90-02-v2.webm",
+            "invalid-vp90-03-v3.webm",
+            "invalid-vp90-2-00-quantizer-00.webm.ivf.s5861_r01-05_b6-.v2.ivf",
+            "invalid-vp90-2-00-quantizer-11.webm.ivf.s52984_r01-05_b6-.ivf",
+            "invalid-vp90-2-00-quantizer-11.webm.ivf.s52984_r01-05_b6-z.ivf",
+            "invalid-vp90-2-00-quantizer-63.ivf.kf_65527x61446.ivf",
+            "invalid-vp90-2-03-size-202x210.webm.ivf.s113306_r01-05_b6-.ivf",
+            "invalid-vp90-2-03-size-224x196.webm.ivf.s44156_r01-05_b6-.ivf",
+            "invalid-vp90-2-05-resize.ivf.s59293_r01-05_b6-.ivf",
+            "invalid-vp90-2-07-frame_parallel-1.webm",
+            "invalid-vp90-2-07-frame_parallel-2.webm",
+            "invalid-vp90-2-07-frame_parallel-3.webm",
+            "invalid-vp90-2-08-tile_1x2_frame_parallel.webm.ivf.s47039_r01-05_b6-.ivf",
+            "invalid-vp90-2-08-tile_1x4_frame_parallel_all_key.webm",
+            "invalid-vp90-2-08-tile_1x8_frame_parallel.webm.ivf.s288_r01-05_b6-.ivf",
+            "invalid-vp90-2-09-aq2.webm.ivf.s3984_r01-05_b6-.v2.ivf",
+            "invalid-vp90-2-09-subpixel-00.ivf.s19552_r01-05_b6-.v2.ivf",
+            "invalid-vp90-2-09-subpixel-00.ivf.s20492_r01-05_b6-.v2.ivf",
+            "invalid-vp90-2-10-show-existing-frame.webm.ivf.s180315_r01-05_b6-.ivf",
+            "invalid-vp90-2-12-droppable_1.ivf.s3676_r01-05_b6-.ivf",
+            "invalid-vp90-2-12-droppable_1.ivf.s73804_r01-05_b6-.ivf",
+            "invalid-vp90-2-21-resize_inter_320x180_5_3-4.webm.ivf.s45551_r01-05_b6-.ivf",
+            "invalid-vp91-2-mixedrefcsp-444to420.ivf");
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.FieldSource("INVALID")
+    @DisplayName("libvpx's invalid files only throw media exceptions, and frames libvpx decodes decode")
+    void invalidFiles(String name) throws IOException {
+        var bytes = Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(name));
+        List<byte[]> packets;
+        try {
+            packets = Vp9Vectors.packets(name, bytes);
+        } catch (MediaException rejected) {
+            // the container itself is damaged: rejecting it is the contract
+            return;
+        }
+        var results = com.github.auties00.smalt.testkit.Conformance.listed(name + ".res")
+                ? Files.readAllLines(com.github.auties00.smalt.testkit.Conformance.vector(name + ".res")).stream()
+                .map(String::strip).filter(line -> !line.isEmpty()).map(Integer::valueOf).toList()
+                : List.<Integer>of();
+        var outcomes = new ArrayList<String>();
+        assertTimeoutPreemptively(Duration.ofSeconds(120), () -> {
+            for (var limits : List.of(MediaLimits.DEFAULT, SMALL)) {
+                try (var decoder = new Vp9Decoder(track(), VideoDecoderOptions.builder().limits(limits).build())) {
+                    for (var i = 0; i < packets.size(); i++) {
+                        var packet = new Packet(1, packets.get(i), i, i, 1, false);
+                        try {
+                            decoder.decode(packet, frame -> { });
+                            outcomes.add("ok");
+                        } catch (MediaException expected) {
+                            outcomes.add(expected.getClass().getSimpleName());
+                        } catch (Throwable unexpected) {
+                            throw new AssertionError(name + " packet " + i + ": " + unexpected, unexpected);
+                        }
+                    }
+                }
+                var parallel = new Vp9FrameDecoder(limits, true);
+                for (var i = 0; i < packets.size(); i++) {
+                    var data = packets.get(i);
+                    expectMediaException(() -> parallel.decodePacket(data, 0, data.length), name + " parallel " + i);
+                }
+            }
+        });
+        System.out.printf("%s: libvpx %s, ours %s%n", name, results, outcomes);
+        if (!results.isEmpty() && results.stream().allMatch(result -> result == 0)) {
+            assertTrue(outcomes.subList(0, packets.size()).stream().allMatch("ok"::equals),
+                    name + ": libvpx decodes every frame, ours " + outcomes);
         }
     }
 }

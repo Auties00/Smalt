@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
@@ -14,11 +15,12 @@ import com.github.auties00.smalt.video.av1.Av1DecoderOptions;
 import com.github.auties00.smalt.video.av1.internal.Av1Picture;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
 
+import org.junit.jupiter.api.Assertions;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.SplittableRandom;
 
@@ -27,10 +29,6 @@ import java.util.SplittableRandom;
  * with the module's decoder, and comparison with the encoder's reconstruction.
  */
 public final class StillTesting {
-    /** The cached foreman CIF clip of the clip tier. */
-    private static final Path FOREMAN = Path.of(System.getProperty("smalt.test.clips",
-            Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips").toString()), "foreman.yuv");
-
     private StillTesting() {
     }
 
@@ -61,16 +59,11 @@ public final class StillTesting {
         };
     }
 
-    /** {@return whether the foreman CIF clip is cached, so that {@link #foreman} reads it} */
-    public static boolean hasForeman() {
-        return Files.isRegularFile(FOREMAN);
-    }
-
-    /** Reads a frame of the cached foreman CIF clip as 4:2:0 planes, or a synthetic picture when absent. */
+    /** Reads a frame of the hosted foreman CIF clip as 4:2:0 planes; a missing clip fails the test. */
     public static Planes foreman(int frame) {
-        var file = FOREMAN;
+        var file = Conformance.clips().resolve("foreman.yuv");
         if (!Files.isRegularFile(file)) {
-            return synthetic(352, 288, SequenceHeader.LAYOUT_I420, 8, 7);
+            Assertions.fail("clip foreman.yuv is missing from " + Conformance.clips());
         }
         try (var in = Files.newInputStream(file)) {
             var frameSize = 352 * 288 * 3 / 2;

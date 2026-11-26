@@ -319,6 +319,57 @@ final class HeicReference {
     }
 
     /**
+     * Returns ffmpeg's reconstruction of an item at the depth and in the chroma format of a decoded picture: a grid's
+     * tiles stitched together, or a coded item cropped as the decoder crops it, to its {@code ispe} size from the top
+     * left corner of the coded picture, then to its clean aperture ({@code clap}, whose centre is the centre of the
+     * image plus the aperture's offsets, ISO/IEC 14496-12 12.1.4).
+     */
+    static Planes reconstructed(MediaSource source, HeifFile file, HeifItem item, Planes actual) {
+        if (item.type().equals("grid")) {
+            return grid(source, file, item, actual.format(), actual.depth());
+        }
+        var coded = coded(source, file, item, actual.format(), actual.depth());
+        var extent = item.property(HeifProperty.SpatialExtent.class);
+        var width = extent == null ? coded.width() : (int) Math.min(extent.width(), coded.width());
+        var height = extent == null ? coded.height() : (int) Math.min(extent.height(), coded.height());
+        var clap = item.property(HeifProperty.CleanAperture.class);
+        var left = 0;
+        var top = 0;
+        if (clap != null) {
+            var clapWidth = (double) clap.widthN() / clap.widthD();
+            var clapHeight = (double) clap.heightN() / clap.heightD();
+            var centreX = (double) clap.horizontalOffsetN() / clap.horizontalOffsetD() + (width - 1) / 2.0;
+            var centreY = (double) clap.verticalOffsetN() / clap.verticalOffsetD() + (height - 1) / 2.0;
+            left = (int) Math.round(centreX - (clapWidth - 1) / 2.0);
+            top = (int) Math.round(centreY - (clapHeight - 1) / 2.0);
+        }
+        return coded.cropExact(left, top, actual.width(), actual.height());
+    }
+
+    /**
+     * Decodes one HEVC item at the size of its coded picture, as ffprobe reports it, without the cropping of its
+     * {@code ispe} property.
+     */
+    static Planes coded(MediaSource source, HeifFile file, HeifItem item, ChromaFormat format, int depth) {
+        var chain = new ArrayList<HeifItem>();
+        for (var id : item.references("pred")) {
+            chain.add(file.item(id));
+        }
+        chain.add(item);
+        var payloads = new ArrayList<byte[]>();
+        for (var coded : chain) {
+            payloads.add(file.readItem(source, coded, MediaLimits.DEFAULT));
+        }
+        var hvcC = item.property(HeifProperty.HevcConfiguration.class).record();
+        var stream = annexB(hvcC, payloads);
+        var probe = new String(Oracle.run(Oracle.Tool.FFPROBE, Duration.ofMinutes(1), stream, List.of("-v", "error",
+                "-f", "hevc", "-i", "pipe:0", "-show_entries", "stream=width,height", "-of", "csv=p=0")),
+                java.nio.charset.StandardCharsets.US_ASCII).strip().split("\\R")[0].split(",");
+        return decode("hevc", stream, chain.size(), Integer.parseInt(probe[0].strip()),
+                Integer.parseInt(probe[1].strip()), format, depth, false);
+    }
+
+    /**
      * Decodes one coded item, after the items it is predicted from, with ffmpeg.
      */
     static Planes item(MediaSource source, HeifFile file, HeifItem item, int width, int height, ChromaFormat format,

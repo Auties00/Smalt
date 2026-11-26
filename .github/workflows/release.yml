@@ -28,6 +28,8 @@ concurrency:
 
 permissions:
   contents: read
+  # the hosted test data on GHCR (.github/actions/testdata)
+  packages: read
 
 env:
   JAVA_VERSION: '26'
@@ -37,8 +39,6 @@ jobs:
     name: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    env:
-      SMALT_CONFORMANCE_DOWNLOAD: 'false'
     steps:
       - uses: actions/checkout@v4
 

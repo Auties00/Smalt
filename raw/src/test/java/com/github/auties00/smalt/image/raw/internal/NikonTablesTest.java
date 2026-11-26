@@ -28,12 +28,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Converter as a black-box oracle, that {@link NikonTableDerivation} re-derives every table from
  * the CC0 witness samples and that the decoder reproduces the values the converter stores. The
  * oracle files are the uncompressed DNG files {@code tools/testdata/nef-oracle.py} writes into
- * {@code <conformance cache>/nef-oracle} ({@code -Dsmalt.test.nefOracle} overrides the directory);
+ * {@code <test cache>/nef-oracle} ({@code -Dsmalt.test.nefOracle} overrides the directory);
  * the oracle tests are skipped without them.
  */
 class NikonTablesTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.nefOracle",
-            Conformance.directory().resolve("nef-oracle").toString()));
+            Conformance.cache("nef-oracle").toString()));
 
     private static Path oracle(RawSamples sample) {
         var name = sample.fileName();
@@ -98,7 +98,7 @@ class NikonTablesTest {
                 tables.add(new TreeMap<>());
             }
             for (var sample : witnesses) {
-                var problem = NikonTableDerivation.problem(sample.fetch(), oracle(sample), 0);
+                var problem = NikonTableDerivation.problem(sample.path(), oracle(sample), 0);
                 var result = NikonTableDerivation.derive(problem);
                 assertNotNull(result, sample + " has no consistent code");
                 assertTrue(result.endBit() <= result.totalBit() && result.totalBit() - result.endBit() < 8,
@@ -116,7 +116,7 @@ class NikonTablesTest {
         @DisplayName("the decoder reproduces the stored values of the sample")
         void decoding(RawSamples sample) {
             var oracle = NikonTableDerivation.oracle(oracle(sample));
-            var decoded = NikonTableDerivation.decode(sample.fetch());
+            var decoded = NikonTableDerivation.decode(sample.path());
             assertArrayEquals(new int[]{0, 0}, NikonTableDerivation.locate(decoded, oracle));
         }
     }

@@ -98,7 +98,10 @@ class MpegDecoderBehaviorTest {
             "dts-xll_x96_51_24_96_1509.dtshd", "dts-xll_51_16_192_768_0.dtshd", "dts-xll_51_16_192_768_1.dtshd"})
     @DisplayName("audio smoke vectors: identical samples under every source behavior and clean faults")
     void audioVector(String name) throws IOException {
-        ReaderAsserts.audio("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+        var file = name.startsWith("mpeg4audio-")
+                ? com.github.auties00.smalt.audio.aac.Mpeg4AudioVectors.file(name.substring("mpeg4audio-".length()))
+                : Conformance.vector(name);
+        ReaderAsserts.audio("vectors/" + name, Files.readAllBytes(file)).run();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -107,7 +110,7 @@ class MpegDecoderBehaviorTest {
             "heic-pillow-tests-images-heif_other-L_exif_xmp_iptc.heic", "heic-nokia-multilayer004.heic"})
     @DisplayName("HEIC smoke vectors: identical pictures under every source behavior and clean faults")
     void heic(String name) throws IOException {
-        ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+        ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.vector(name))).run();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -123,7 +126,7 @@ class MpegDecoderBehaviorTest {
     @DisplayName("JPEG XS conformance codestreams: identical pictures under every source behavior")
     void jpegXsConformance(String name) throws IOException {
         var archive = Conformance.archive("jpeg-xs-conformance-smoke");
-        ImageDecoderAsserts.of("jpeg-xs/conformance-" + name, Files.readAllBytes(archive.fetch(name))).run();
+        ImageDecoderAsserts.of("jpeg-xs/conformance-" + name, Files.readAllBytes(archive.member(name))).run();
     }
 
     @ParameterizedTest(name = "{0}")

@@ -300,4 +300,79 @@ class Av1EncoderPictureFormatTest {
             }
         }
     }
+
+    /** Reads up to ten frames of a y4m clip through Smalt's y4m reader. */
+    static List<Picture> readY4m(String vector) {
+        var pictures = new ArrayList<Picture>();
+        try (var source = com.github.auties00.smalt.io.MediaSource.of(
+                com.github.auties00.smalt.testkit.Conformance.vector(vector));
+             var reader = com.github.auties00.smalt.video.VideoReader.open(source)) {
+            while (pictures.size() < 10) {
+                var frame = reader.read();
+                if (frame == null) {
+                    break;
+                }
+                pictures.add(copy(frame.picture()));
+            }
+        }
+        return pictures;
+    }
+
+    /** Good quality options at a high quality: park_joy's dense natural detail costs more than the synthetic clips. */
+    static Av1EncoderOptions natural(ChromaFormat format) {
+        return Av1EncoderOptions.ofQuality(90).toBuilder().speed(Av1EncoderSpeed.FAST).lookahead(8).timeBase(TIME_BASE)
+                .pictureFormat(format, 8).build();
+    }
+
+    @Test
+    @DisplayName("codes a natural monochrome clip as monochrome, close to the source")
+    void naturalMonochrome() {
+        // libaom's park_joy_90p_8_420_monochrome.y4m (C mono): 160x90 natural content without chroma
+        var sources = readY4m("av1-park_joy_90p_8_420_monochrome.y4m");
+        assertEquals(10, sources.size());
+        // Smalt's y4m reader returns the frames ffmpeg reads
+        var gray = Oracle.run(Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(1), List.of("-v", "error", "-i",
+                com.github.auties00.smalt.testkit.Conformance.vector("av1-park_joy_90p_8_420_monochrome.y4m").toString(),
+                "-frames:v", "10", "-f", "rawvideo", "-pix_fmt", "gray", "-"));
+        var read = new ByteArrayOutputStream();
+        for (var source : sources) {
+            assertEquals(ChromaFormat.MONOCHROME, ((YuvPicture) source).chromaFormat());
+            read.writeBytes(raw(source));
+        }
+        assertArrayEquals(gray, read.toByteArray(), "y4m frames");
+        try (var encoder = new Av1Encoder(160, 90, natural(ChromaFormat.MONOCHROME))) {
+            var packets = encode(encoder, sources);
+            var config = encoder.codecConfig().orElseThrow();
+            assertEquals(1, (config[2] >> 4) & 1, "monochrome");
+            var decoded = decode(encoder, packets);
+            assertEquals(sources.size(), decoded.size());
+            for (var i = 0; i < decoded.size(); i++) {
+                assertEquals(ChromaFormat.MONOCHROME, ((YuvPicture) decoded.get(i)).chromaFormat());
+                var psnr = psnr(sources.get(i), decoded.get(i), 8);
+                assertTrue(psnr > 30, "frame " + i + " psnr " + psnr);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("signals the chroma sample position of a natural clip whose chroma is co-sited with the left luma")
+    void naturalVerticalChromaPosition() {
+        // libaom's park_joy_90p_8_420_vertical_csp.y4m (C420mpeg2): 4:2:0 chroma horizontally co-sited with the left
+        // luma sample, AV1's CSP_VERTICAL (chroma_sample_position 1, av1C's chroma_sample_position field)
+        var sources = readY4m("av1-park_joy_90p_8_420_vertical_csp.y4m");
+        assertEquals(10, sources.size());
+        var color = ((YuvPicture) sources.getFirst()).color();
+        assertEquals(com.github.auties00.smalt.image.ChromaSiting.LEFT, color.chromaSiting(), "y4m C420mpeg2");
+        // the sequence header is written before the first picture, so the color goes in the options
+        try (var encoder = new Av1Encoder(160, 90, natural(ChromaFormat.YUV420).toBuilder().color(color).build())) {
+            var packets = encode(encoder, sources);
+            var config = encoder.codecConfig().orElseThrow();
+            assertEquals(1, config[2] & 3, "chroma_sample_position");
+            var decoded = decode(encoder, packets);
+            for (var i = 0; i < decoded.size(); i++) {
+                var psnr = psnr(sources.get(i), decoded.get(i), 8);
+                assertTrue(psnr > 30, "frame " + i + " psnr " + psnr);
+            }
+        }
+    }
 }

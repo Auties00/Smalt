@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
 import java.util.Arrays;
@@ -228,6 +229,65 @@ class TgaCodecTest {
             var file = TgaEncoder.encode(picture, TgaEncoderOptions.builder().runLength(runLength).build());
             var theirs = RasterFixtures.ffmpegDecode(file, "tga", "rgba");
             Tolerance.exact().assertWithin("ffmpeg decode", theirs, RasterTesting.tight(picture));
+        }
+
+        /**
+         * The TrueVision TGA 2.0 conformance suite ({@code tga-truevision-*}, its terms in
+         * {@code tga-truevision-LICENSE}): every image type, origin, color map layout and the 2.0 footer. The color
+         * of every pixel must equal ffmpeg's decode; the alpha must follow the file: the attribute bits the image
+         * descriptor declares, unless the extension area's attributes type says they hold no alpha (0 to 2), and
+         * opaque otherwise. ffmpeg reads 16-bit pixels without their attribute bit and 32-bit ones always with
+         * theirs, so the alpha of a 16-bit file with an attribute bit comes from the stored pixel's top bit.
+         */
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"b5-attrib", "b5-cmap", "b5-noattrib", "b5-unused-cmap", "bottom_left", "bottom_right",
+                "cbw8", "ccm8", "cmap_offset", "ctc24", "top_left", "top_right", "ubw8", "ucm8", "utc16", "utc24",
+                "utc32"})
+        @DisplayName("decodes the TrueVision conformance suite as ffmpeg does, with the alpha the file declares")
+        void trueVision(String name) throws java.io.IOException {
+            assertTrue(java.nio.file.Files.size(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "tga-truevision-LICENSE")) > 0, "the suite's terms are hosted with it");
+            var file = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "tga-truevision-" + name + ".tga"));
+            var type = file[2] & 0xFF;
+            var depth = file[16] & 0xFF;
+            var alphaBits = file[17] & 0x0F;
+            var attributes = -1;
+            var signature = "TRUEVISION-XFILE".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            if (java.util.Arrays.equals(file, file.length - 18, file.length - 2, signature, 0, 16)) {
+                var extension = java.nio.ByteBuffer.wrap(file, file.length - 26, 4)
+                        .order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+                if (extension != 0) {
+                    attributes = file[extension + 494] & 0xFF;
+                }
+            }
+            var declaresAlpha = alphaBits > 0 && (type == 2 || type == 10) && attributes != 0 && attributes != 1
+                    && attributes != 2;
+            var image = TgaDecoder.decode(MediaSource.of(file));
+            var ours = RasterTesting.tight(image.picture());
+            var theirs = RasterFixtures.ffmpegDecode(file, "tga", "rgba");
+            assertEquals(theirs.length, ours.length, "size");
+            var width = image.picture().width();
+            for (var pixel = 0; pixel < ours.length / 4; pixel++) {
+                for (var channel = 0; channel < 3; channel++) {
+                    assertEquals(theirs[4 * pixel + channel], ours[4 * pixel + channel],
+                            name + ": channel " + channel + " of pixel " + pixel % width + "," + pixel / width);
+                }
+                int alpha;
+                if (!declaresAlpha) {
+                    alpha = 0xFF;
+                } else if (depth == 16) {
+                    // the only such file of the suite is uncompressed and stored top to bottom
+                    assertEquals(2, type);
+                    assertEquals(0x20, file[17] & 0x30);
+                    var stored = 18 + (file[0] & 0xFF) + 2 * pixel;
+                    alpha = (file[stored + 1] & 0x80) != 0 ? 0xFF : 0;
+                } else {
+                    alpha = theirs[4 * pixel + 3] & 0xFF;
+                }
+                assertEquals(alpha, ours[4 * pixel + 3] & 0xFF, name + ": alpha of pixel " + pixel % width + ","
+                        + pixel / width);
+            }
         }
 
         @ParameterizedTest

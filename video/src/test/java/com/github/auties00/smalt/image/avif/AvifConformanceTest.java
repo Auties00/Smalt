@@ -149,6 +149,7 @@ class AvifConformanceTest {
             "Netflix/avif/hdr_cosmos01000_cicp9-16-9_yuv420_limited_qp20.avif",
             "Netflix/avif/hdr_cosmos12920_cicp9-16-9_yuv444_full_qp40.avif",
             "Netflix/avif/sdr_cosmos07296_cicp1-13-6_yuv444_full_qp10.avif",
+            "Netflix/avif/sdr_cosmos01000_cicp1-13-6_yuv420_limited_qp10.avif",
             "Xiph/tiger_3layer_1res.avif",
             "Xiph/tiger_3layer_3res.avif",
             "Xiph/fruits_2layer_thumbsize.avif",
@@ -182,7 +183,7 @@ class AvifConformanceTest {
                 "kimono.mirror-vertical.rotate270.avif"})
         void upright(String name) {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var reference = Oracle.decodeVideo(AvifVectors.fetch(LINK_U + "kimono.png"), "rgba", 1);
+            var reference = Oracle.decodeVideo(AvifVectors.path(LINK_U + "kimono.png"), "rgba", 1);
             assertDisplays(name, 722, 1024, reference);
         }
 
@@ -191,7 +192,7 @@ class AvifConformanceTest {
         @ValueSource(strings = {"kimono.crop.avif", "kimono.mirror-vertical.rotate270.crop.avif"})
         void cropped(String name) {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var reference = Oracle.decodeVideo(AvifVectors.fetch(LINK_U + "kimono.crop.png"), "rgba", 1);
+            var reference = Oracle.decodeVideo(AvifVectors.path(LINK_U + "kimono.crop.png"), "rgba", 1);
             assertDisplays(name, 385, 330, reference);
         }
 
@@ -213,7 +214,7 @@ class AvifConformanceTest {
         var image = AvifDecoder.decode(MediaSource.of(AvifVectors.read("Netflix/avif/" + name + ".avif")));
         var picture = assertInstanceOf(YuvPicture.class, image.picture());
         assertEquals(ChromaFormat.YUV444, picture.chromaFormat());
-        var rgb = Oracle.decodeVideo(AvifVectors.fetch("Netflix/avif/" + name + ".png"), "rgb24", 1);
+        var rgb = Oracle.decodeVideo(AvifVectors.path("Netflix/avif/" + name + ".png"), "rgb24", 1);
         assertEquals(picture.width() * picture.height() * 3, rgb.length);
         for (var y = 0; y < picture.height(); y++) {
             for (var x = 0; x < picture.width(); x++) {
@@ -239,7 +240,7 @@ class AvifConformanceTest {
         Oracle.assume(Oracle.Tool.FFMPEG);
         var image = AvifDecoder.decode(MediaSource.of(AvifVectors.read("Xiph/" + name + ".avif")));
         var rgba = ImageOps.toRgba(image.picture());
-        var expected = Oracle.decodeVideo(AvifVectors.fetch("Xiph/" + reference + ".png"), "rgba", 1);
+        var expected = Oracle.decodeVideo(AvifVectors.path("Xiph/" + reference + ".png"), "rgba", 1);
         assertEquals(expected.length, rgba.width() * rgba.height() * 4);
         LAYER.assertWithin(name + " against " + reference, expected, Arrays.copyOf(rgba.pixels(), expected.length));
     }
@@ -291,7 +292,7 @@ class AvifConformanceTest {
         @DisplayName("play every frame of the color and alpha tracks with their timing")
         void alphaVideo() {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var path = AvifVectors.fetch("Netflix/avis/alpha_video.avif");
+            var path = AvifVectors.path("Netflix/avis/alpha_video.avif");
             var data = AvifVectors.read("Netflix/avis/alpha_video.avif");
             var expectedColor = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), List.of(
                     "-v", "error", "-i", path.toString(), "-map", "0:v:2", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"));
@@ -336,7 +337,7 @@ class AvifConformanceTest {
         @DisplayName("decode the 10-bit sequence frame by frame like ffmpeg")
         void tenBit() {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var path = AvifVectors.fetch("Netflix/avis/Chimera-AV1-10bit-480x270.avif");
+            var path = AvifVectors.path("Netflix/avis/Chimera-AV1-10bit-480x270.avif");
             var data = AvifVectors.read("Netflix/avis/Chimera-AV1-10bit-480x270.avif");
             var first = AvifDecoder.decode(MediaSource.of(data), ImageDecoderOptions.builder().highBitDepth(true)
                     .build());
@@ -387,5 +388,130 @@ class AvifConformanceTest {
                 assertArrayEquals(e, a, what + ": " + count + " " + names[plane] + " samples differ, first at " + first);
             }
         }
+    }
+
+    /**
+     * Edge cases of libheif's and libavif's test files that decode: clean apertures (also with rotation and
+     * mirroring), a zero-size meta box, irot on the color and the alpha item, and a 1x1 image. Each decodes to
+     * ffmpeg's AV1 decoding of its item payloads, cropped by its clean aperture.
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"heif-libheif-clap_cropped.avif", "heif-libheif-clap_cropped_irot_imir.avif",
+            "heif-libheif-meta_size_zero.avif", "libavif-abc_color_irot_alpha_irot.avif",
+            "libavif-abc_color_irot_alpha_NOirot.avif", "libavif-white_1x1.avif"})
+    @DisplayName("decode the libheif and libavif edge cases as ffmpeg decodes their items")
+    void edgeCases(String vector) {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        var expected = AvifReference.primary(data);
+        var image = AvifDecoder.decode(MediaSource.of(data), ImageDecoderOptions.builder().highBitDepth(true).build());
+        assertPlanesEqual(expected, AvifReference.Planes.of(image.picture()), vector);
+    }
+
+    /**
+     * libheif's clean aperture files larger than their ispe: the boxes exercise the aperture arithmetic and carry
+     * payloads that are no AV1 (libaom finds no sequence header in them), so decoding fails with a media exception.
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"heif-libheif-clap_oversized_ispe_height.avif",
+            "heif-libheif-clap_oversized_ispe_irot180.avif", "heif-libheif-clap_oversized_ispe_irot90.avif",
+            "heif-libheif-clap_oversized_ispe_width.avif"})
+    @DisplayName("fail with a media exception on libheif's oversized clean apertures of undecodable payloads")
+    void oversizedApertures(String vector) {
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(Duration.ofSeconds(30),
+                () -> org.junit.jupiter.api.Assertions.assertThrows(com.github.auties00.smalt.MediaException.class,
+                        () -> AvifDecoder.decode(MediaSource.of(data))));
+    }
+
+    @Test
+    @DisplayName("reject transformative properties that are not marked essential (MIAF), as libavif does")
+    void nonEssentialTransforms() {
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector("libavif-clap_irot_imir_non_essential.avif"));
+        org.junit.jupiter.api.Assertions.assertThrows(com.github.auties00.smalt.MediaException.Malformed.class,
+                () -> AvifDecoder.decode(MediaSource.of(data)));
+    }
+
+    /**
+     * libheif's files of the low-overhead {@code mini} box (a zero-size one, tiles with alpha and with metadata):
+     * no oracle reads them, so each decodes to a picture of its declared size or is reported unsupported.
+     */
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"heif-libheif-mini_size_zero.avif", "heif-libheif-simple_osm_tile_alpha.avif",
+            "heif-libheif-simple_osm_tile_meta.avif"})
+    @DisplayName("decode libheif's mini box files or report them unsupported")
+    void miniBox(String vector) {
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        try {
+            var info = Images.probe(MediaSource.of(data));
+            var image = AvifDecoder.decode(MediaSource.of(data));
+            assertEquals(info.width(), image.picture().width(), vector);
+            assertEquals(info.height(), image.picture().height(), vector);
+            System.out.printf("%s: %dx%d%n", vector, info.width(), info.height());
+        } catch (com.github.auties00.smalt.MediaException.Unsupported unsupported) {
+            System.out.printf("%s: unsupported (%s)%n", vector, unsupported.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("reproduce the Netflix 10-bit PQ lossless original exactly (identity matrix, 4:4:4)")
+    void losslessHdr() {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var name = "avif-Netflix-avif-hdr_cosmos01000_cicp9-16-0_lossless";
+        var image = AvifDecoder.decode(MediaSource.of(com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(name + ".avif"))),
+                ImageDecoderOptions.builder().highBitDepth(true).build());
+        var picture = assertInstanceOf(Yuv16Picture.class, image.picture());
+        assertEquals(ChromaFormat.YUV444, picture.chromaFormat());
+        assertEquals(10, picture.bitDepth());
+        // the PNG holds the 10-bit samples widened to 16 bits by bit replication
+        var rgb = Oracle.decodeVideo(com.github.auties00.smalt.testkit.Conformance.vector(name + ".png"), "rgb48le", 1);
+        assertEquals(picture.width() * picture.height() * 6, rgb.length);
+        for (var y = 0; y < picture.height(); y++) {
+            for (var x = 0; x < picture.width(); x++) {
+                var at = (y * picture.width() + x) * 6;
+                var channel = new int[3];
+                for (var c = 0; c < 3; c++) {
+                    channel[c] = ((rgb[at + 2 * c] & 0xFF) | (rgb[at + 2 * c + 1] & 0xFF) << 8) >> 6;
+                }
+                // Identity matrix (H.273 0): Y carries G, Cb carries B, Cr carries R.
+                assertEquals(channel[1], picture.y()[y * picture.yStride() + x], "G at " + x + "," + y);
+                assertEquals(channel[2], picture.u()[y * picture.uvStride() + x], "B at " + x + "," + y);
+                assertEquals(channel[0], picture.v()[y * picture.uvStride() + x], "R at " + x + "," + y);
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{0} layer {1}")
+    @CsvSource({
+            "quebec_3layer_op2, 1, quebec_3layer_op2_layer1",
+            "quebec_3layer_op2, 2, quebec_3layer_op2_layer2",
+            "tiger_3layer_1res, 0, tiger_3layer_1res_layer0",
+            "tiger_3layer_1res, 1, tiger_3layer_1res_layer1",
+            "tiger_3layer_3res, 0, tiger_3layer_3res_layer0",
+            "tiger_3layer_3res, 1, tiger_3layer_3res_layer1",
+            "fruits_2layer_thumbsize, 0, fruits_2layer_thumbsize_layer0",
+            "abandoned_filmgrain, 0, abandoned_filmgrain_layer0",
+    })
+    @DisplayName("show every layer a layer selector picks as the Xiph reference of that layer")
+    void everyLayer(String name, int layer, String reference) {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var data = AvifVectors.read("Xiph/" + name + ".avif");
+        var source = MediaSource.of(data);
+        var file = HeifFile.parse(source, MediaLimits.DEFAULT);
+        var item = file.primaryItem();
+        var payload = file.readItem(source, item, MediaLimits.DEFAULT);
+        var config = item.property(HeifProperty.Av1Configuration.class).record();
+        var size = item.property(HeifProperty.SpatialExtent.class);
+        var builder = new HeifBuilder();
+        builder.primary(builder.item("av01", payload,
+                HeifBuilder.plain(HeifBuilder.ispe((int) size.width(), (int) size.height())),
+                HeifBuilder.essential(HeifBuilder.av1C(config)),
+                HeifBuilder.essential(HeifBuilder.box("lsel", new byte[]{0, (byte) layer}))));
+        var image = AvifDecoder.decode(MediaSource.of(builder.build()));
+        var rgba = ImageOps.toRgba(image.picture());
+        var expected = Oracle.decodeVideo(AvifVectors.path("Xiph/" + reference + ".png"), "rgba", 1);
+        assertEquals(expected.length, rgba.width() * rgba.height() * 4, name + " layer " + layer + " size");
+        LAYER.assertWithin(name + " layer " + layer + " against " + reference, expected,
+                Arrays.copyOf(rgba.pixels(), expected.length));
     }
 }

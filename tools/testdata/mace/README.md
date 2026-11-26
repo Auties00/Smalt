@@ -68,4 +68,4 @@ and how many bytes each fresh decoder takes.
 | `sample-*` | QuickTime's output for the sound data of the behavior samples, whose containers the script writes itself |
 
 The real files of `MaceConformanceTest` come from `samples.ffmpeg.org/A-codecs/MACE/` through `vectors.tsv` (no licence
-stated; fetched, never committed). The digests the test pins are of QuickTime's output for their sound data.
+stated; hosted test data, not committed to the repository). The digests the test pins are of QuickTime's output for their sound data.

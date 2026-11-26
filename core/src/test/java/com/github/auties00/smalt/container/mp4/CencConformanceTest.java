@@ -75,8 +75,8 @@ class CencConformanceTest {
         })
         @DisplayName("decrypts to the packets of the clear file")
         void decrypts(String encrypted, String clear) {
-            var expected = only(demux(Conformance.fetchListed("chromium-" + clear), DecryptionKeys.none()));
-            var actual = only(demux(Conformance.fetchListed("chromium-" + encrypted), KEYS));
+            var expected = only(demux(Conformance.vector("chromium-" + clear), DecryptionKeys.none()));
+            var actual = only(demux(Conformance.vector("chromium-" + encrypted), KEYS));
             EncryptedFixtures.assertSameData(encrypted, expected, actual);
         }
 
@@ -87,8 +87,8 @@ class CencConformanceTest {
         })
         @DisplayName("takes the key ID of each fragment from its seig sample group")
         void keyRotation(String encrypted, String clear) {
-            var expected = only(demux(Conformance.fetchListed("chromium-" + clear), DecryptionKeys.none()));
-            var file = Conformance.fetchListed("chromium-" + encrypted);
+            var expected = only(demux(Conformance.vector("chromium-" + clear), DecryptionKeys.none()));
+            var file = Conformance.vector("chromium-" + encrypted);
             EncryptedFixtures.assertSameData(encrypted, expected, only(demux(file, EncryptedFixtures.rotatedKeys())));
             EncryptedFixtures.assertSameData(encrypted, expected, only(demux(file, KEYS)));
             // the track encryption box names an all-zero default key ID, which only the seig groups override
@@ -105,7 +105,7 @@ class CencConformanceTest {
                 "bear-flac-cenc.mp4", "bear-opus-cenc.mp4", "bear-av1-cenc.mp4"})
         @DisplayName("decrypts as ffmpeg does")
         void ffmpeg(String encrypted) {
-            var file = Conformance.fetchListed("chromium-" + encrypted);
+            var file = Conformance.vector("chromium-" + encrypted);
             var reference = EncryptedFixtures.ffmpegPacketHashes(file, KEY, List.of());
             var actual = only(demux(file, KEYS));
             assertEquals(reference.get(0), EncryptedFixtures.md5s(actual), encrypted);
@@ -114,22 +114,22 @@ class CencConformanceTest {
         @Test
         @DisplayName("rejects a protected file without keys, and a key it does not know")
         void keys() {
-            var file = Conformance.fetchListed("chromium-bear-640x360-v_frag-cenc.mp4");
+            var file = Conformance.vector("chromium-bear-640x360-v_frag-cenc.mp4");
             var unsupported = assertThrows(MediaException.Unsupported.class, () -> demux(file, DecryptionKeys.none()));
             assertEquals("mp4 encryption", unsupported.format());
             var other = DecryptionKeys.of(new byte[16], KEY);
             assertEquals("mp4 encryption", assertThrows(MediaException.Unsupported.class, () -> demux(file, other))
                     .format());
             var any = demux(file, DecryptionKeys.single(KEY));
-            var expected = only(demux(Conformance.fetchListed("chromium-bear-640x360-v_frag.mp4"), DecryptionKeys.none()));
+            var expected = only(demux(Conformance.vector("chromium-bear-640x360-v_frag.mp4"), DecryptionKeys.none()));
             EncryptedFixtures.assertSameData("any key ID", expected, only(any));
         }
 
         @Test
         @DisplayName("decrypts with a wrong key to other bytes, never to the clear packets")
         void wrongKey() {
-            var file = Conformance.fetchListed("chromium-bear-640x360-v_frag-cenc.mp4");
-            var expected = only(demux(Conformance.fetchListed("chromium-bear-640x360-v_frag.mp4"), DecryptionKeys.none()));
+            var file = Conformance.vector("chromium-bear-640x360-v_frag-cenc.mp4");
+            var expected = only(demux(Conformance.vector("chromium-bear-640x360-v_frag.mp4"), DecryptionKeys.none()));
             var wrong = KEY.clone();
             wrong[0] ^= 1;
             var actual = only(demux(file, DecryptionKeys.of(KEY_ID, wrong)));
@@ -150,11 +150,11 @@ class CencConformanceTest {
         @DisplayName("remuxes a protected file into a clear one")
         void remux(String encrypted, String clear) throws Exception {
             var output = Scratch.directory("cenc-remux").resolve(encrypted);
-            try (var source = MediaSource.of(Conformance.fetchListed("chromium-" + encrypted));
+            try (var source = MediaSource.of(Conformance.vector("chromium-" + encrypted));
                  var sink = MediaSink.of(output)) {
                 Mp4Remuxer.remux(source, sink, RemuxOptions.video().toBuilder().decryptionKeys(KEYS).build());
             }
-            var expected = only(demux(Conformance.fetchListed("chromium-" + clear), DecryptionKeys.none()));
+            var expected = only(demux(Conformance.vector("chromium-" + clear), DecryptionKeys.none()));
             EncryptedFixtures.assertSameData(encrypted, expected, only(demux(output, DecryptionKeys.none())));
             assertFalse(new String(Files.readAllBytes(output), StandardCharsets.ISO_8859_1).contains("sinf"),
                     "the remuxed file declares no protection");
@@ -163,7 +163,7 @@ class CencConformanceTest {
         @Test
         @DisplayName("reports a protected sample without auxiliary information as malformed")
         void missingAuxiliaryInformation() {
-            var file = Conformance.fetchListed("chromium-bear-1280x720-a_frag-cenc_missing-saiz-saio.mp4");
+            var file = Conformance.vector("chromium-bear-1280x720-a_frag-cenc_missing-saiz-saio.mp4");
             assertThrows(MediaException.Malformed.class, () -> demux(file, KEYS));
         }
     }
@@ -211,5 +211,38 @@ class CencConformanceTest {
             return true;
         }
         return false;
+    }
+
+    @Nested
+    @DisplayName("FATE samples")
+    class Fate {
+        /** The key FATE's mov tests decrypt these files with ({@code -decryption_key}). */
+        private static final byte[] FATE_KEY = java.util.HexFormat.of().parseHex("12345678901234567890123456789012");
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"fate-mov-mov-3elist-encrypted.mov", "fate-mov-mov-piff-encrypted.mp4",
+                "fate-mov-mov-piff-cenc-hybrid.mp4", "fate-mov-mov-frag-encrypted.mp4",
+                "fate-mov-mov-tenc-only-encrypted.mp4"})
+        @DisplayName("decrypt an edited, a PIFF, a PIFF and CENC, a fragmented and a tenc-only file as ffmpeg does")
+        void decrypts(String name) {
+            var file = Conformance.vector(name);
+            var reference = EncryptedFixtures.ffmpegPacketHashes(file, FATE_KEY, List.of());
+            Map<Integer, List<Packet>> packets;
+            try (var source = MediaSource.of(file); var demuxer = new Mp4Demuxer(source,
+                    DemuxerOptions.builder().decryptionKeys(DecryptionKeys.single(FATE_KEY)).build())) {
+                packets = EncryptedFixtures.packets(demuxer);
+            }
+            var index = 0;
+            for (var track : packets.values()) {
+                var expected = reference.get(index++);
+                var actual = EncryptedFixtures.md5s(track);
+                // ffmpeg presents an edit list by dropping and repeating samples; ours keeps every sample once, so
+                // each packet ffmpeg decrypts must be one of ours, and every one of ours one of ffmpeg's but those
+                // the edits leave out
+                assertTrue(actual.containsAll(expected), name + " track " + index + ": ffmpeg's decrypted packets");
+                assertTrue(actual.size() >= new java.util.HashSet<>(expected).size(), name + " track " + index);
+            }
+            assertEquals(reference.size(), packets.size(), name + " tracks");
+        }
     }
 }

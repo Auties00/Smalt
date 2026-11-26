@@ -94,7 +94,7 @@ class Mp3CrcTest {
                 "l2-fl12", "l2-fl14", "l2-fl15", "l2-fl16", "l3-hecommon"})
         @DisplayName("the CRC-protected compliance streams of every layer pass with nothing concealed")
         void compliance(String name) {
-            var stream = demux(Mp3Vectors.read(Mp3Vectors.fetch(name + ".bit")));
+            var stream = demux(Mp3Vectors.read(Mp3Vectors.vector(name + ".bit")));
             var protectedFrames = stream.packets().stream()
                     .filter(packet -> MpegAudioHeader.hasCrc(MpegAudioHeader.read(packet.data(), 0))).count();
             assertTrue(protectedFrames > 0, name + " has no CRC-protected frame");
@@ -140,7 +140,7 @@ class Mp3CrcTest {
         @ValueSource(strings = {"l1-fl1", "l2-fl10"})
         @DisplayName("a damaged Layer I or II allocation conceals the frame, and a run of damaged frames fades to silence")
         void allocationRun(String name) {
-            var stream = demux(Mp3Vectors.read(Mp3Vectors.fetch(name + ".bit")));
+            var stream = demux(Mp3Vectors.read(Mp3Vectors.vector(name + ".bit")));
             var damaged = new Stream(stream.track(), new ArrayList<>(stream.packets()));
             for (var index = 10; index < 20; index++) {
                 var original = stream.packets().get(index);
@@ -180,7 +180,7 @@ class Mp3CrcTest {
         @Test
         @DisplayName("a stream whose headers were rewritten after coding fails the CRC of every frame")
         void rewrittenHeaders() {
-            var stream = demux(Mp3Vectors.read(Mp3Vectors.fetch("l2-nonstandard-free_format.bit")));
+            var stream = demux(Mp3Vectors.read(Mp3Vectors.vector("l2-nonstandard-free_format.bit")));
             var checked = decoder(stream.track(), true);
             decode(stream, checked);
             assertEquals(stream.packets().size(), checked.concealedFrames());

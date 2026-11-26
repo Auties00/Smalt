@@ -3,7 +3,8 @@
 
 It downloads Adobe DNG Converter 18.0 for Windows and innoextract 1.9 (both pinned by SHA-256, as raw-oracle.py
 does), extracts the converter without installing it and runs it as a black box, writing into
-<conformance cache>/raw-lens-oracle (-Dsmalt.test.rawLensOracle overrides it in the tests):
+<cache>/raw-lens-oracle (SMALT_CACHE, default ~/.smalt/cache; -Dsmalt.test.rawLensOracle overrides it in the
+tests):
 
 - for each sample of LENS_SAMPLES, a <stem>.lens text file: after a comment line, "active" with the active area
   of the converter's DNG file (top, left, bottom and right), "crop" with its default crop (x, y, width and height
@@ -15,7 +16,8 @@ does), extracts the converter without installing it and runs it as a black box, 
   (width, height and samples per pixel) and, for each sample, "digest <sample> <SHA-256>" of its values over the
   whole image as little-endian 16-bit words, row by row, and "row <sample> <hex>" of its first row.
 
-Windows only, with a Windows build of Python. The samples are fetched into the conformance cache when it lacks them.
+Windows only, with a Windows build of Python. The samples are read from the hosted test data (SMALT_TESTDATA, see
+tools/testdata/README.md).
 
     python tools/testdata/raw-lens-oracle.py [sample ...]
 """
@@ -30,6 +32,7 @@ import zipfile
 from array import array
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import oracles  # noqa: E402
 import testdata  # noqa: E402
 
 CONVERTER_URL = 'https://download.adobe.com/pub/adobe/dng/win/AdobeDNGConverter_x64_18_0.exe'
@@ -44,45 +47,28 @@ LENS_SAMPLES = [
     'rawpixls-sony-zv-1-12bit-12bit-compressed-3-2.arw',
     'rawpixls-sony-ilce-7m3-12bit-12bit-compressed-3-2.arw',
     'rawpixls-panasonic-dc-g9-4-3-2348.rw2',
-    'rawpixls-panasonic-dmc-gx80-4-3.rw2',
-    'rawpixls-panasonic-dc-tz200-4-3.rw2',
     'rawpixls-panasonic-dmc-lx100-4-3.rw2',
-    'rawpixls-panasonic-dmc-fz1000-1-1.rw2',
     'rawpixls-olympus-e-m1-16bit-4-3.orf',
-    'rawpixls-olympus-e-m10-mark-iii-16bit-4-3.orf',
-    'rawpixls-olympus-e-pl5-16bit-4-3.orf',
-    'rawpixls-olympus-stylus1-16bit-4-3.orf',
-    'rawpixls-fujifilm-x-t4-14bit-14bit-compressed-3-2.raf',
-    'rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf',
     'rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf',
-    'rawpixls-fujifilm-finepix-x10-12bit-12bit-uncompressed-4-3.raf',
     'rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3',
     'rawpixls-canon-powershot-g5-x-mark-ii-raw-3-2.cr3',
     'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-3-2.cr3',
-    'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-1-1.cr3',
     'rawpixls-canon-powershot-sx70-hs-raw-3-2-3-2.cr3',
     'rawpixls-canon-powershot-sx70-hs-c-raw-3-2-3-2.cr3',
-    'rawpixls-canon-powershot-v1-craw-3-2.cr3',
     'rawpixls-canon-powershot-g1-x-raw-4-3.cr2',
     'rawpixls-canon-powershot-g1-x-mark-ii-raw-3-2.cr2',
     'rawpixls-canon-powershot-g1-x-mark-iii-raw-3-2.cr2',
-    'rawpixls-canon-powershot-g11-raw-4-3.cr2',
-    'rawpixls-canon-powershot-g12-raw-4-3.cr2',
-    'rawpixls-canon-powershot-g15-raw-4-3.cr2',
     'rawpixls-canon-powershot-g16-raw-4-3.cr2',
     'rawpixls-canon-powershot-g3-x-raw-3-2.cr2',
     'rawpixls-canon-powershot-g5-x-raw-3-2.cr2',
     'rawpixls-canon-powershot-g7-x-raw-3-2.cr2',
     'rawpixls-canon-powershot-g7-x-mark-ii-raw-3-2.cr2',
-    'rawpixls-canon-powershot-g9-raw-4-3.cr2',
     'rawpixls-canon-powershot-g9-x-raw-3-2.cr2',
     'rawpixls-canon-powershot-g9-x-mark-ii-raw-3-2.cr2',
     'rawpixls-canon-powershot-s100-raw-4-3.cr2',
-    'rawpixls-canon-powershot-s100v-raw-4-3.cr2',
     'rawpixls-canon-powershot-s110-raw-4-3.cr2',
     'rawpixls-canon-powershot-s120-raw-4-3.cr2',
     'rawpixls-canon-powershot-s95-raw-4-3.cr2',
-    'rawpixls-canon-powershot-sx50-hs-raw-4-3.cr2',
     'rawpixls-canon-powershot-sx60-hs-raw-4-3.cr2',
 ]
 
@@ -197,27 +183,16 @@ def write_merged(path, target):
 def main():
     if os.name != 'nt':
         sys.exit('Adobe DNG Converter for Windows is needed; run this script on Windows')
-    directory = testdata.conformance_dir()
-    vectors = {row['name']: row for row in testdata.read_tsv(testdata.VECTORS, testdata.VECTOR_COLUMNS)}
     named = sys.argv[1:]
     samples = named or LENS_SAMPLES + SHIFT_SAMPLES
-    for name in samples:
-        row = vectors[name]
-        path = os.path.join(directory, name)
-        if not testdata.valid(path, row['sha256']):
-            print(f'fetching {name}')
-            testdata.download(row['url'], path, row['sha256'])
-    output = os.path.join(directory, 'raw-lens-oracle')
-    os.makedirs(output, exist_ok=True)
+    paths = {name: testdata.vector(name) for name in samples}
+    output = testdata.cache_dir('raw-lens-oracle')
     with tempfile.TemporaryDirectory(prefix='work-', dir=output) as work:
-        installer = os.path.join(work, 'AdobeDNGConverter_x64_18_0.exe')
-        archive = os.path.join(work, 'innoextract.zip')
-        testdata.download(CONVERTER_URL, installer, CONVERTER_SHA256)
-        testdata.download(INNOEXTRACT_URL, archive, INNOEXTRACT_SHA256)
+        installer = oracles.download(CONVERTER_URL, CONVERTER_SHA256)
+        archive = oracles.download(INNOEXTRACT_URL, INNOEXTRACT_SHA256)
         with zipfile.ZipFile(archive) as source:
             source.extract('innoextract.exe', work)
         subprocess.run([os.path.join(work, 'innoextract.exe'), '-s', '-e', '-I', 'app', '-d', work, installer], check=True)
-        os.remove(installer)
         converter = os.path.join(work, 'app', 'Adobe DNG Converter.exe')
         staging = os.path.join(work, 'out')
         os.makedirs(staging)
@@ -227,7 +202,7 @@ def main():
             print(f'converting {name}')
             flags = ['-u'] if shift else []
             # the converter only accepts backslash-separated paths
-            subprocess.run([converter, *flags, '-d', windows(staging), windows(os.path.join(directory, name))],
+            subprocess.run([converter, *flags, '-d', windows(staging), windows(paths[name])],
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             dng = os.path.join(staging, stem + '.dng')
             if not os.path.exists(dng):

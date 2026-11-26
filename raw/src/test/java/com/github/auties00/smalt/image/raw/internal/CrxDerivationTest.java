@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class CrxDerivationTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     private static final int[] LEVEL_SCALE = {40, 45, 51, 57, 64, 72};
 
@@ -52,7 +52,7 @@ class CrxDerivationTest {
         var name = sample.fileName();
         var dng = ORACLE.resolve(name.substring(0, name.lastIndexOf('.')) + ".dng");
         Skip.unless(Files.isRegularFile(dng), "data:raw-oracle", "no oracle file " + dng + "; run tools/testdata/raw-oracle.py");
-        var file = Files.readAllBytes(sample.fetch());
+        var file = Files.readAllBytes(sample.path());
         var header = mainImage(file);
         assertEquals(0x100, header.version, "a version 1 file");
         var oracle = NikonTableDerivation.oracle(dng);

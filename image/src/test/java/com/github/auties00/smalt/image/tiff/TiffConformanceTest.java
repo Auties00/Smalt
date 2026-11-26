@@ -9,7 +9,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import com.github.auties00.smalt.testkit.Conformance;
+
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.Map;
 import java.util.stream.Stream;
 
@@ -73,6 +78,29 @@ class TiffConformanceTest {
     @DisplayName("libtiff test-suite images decode like libtiff")
     void testSuite(String name) {
         check(name, LibTiff.sources().get(name));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"bigtiff_four_strip_be_short", "bigtiff_four_strip_short",
+            "bigtiff_one_block_be_long8", "bigtiff_one_block_long8", "bigtiff_one_strip_be_long",
+            "bigtiff_one_strip_be_long8", "bigtiff_one_strip_long", "bigtiff_one_strip_long8",
+            "bigtiff_two_strip_be_long", "bigtiff_two_strip_be_long8", "bigtiff_two_strip_long",
+            "bigtiff_two_strip_long8", "byte_bigtiff_strip5lines", "uint16_nodata_65535_bigtiff",
+            "byte_bigtiff_invalid_slong8_for_stripoffsets"})
+    @DisplayName("GDAL's BigTIFF files decode like libtiff, strip and tile offsets of every type in both byte orders")
+    void gdalBigTiff(String name) throws IOException {
+        var file = "tiff-gdal-" + name + ".tif";
+        check(file, Files.readAllBytes(Conformance.vector(file)));
+    }
+
+    @Test
+    @DisplayName("rejects GDAL's BigTIFF header extract, whose strip offsets lie past its end, as libtiff does")
+    void gdalHeaderExtract() throws IOException {
+        // the file is the first 252 bytes of a BigTIFF: libtiff fails reading StripOffsets and writes no image
+        var data = Files.readAllBytes(Conformance.vector("tiff-gdal-bigtiff_header_extract.tif"));
+        LibTiff.assume("tiff2rgba");
+        assertNull(LibTiff.rgba(data), "libtiff refuses the file");
+        assertThrows(MediaException.Malformed.class, () -> TiffDecoder.decode(MediaSource.of(data)));
     }
 
     @Test

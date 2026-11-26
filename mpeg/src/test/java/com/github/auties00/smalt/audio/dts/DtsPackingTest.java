@@ -93,4 +93,30 @@ final class DtsPackingTest {
         assertEquals(44100, actual.sampleRate());
         Tolerance.exact().assertPcm(packing, expected.samples(), actual.samples());
     }
+
+    /**
+     * A DTS audio CD track ripped to WAV: 14-bit words, little endian, in a PCM WAV file. The demuxer must find the
+     * DTS stream in the samples, and the decode match ffmpeg's to the level of float rounding.
+     */
+    @org.junit.jupiter.api.Test
+    @DisplayName("a DTS audio CD track in a WAV file decodes as ffmpeg decodes it")
+    void compactDisc() {
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("dts-wav-14bit.wav");
+        var buffers = new ArrayList<com.github.auties00.smalt.audio.AudioBuffer>();
+        try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(
+                com.github.auties00.smalt.io.MediaSource.of(file))) {
+            var track = (com.github.auties00.smalt.track.AudioTrack) demuxer.tracks().getFirst();
+            assertEquals(com.github.auties00.smalt.track.Codec.DTS, track.codec(), "codec of the WAV track");
+            try (var decoder = com.github.auties00.smalt.audio.AudioDecoders.create(track)) {
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    decoder.decode(packet, buffer -> buffers.add(buffer.copy()));
+                }
+            }
+        }
+        var decoded = DtsTestSupport.interleave(buffers);
+        var reference = DtsTestSupport.ffmpegFloats(file, List.of());
+        assertEquals(reference.length, decoded.samples().length, "sample count");
+        Tolerance.snr(90).assertPcm("dts-wav-14bit", reference, decoded.samples());
+    }
 }

@@ -137,4 +137,22 @@ class AvifEncodeMetadataTest {
         }
         assertEquals(0, occurrences(plain.toByteArray(), "colrprof"));
     }
+
+    @Test
+    @DisplayName("reads libavif's ICC, Exif and XMP items and writes them back byte for byte")
+    void libavifMetadata() {
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector("libavif-paris_icc_exif_xmp.avif"));
+        var decoded = decode(data, false);
+        var icc = decoded.iccProfile().orElseThrow();
+        assertEquals("acsp", new String(icc, 36, 4, StandardCharsets.US_ASCII));
+        var exif = decoded.exif().orElseThrow();
+        var xmp = decoded.xmp().orElseThrow();
+        org.junit.jupiter.api.Assertions.assertTrue(occurrences(xmp, "x:xmpmeta") >= 1, "XMP packet");
+        var options = ImageEncoderOptions.builder().quality(90).colorProfile(decoded.colorProfile().orElseThrow())
+                .exif(exif).xmp(xmp).build();
+        var again = decode(Images.encode(decoded.picture(), ImageFormat.AVIF, options), false);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(exif, again.exif().orElseThrow(), "Exif");
+        org.junit.jupiter.api.Assertions.assertArrayEquals(xmp, again.xmp().orElseThrow(), "XMP");
+        assertEquals(decoded.colorProfile().orElseThrow(), again.colorProfile().orElseThrow(), "profile");
+    }
 }

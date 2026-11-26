@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  */
 class SensorCrossCheckTest {
     static SensorPlane read(RawSamples sample) {
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             assertNotNull(file.sensor, file.unsupported);
             var sensor = file.sensor;

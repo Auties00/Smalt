@@ -399,4 +399,50 @@ class AvifDerivedTest {
         return out;
     }
 
+
+    /**
+     * libavif's grid files: a 1x5 grid and the same grid with its dimg references in reverse order, each decoding
+     * as ffmpeg decodes its tiles placed in dimg order.
+     */
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"libavif-sofa_grid1x5_420.avif",
+            "libavif-sofa_grid1x5_420_reversed_dimg_order.avif"})
+    @DisplayName("libavif's grids decode as ffmpeg decodes their tiles in dimg order")
+    void libavifGrids(String vector) {
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        var decoded = AvifDecoder.decode(MediaSource.of(data), ImageDecoderOptions.builder().highBitDepth(true).build())
+                .picture();
+        AvifConformanceTest.assertPlanesEqual(AvifReference.primary(data), AvifReference.Planes.of(decoded), vector);
+    }
+
+    /**
+     * libavif's grids that reuse an item: a grid whose dimg list names a tile twice, and a tile shared between the
+     * color and the alpha grid (libavif reports the latter not implemented). Both are rejected as malformed.
+     */
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"libavif-sofa_grid1x5_420_dimg_repeat.avif",
+            "libavif-color_grid_alpha_grid_tile_shared_in_dimg.avif"})
+    @DisplayName("libavif's grids that reuse an item are rejected as malformed")
+    void libavifReusedItems(String vector) {
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        assertThrows(MediaException.Malformed.class, () -> AvifDecoder.decode(MediaSource.of(data)));
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("a color grid with an alpha that is not a grid decodes its color as ffmpeg decodes the tiles, with alpha")
+    void colorGridAlphaNoGrid() {
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector("libavif-color_grid_alpha_nogrid.avif"));
+        var decoded = AvifDecoder.decode(MediaSource.of(data), ImageDecoderOptions.builder().highBitDepth(true).build())
+                .picture();
+        assertTrue(decoded.hasAlpha(), "alpha");
+        var expected = AvifReference.primary(data);
+        var actual = AvifReference.Planes.of(decoded);
+        // the reference reconstructs no alpha for a grid; the color planes compare
+        for (var plane = 0; plane < 3; plane++) {
+            org.junit.jupiter.api.Assertions.assertArrayEquals(expected.planes()[plane], actual.planes()[plane],
+                    "plane " + plane);
+        }
+    }
 }

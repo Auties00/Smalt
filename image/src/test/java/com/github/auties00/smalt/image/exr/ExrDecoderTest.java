@@ -13,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
@@ -290,6 +291,57 @@ class ExrDecoderTest {
             var theirs = RasterFixtures.interleaveGbr(RasterFixtures.floatsLe(RasterFixtures.ffmpegDecode(file, "exr",
                     channels == 4 ? "gbrapf32le" : "gbrpf32le")), width, height, channels);
             assertArrayEquals(theirs, RasterFixtures.tight(picture), name);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"t01,0,0,399,299,0,0,399,299", "t02,0,0,399,299,1,1,400,300", "t03,0,0,399,299,30,20,399,299",
+                "t04,0,0,399,299,0,0,369,279", "t05,0,0,399,299,30,20,369,279", "t06,0,0,399,299,-1,-1,400,300",
+                "t07,0,0,399,299,-40,-40,440,330", "t08,30,40,429,339,0,0,500,400", "t09,0,0,399,299,400,0,599,299",
+                "t10,0,0,399,299,-100,0,-1,299", "t11,0,0,399,299,0,300,399,499", "t12,0,0,399,299,0,-100,399,-1",
+                "t13,0,0,399,299,399,299,499,399", "t14,0,0,399,299,-100,-100,0,0", "t15,0,0,399,299,-40,-40,440,330",
+                "t16,0,0,399,299,-40,-40,440,330"})
+        @DisplayName("places the data window of OpenEXR's DisplayWindow images in their display window")
+        void displayWindows(String name, int dataLeft, int dataTop, int dataRight, int dataBottom, int left, int top,
+                            int right, int bottom) throws IOException {
+            // the windows are those OpenEXR 3.5.2 reads from the headers; ExrSamplesTest checks the data window's
+            // samples against OpenEXR itself (ffmpeg 8 misplaces data windows that do not cover the display window)
+            var data = Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "exr-openexr-images-DisplayWindow-" + name + ".exr"));
+            var exr = com.github.auties00.smalt.image.exr.internal.ExrFile.read(data,
+                    ImageDecoderOptions.defaults().limits());
+            var header = exr.parts().getFirst();
+            var samples = com.github.auties00.smalt.image.exr.internal.ExrSamples.read(exr, 0, 0, 0,
+                    ImageDecoderOptions.defaults().limits());
+            var dataWidth = dataRight - dataLeft + 1;
+            assertEquals(dataWidth, samples.width());
+            assertEquals(dataBottom - dataTop + 1, samples.height());
+            var picture = keep(data);
+            var width = right - left + 1;
+            var height = bottom - top + 1;
+            assertEquals(width, picture.width(), "display window width");
+            assertEquals(height, picture.height(), "display window height");
+            for (var color : List.of("R", "G", "B")) {
+                var plane = -1;
+                for (var index = 0; index < header.channels().size(); index++) {
+                    if (header.channels().get(index).name().equals(color)) {
+                        plane = index;
+                    }
+                }
+                var stored = samples.planes()[plane];
+                var ours = channel(picture, color);
+                for (var y = 0; y < height; y++) {
+                    for (var x = 0; x < width; x++) {
+                        var dx = x + left - dataLeft;
+                        var dy = y + top - dataTop;
+                        var inside = dx >= 0 && dx < dataWidth && dy >= 0 && dy <= dataBottom - dataTop;
+                        var want = inside ? stored[dy * dataWidth + dx] : 0f;
+                        if (Float.floatToIntBits(want) != Float.floatToIntBits(ours[y * width + x])) {
+                            fail(name + " " + color + " at " + x + "," + y + ": expected " + want + " got "
+                                    + ours[y * width + x]);
+                        }
+                    }
+                }
+            }
         }
 
         @ParameterizedTest

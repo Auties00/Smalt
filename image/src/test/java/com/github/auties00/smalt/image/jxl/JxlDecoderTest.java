@@ -230,6 +230,21 @@ class JxlDecoderTest {
             assertEquals(ImageFormat.JPEG, image.format());
             assertEquals(JxlDecoder.probe(MediaSource.of(file("cafe"))).width(), image.sourceWidth());
         }
+
+        @Test
+        @DisplayName("gives back libjxl's 1x1 JPEG with Exif and XMP byte for byte")
+        void exifXmp() throws java.io.IOException {
+            // libjxl testdata: 1x1_exif_xmp.jxl is cjxl's lossless recompression of 1x1_exif_xmp.jpg
+            var jxl = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "jxl-testdata-1x1_exif_xmp.jxl"));
+            var jpeg = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "jxl-testdata-1x1_exif_xmp.jpg"));
+            assertArrayEquals(jpeg, JxlDecoder.reconstructJpeg(MediaSource.of(jxl)).orElseThrow());
+            var image = JxlDecoder.decode(MediaSource.of(jxl));
+            var original = Images.decode(MediaSource.of(jpeg));
+            assertArrayEquals(original.exif().orElseThrow(), image.exif().orElseThrow(), "Exif");
+            assertTrue(image.xmp().isPresent(), "XMP");
+        }
     }
 
     @Nested

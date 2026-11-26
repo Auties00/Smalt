@@ -8,8 +8,8 @@ with Jazzer's standalone driver on the test class path of their module (see READ
 Commands:
   list [--select SPEC]                 prints the targets, as module:Class.method
   build [--online]                     compiles the fuzzed modules and records their test class paths
-  seeds [--select SPEC]                gathers extra seeds from the conformance cache (smoke tier and any
-                                       other vector cached) into target/fuzz/<target>/seeds
+  seeds [--select SPEC]                gathers extra seeds from the vectors of the hosted test data
+                                       (SMALT_TESTDATA, when pulled) into target/fuzz/<target>/seeds
   run TARGET [--time S] [--no-build]   fuzzes one target; findings land in target/fuzz/<target>/findings
   budget [--time S] [--select SPEC]    fuzzes every selected target for S seconds and prints a summary;
                                        exits with 1 when a target found something
@@ -56,7 +56,7 @@ MAX_SEED_BYTES = 256 * 1024
 # seed keeps each execution fast.
 CONVERTED_MAX_BYTES = 64 * 1024
 CONVERTED_MAX_PACKETS = 32
-# The smoke-tier and cached vectors each input target starts from, by file extension.
+# The hosted vectors each input target starts from, by file extension.
 SEED_EXTENSIONS = {
     'image:ImageFuzzTest.jpeg': ['.jpg', '.jpeg'],
     'image:ImageFuzzTest.png': ['.png', '.apng'],
@@ -255,13 +255,14 @@ def command(target, arguments, memory=1536, cp=None, java_binary=None):
             f'--target_class={target.qualified}', f'--target_method={target.method}', INSTRUMENT] + arguments)
 
 
-def conformance_cache():
-    configured = os.environ.get('SMALT_CONFORMANCE_CACHE', '').strip()
-    return Path(configured) if configured else Path.home() / '.smalt' / 'cache' / 'conformance'
+def hosted_vectors():
+    """Returns the vectors directory of the hosted test data (see tools/testdata/testdata.py)."""
+    configured = os.environ.get('SMALT_TESTDATA', '').strip()
+    return (Path(configured) if configured else Path.home() / '.smalt' / 'testdata') / 'vectors'
 
 
 def cached_files(extensions):
-    cache = conformance_cache()
+    cache = hosted_vectors()
     if not cache.is_dir():
         return []
     files = [path for path in cache.iterdir() if path.is_file() and path.suffix.lower() in extensions

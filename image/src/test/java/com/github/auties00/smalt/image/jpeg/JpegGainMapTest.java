@@ -63,7 +63,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class JpegGainMapTest {
     static byte[] vector(String name) {
         try {
-            return Files.readAllBytes(Conformance.fetchListed(name));
+            return Files.readAllBytes(Conformance.vector(name));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
@@ -190,6 +190,302 @@ class JpegGainMapTest {
             var listed = JpegDecoder.auxiliaryImages(MediaSource.of(data));
             assertEquals(1, listed.size());
             assertEquals(AuxiliaryImageType.GAIN_MAP, listed.getFirst().type());
+        }
+    }
+
+    /**
+     * Gain map JPEG files written by real tools: the ISO 21496-1 files of the Web Platform Tests
+     * ({@code html/canvas/element/global-hdr-headroom}), a Google Pixel 9 Ultra HDR photo and an Adobe Camera Raw
+     * export (Wikimedia Commons), Apple iPhone files and a Camera Raw file whose gain map differs in size from its
+     * base (libavif's test data). The metadata Smalt reads is held to the file: the ISO 21496-1 payload of the gain
+     * map image, parsed here from the specification's layout, or else the {@code hdrgm} XMP properties of the Adobe
+     * gain map specification, or for Apple files the headroom Apple's formula gives from the maker note (read with
+     * exiftool) or the {@code HDRGainMap:HDRGainMapHeadroom} property.
+     */
+    @Nested
+    @DisplayName("gain map files written by real tools")
+    class RealFiles {
+        private static final byte[] ISO_NAMESPACE = "urn:iso:std:iso:ts:21496:-1\0".getBytes(StandardCharsets.US_ASCII);
+
+        /** {@return the ISO 21496-1 metadata of the last APP2 payload that holds more than the version, if any} */
+        static Optional<GainMapMetadata> iso(byte[] file) {
+            GainMapMetadata found = null;
+            for (var at = 0; at + 4 + ISO_NAMESPACE.length < file.length; at++) {
+                if ((file[at] & 0xFF) != 0xFF || (file[at + 1] & 0xFF) != 0xE2) {
+                    continue;
+                }
+                var start = at + 4;
+                if (!Arrays.equals(file, start, start + ISO_NAMESPACE.length, ISO_NAMESPACE, 0, ISO_NAMESPACE.length)) {
+                    continue;
+                }
+                var length = ((file[at + 2] & 0xFF) << 8 | file[at + 3] & 0xFF) - 2 - ISO_NAMESPACE.length;
+                if (length > 4) {
+                    found = parseIso(java.nio.ByteBuffer.wrap(file, start + ISO_NAMESPACE.length, length));
+                }
+            }
+            return Optional.ofNullable(found);
+        }
+
+        /** Parses ISO 21496-1 gain map metadata (big-endian; flags: multichannel, base color space, common denominator). */
+        private static GainMapMetadata parseIso(java.nio.ByteBuffer data) {
+            assertEquals(0, data.getShort() & 0xFFFF, "minimum version");
+            data.getShort();
+            var flags = data.get() & 0xFF;
+            var channels = (flags & 0x80) != 0 ? 3 : 1;
+            var common = (flags & 0x08) != 0;
+            double baseHeadroom;
+            double alternateHeadroom;
+            var list = new java.util.ArrayList<GainMapChannel>();
+            if (common) {
+                var denominator = (double) (data.getInt() & 0xFFFFFFFFL);
+                baseHeadroom = (data.getInt() & 0xFFFFFFFFL) / denominator;
+                alternateHeadroom = (data.getInt() & 0xFFFFFFFFL) / denominator;
+                for (var channel = 0; channel < channels; channel++) {
+                    var minimum = data.getInt() / denominator;
+                    var maximum = data.getInt() / denominator;
+                    var gamma = (data.getInt() & 0xFFFFFFFFL) / denominator;
+                    var baseOffset = data.getInt() / denominator;
+                    var alternateOffset = data.getInt() / denominator;
+                    list.add(new GainMapChannel(minimum, maximum, gamma, baseOffset, alternateOffset));
+                }
+            } else {
+                baseHeadroom = (data.getInt() & 0xFFFFFFFFL) / (double) (data.getInt() & 0xFFFFFFFFL);
+                alternateHeadroom = (data.getInt() & 0xFFFFFFFFL) / (double) (data.getInt() & 0xFFFFFFFFL);
+                for (var channel = 0; channel < channels; channel++) {
+                    var minimum = data.getInt() / (double) (data.getInt() & 0xFFFFFFFFL);
+                    var maximum = data.getInt() / (double) (data.getInt() & 0xFFFFFFFFL);
+                    var gamma = (data.getInt() & 0xFFFFFFFFL) / (double) (data.getInt() & 0xFFFFFFFFL);
+                    var baseOffset = data.getInt() / (double) (data.getInt() & 0xFFFFFFFFL);
+                    var alternateOffset = data.getInt() / (double) (data.getInt() & 0xFFFFFFFFL);
+                    list.add(new GainMapChannel(minimum, maximum, gamma, baseOffset, alternateOffset));
+                }
+            }
+            return new GainMapMetadata(baseHeadroom, alternateHeadroom, list, (flags & 0x40) != 0);
+        }
+
+        /** {@return the values of an hdrgm property of the last XMP packet that holds one, attribute or sequence} */
+        static double[] hdrgm(String xmp, String name, double fallback) {
+            var attribute = java.util.regex.Pattern.compile("hdrgm:" + name + "\\s*=\\s*\"([^\"]*)\"").matcher(xmp);
+            if (attribute.find()) {
+                return new double[]{Double.parseDouble(attribute.group(1))};
+            }
+            var element = java.util.regex.Pattern.compile("<hdrgm:" + name + ">(.*?)</hdrgm:" + name + ">",
+                    java.util.regex.Pattern.DOTALL).matcher(xmp);
+            if (!element.find()) {
+                return new double[]{fallback};
+            }
+            var items = java.util.regex.Pattern.compile("<rdf:li>([^<]*)</rdf:li>").matcher(element.group(1));
+            var values = new java.util.ArrayList<Double>();
+            while (items.find()) {
+                values.add(Double.parseDouble(items.group(1).strip()));
+            }
+            return values.isEmpty() ? new double[]{Double.parseDouble(element.group(1).strip())}
+                    : values.stream().mapToDouble(Double::doubleValue).toArray();
+        }
+
+        /** {@return the gain map metadata the hdrgm properties of the gain map image's XMP describe} */
+        static GainMapMetadata fromHdrgm(byte[] file) {
+            var text = new String(file, StandardCharsets.ISO_8859_1);
+            var packets = java.util.regex.Pattern.compile("<x:xmpmeta.*?</x:xmpmeta>", java.util.regex.Pattern.DOTALL)
+                    .matcher(text);
+            String xmp = null;
+            while (packets.find()) {
+                if (packets.group().contains("GainMapMax")) {
+                    xmp = packets.group();
+                }
+            }
+            assertTrue(xmp != null, "an XMP packet with hdrgm:GainMapMax");
+            var hdrBase = xmp.matches("(?s).*hdrgm:BaseRenditionIsHDR\\s*=\\s*\"[Tt]rue\".*");
+            var minimum = hdrgm(xmp, "GainMapMin", 0);
+            var maximum = hdrgm(xmp, "GainMapMax", 1);
+            var gamma = hdrgm(xmp, "Gamma", 1);
+            var sdr = hdrgm(xmp, "OffsetSDR", 1 / 64.0);
+            var hdr = hdrgm(xmp, "OffsetHDR", 1 / 64.0);
+            var capacityMin = hdrgm(xmp, "HDRCapacityMin", 0)[0];
+            var capacityMax = hdrgm(xmp, "HDRCapacityMax", 1)[0];
+            var channels = Math.max(Math.max(minimum.length, maximum.length), Math.max(gamma.length,
+                    Math.max(sdr.length, hdr.length)));
+            var list = new java.util.ArrayList<GainMapChannel>();
+            for (var channel = 0; channel < channels; channel++) {
+                var base = hdrBase ? hdr : sdr;
+                var alternate = hdrBase ? sdr : hdr;
+                list.add(new GainMapChannel(minimum[Math.min(channel, minimum.length - 1)],
+                        maximum[Math.min(channel, maximum.length - 1)], gamma[Math.min(channel, gamma.length - 1)],
+                        base[Math.min(channel, base.length - 1)], alternate[Math.min(channel, alternate.length - 1)]));
+            }
+            return new GainMapMetadata(hdrBase ? capacityMax : capacityMin, hdrBase ? capacityMin : capacityMax, list,
+                    true);
+        }
+
+        static void assertClose(GainMapMetadata expected, GainMapMetadata actual, double tolerance) {
+            assertEquals(expected.baseHeadroom(), actual.baseHeadroom(), tolerance, "base headroom");
+            assertEquals(expected.alternateHeadroom(), actual.alternateHeadroom(), tolerance, "alternate headroom");
+            assertEquals(expected.useBaseColorSpace(), actual.useBaseColorSpace(), "use base color space");
+            assertEquals(expected.channels().size(), actual.channels().size(), "channel count");
+            for (var channel = 0; channel < expected.channels().size(); channel++) {
+                var want = expected.channels().get(channel);
+                var got = actual.channels().get(channel);
+                assertEquals(want.minimum(), got.minimum(), tolerance, "minimum of channel " + channel);
+                assertEquals(want.maximum(), got.maximum(), tolerance, "maximum of channel " + channel);
+                assertEquals(want.gamma(), got.gamma(), tolerance, "gamma of channel " + channel);
+                assertEquals(want.baseOffset(), got.baseOffset(), tolerance, "base offset of channel " + channel);
+                assertEquals(want.alternateOffset(), got.alternateOffset(), tolerance,
+                        "alternate offset of channel " + channel);
+            }
+        }
+
+        /** Checks that the gain map applies to the base at the base's size. */
+        static void assertApplies(byte[] data, GainMap gainMap) {
+            var base = JpegDecoder.decode(MediaSource.of(data));
+            var rendered = GainMaps.apply(base, gainMap);
+            assertEquals(base.picture().width(), rendered.picture().width());
+            assertEquals(base.picture().height(), rendered.picture().height());
+            assertEquals(AuxiliaryImageType.GAIN_MAP, JpegDecoder.auxiliaryImages(MediaSource.of(data)).getFirst()
+                    .type());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.CsvSource({"base_srgb-altr_none-use_base,false,true,false",
+                "base_srgb-altr_rec2020-use_altr,false,false,true", "base_rec2100pq-altr_none-use_base,true,true,false",
+                "base_rec2100pq-altr_none-use_altr,true,false,false",
+                "base_rec2100hlg-altr_none-use_base,true,true,false"})
+        @DisplayName("reads the ISO 21496-1 files of the Web Platform Tests")
+        void wpt(String variant, boolean hdrBase, boolean useBase, boolean alternateProfile) {
+            // the file names give the base color space, the alternate color space and where the map applies
+            var data = vector("jpeg-wpt-iso21496-1-" + variant + ".jpg");
+            var gainMap = JpegDecoder.decodeGainMap(MediaSource.of(data)).orElseThrow();
+            var metadata = gainMap.metadata();
+            assertClose(iso(data).orElseThrow(), metadata, 1e-9);
+            assertEquals(useBase, metadata.useBaseColorSpace(), "use base color space");
+            assertEquals(hdrBase, metadata.isBaseBrighter(), "the base is the HDR rendition");
+            assertEquals(alternateProfile, gainMap.alternateProfile().isPresent(), "alternate color space");
+            assertApplies(data, gainMap);
+        }
+
+        @Test
+        @DisplayName("reads the Ultra HDR gain map of a Google Pixel 9 photo from its hdrgm properties")
+        void pixel9() {
+            var data = vector("jpeg-commons-pixel9-ultrahdr-heysong-1.jpg");
+            var gainMap = JpegDecoder.decodeGainMap(MediaSource.of(data)).orElseThrow();
+            assertTrue(iso(data).isEmpty(), "the file has no ISO 21496-1 payload");
+            assertClose(fromHdrgm(data), gainMap.metadata(), 1e-6);
+            assertEquals(4080, JpegDecoder.decode(MediaSource.of(data)).picture().width());
+            assertApplies(data, gainMap);
+        }
+
+        @Test
+        @DisplayName("reads Adobe Camera Raw's gain map, whose ISO 21496-1 payload agrees with its hdrgm properties")
+        void cameraRaw() {
+            var data = vector("jpeg-commons-adobe-camera-raw-gainmap-sony-ilce6400.jpg");
+            var gainMap = JpegDecoder.decodeGainMap(MediaSource.of(data)).orElseThrow();
+            var iso = iso(data).orElseThrow();
+            assertClose(iso, gainMap.metadata(), 1e-9);
+            // the XMP rounds to six decimals
+            var xmp = fromHdrgm(data);
+            assertClose(new GainMapMetadata(xmp.baseHeadroom(), xmp.alternateHeadroom(), xmp.channels(),
+                    iso.useBaseColorSpace()), gainMap.metadata(), 1e-5);
+            assertApplies(data, gainMap);
+        }
+
+        @Test
+        @DisplayName("reads a gain map whose chroma sampling differs from the base's")
+        void differentGainMap() {
+            var data = vector("libavif-seine_sdr_different_gainmap_srgb.jpg");
+            var gainMap = JpegDecoder.decodeGainMap(MediaSource.of(data)).orElseThrow();
+            assertClose(fromHdrgm(data), gainMap.metadata(), 1e-6);
+            // the base is 4:4:4, the gain map a three-channel 4:2:0 image of the same size
+            assertTrue(gainMap.metadata().isMultichannel());
+            var map = assertInstanceOf(YuvPicture.class, JpegDecoder.decodeAuxiliaryImage(MediaSource.of(data), 0)
+                    .picture());
+            assertEquals(ChromaFormat.YUV420, map.chromaFormat());
+            var base = JpegDecoder.decode(MediaSource.of(data)).picture();
+            assertEquals(base.width(), map.width());
+            assertEquals(base.height(), map.height());
+            assertApplies(data, gainMap);
+        }
+
+        @Test
+        @DisplayName("keeps the Pixel 9 gain map and its Multi-Picture Format index through stripLocation")
+        void stripLocationKeepsGainMap() {
+            var data = vector("jpeg-commons-pixel9-ultrahdr-heysong-1.jpg");
+            var before = JpegDecoder.decodeGainMap(MediaSource.of(data)).orElseThrow();
+            var stripped = com.github.auties00.smalt.image.metadata.ImageMetadataEditor.stripLocation(data);
+            var after = JpegDecoder.decodeGainMap(MediaSource.of(stripped)).orElseThrow();
+            assertClose(before.metadata(), after.metadata(), 0);
+            assertArrayEquals(((YuvPicture) before.image()).y(), ((YuvPicture) after.image()).y(),
+                    "gain map samples");
+            assertEquals(JpegDecoder.auxiliaryImages(MediaSource.of(data)), JpegDecoder.auxiliaryImages(
+                    MediaSource.of(stripped)));
+        }
+
+        @Test
+        @DisplayName("drops the Multi-Picture Format index with the secondary images a lossless transform leaves out")
+        void transformDropsDanglingIndex() {
+            // the transform writes the primary image only; an index copied with ALL would locate the gain map past
+            // the end of the output (as jpegtran -copy all leaves it)
+            var data = vector("jpeg-commons-pixel9-ultrahdr-heysong-1.jpg");
+            var transcoded = JpegTransforms.transform(MediaSource.of(data), JpegTransformOptions.builder()
+                    .progressive(true).build());
+            assertFalse(new String(transcoded, StandardCharsets.ISO_8859_1).contains("MPF "), "no MPF index");
+            assertTrue(JpegDecoder.auxiliaryImages(MediaSource.of(transcoded)).isEmpty());
+            assertTrue(JpegDecoder.decodeGainMap(MediaSource.of(transcoded)).isEmpty());
+            assertEquals(4080, JpegDecoder.decode(MediaSource.of(transcoded)).picture().width());
+        }
+
+        @Test
+        @DisplayName("never leaves a gain map that no longer fits the base after a lossless rotation")
+        void rotationKeepsGainMapConsistent() {
+            var data = vector("jpeg-commons-pixel9-ultrahdr-heysong-1.jpg");
+            var rotated = JpegTransforms.transform(MediaSource.of(data), JpegTransformOptions.of(
+                    Orientation.ROTATE_90));
+            var base = JpegDecoder.decode(MediaSource.of(rotated)).picture();
+            assertEquals(3072, base.width());
+            var gainMap = JpegDecoder.decodeGainMap(MediaSource.of(rotated));
+            gainMap.ifPresent(map -> assertEquals((double) base.width() / base.height(),
+                    (double) map.image().width() / map.image().height(), 0.01, "gain map aspect ratio"));
+        }
+
+        /** {@return the headroom, as stops, Apple's formula gives from the maker note tags 33 and 48} */
+        static double appleStops(double maker33, double maker48) {
+            double stops;
+            if (maker33 < 1) {
+                stops = maker48 <= 0.01 ? -20 * maker48 + 1.8 : -0.101 * maker48 + 1.601;
+            } else {
+                stops = maker48 <= 0.01 ? -70 * maker48 + 3 : -0.303 * maker48 + 2.303;
+            }
+            return Math.max(stops, 0);
+        }
+
+        @Test
+        @DisplayName("reads the headroom of an older iPhone gain map from the maker note, as Apple's formula gives it")
+        void appleOld() {
+            var data = vector("libavif-apple_gainmap_old.jpg");
+            com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.EXIFTOOL);
+            var path = com.github.auties00.smalt.testkit.image.RasterTesting.write("apple-old.jpg", data);
+            var tags = new String(com.github.auties00.smalt.testkit.Oracle.run(
+                    com.github.auties00.smalt.testkit.Oracle.Tool.EXIFTOOL, java.time.Duration.ofMinutes(1),
+                    List.of("-n", "-s3", "-Apple:HDRHeadroom", "-Apple:HDRGain", path.toString())),
+                    StandardCharsets.UTF_8).strip().lines().map(String::strip).toList();
+            var stops = appleStops(Double.parseDouble(tags.get(0)), Double.parseDouble(tags.get(1)));
+            var gainMap = JpegDecoder.decodeGainMap(MediaSource.of(data)).orElseThrow();
+            assertEquals(0, gainMap.metadata().baseHeadroom());
+            assertEquals(stops, gainMap.metadata().alternateHeadroom(), 1e-6);
+            assertApplies(data, gainMap);
+        }
+
+        @Test
+        @DisplayName("reads the headroom of a newer iPhone gain map from its HDRGainMapHeadroom property")
+        void appleNew() {
+            var data = vector("libavif-apple_gainmap_new.jpg");
+            var text = new String(data, StandardCharsets.ISO_8859_1);
+            var matcher = java.util.regex.Pattern.compile("HDRGainMapHeadroom\\s*(?:=\\s*\"|>)\\s*([0-9.]+)")
+                    .matcher(text);
+            assertTrue(matcher.find(), "the gain map's XMP gives its headroom");
+            var headroom = Double.parseDouble(matcher.group(1));
+            var gainMap = JpegDecoder.decodeGainMap(MediaSource.of(data)).orElseThrow();
+            assertEquals(0, gainMap.metadata().baseHeadroom());
+            assertEquals(Math.log(headroom) / Math.log(2), gainMap.metadata().alternateHeadroom(), 1e-6);
+            assertApplies(data, gainMap);
         }
     }
 

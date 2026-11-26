@@ -41,7 +41,7 @@ class SonyDeltaOracleTest {
     @DisplayName("the photosites, black level, white balance and image area equal the converter's")
     void sample(RawSamples sample, int width, int height, int left, String digest, int black, double neutralRed,
                 double neutralBlue, String pattern) throws NoSuchAlgorithmException {
-        var path = sample.fetch();
+        var path = sample.path();
         try (var source = MediaSource.of(path)) {
             var limits = MediaLimits.builder().maxBytes(1L << 30).build();
             var file = RawParser.parse(source, limits);

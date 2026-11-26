@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code RefPicList1[0]} is an inter-view reference: the suite's md5s of MVDIV-1 views 6 and MVPCT-2 views 5
  * were made by 3DV-ATM without that rule, and the md5 file of MVDDR-4 lists depth view 5 in place of depth view
  * 4 ({@code tools/testdata/README.md}). Monochrome depth frames are hashed as planar 4:2:0 with chroma 128, as
- * the reference decoders write them. Only the inner archives of each suite are downloaded, through the archive
+ * the reference decoders write them. Only the inner archives of each suite are hosted, as the archive
  * sets {@code h264-MFC-2016}, {@code h264-MFCD-2016} and {@code h264-MVCD-2016}.
  */
 @DisplayName("H.264 MFC, MFC depth and MVCD conformance bitstreams (ITU-T H.264.1)")
@@ -155,7 +155,7 @@ class H264DepthConformanceTest {
         if (archive == null) {
             archive = Conformance.archive("h264-" + vector.family() + "-2016");
         }
-        return entry(Files.readAllBytes(archive.fetch(vector.member())), vector.entry());
+        return entry(Files.readAllBytes(archive.member(vector.member())), vector.entry());
     }
 
     static byte[] entry(byte[] zip, String name) throws IOException {

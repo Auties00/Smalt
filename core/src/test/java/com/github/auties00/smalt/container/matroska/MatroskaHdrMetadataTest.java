@@ -237,6 +237,71 @@ class MatroskaHdrMetadataTest {
     }
 
     @Test
+    @DisplayName("reads the HDR10+ messages of a third-party VP9 WebM on the packets ffprobe finds them on")
+    void fateHdr10PlusVp9() {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-mkv-hdr10_plus_vp9_sample.webm");
+        var demuxed = ContainerProbe.demux(file, source -> new MatroskaDemuxer(source));
+        var packets = demuxed.packetsOf(video(demuxed));
+        var probe = HdrFixtures.ffprobe(file, "-show_packets", "-select_streams", "v");
+        var expected = Pattern.compile("\"side_data_type\": \"HDR10\\+ Dynamic Metadata \\(SMPTE 2094-40\\)\"")
+                .matcher(probe).results().count();
+        var carried = packets.stream().filter(packet -> packet.sideData().hdr10Plus().isPresent()).toList();
+        assertTrue(expected > 0, "the sample carries HDR10+ messages");
+        assertEquals(expected, carried.size());
+        for (var packet : carried) {
+            // ITU-T T.35 header of an ST 2094-40 message (CTA-861-H S.2): United States, Samsung, application 4
+            var message = packet.sideData().hdr10Plus().orElseThrow();
+            assertArrayEquals(new byte[]{(byte) 0xB5, 0x00, 0x3C, 0x00, 0x01, 0x04},
+                    java.util.Arrays.copyOf(message, 6));
+        }
+        assertEquals(400, HdrFixtures.rational(probe, "targeted_system_display_maximum_luminance"));
+    }
+
+    @Test
+    @DisplayName("reads the Colour metadata and the mirrored, rotated projection of a third-party HEVC file as ffprobe")
+    void fateHdr10Tags() {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-mkv-hdr10tags-both.mkv");
+        var video = video(ContainerProbe.demux(file, source -> new MatroskaDemuxer(source)));
+        var side = com.github.auties00.smalt.container.ThirdPartyDemux.sideData(file).get(0);
+        var light = com.github.auties00.smalt.container.ThirdPartyDemux.sideData(side, "Content light level metadata");
+        var mastering = com.github.auties00.smalt.container.ThirdPartyDemux.sideData(side,
+                "Mastering display metadata");
+        var color = video.color().orElseThrow();
+        assertEquals(com.github.auties00.smalt.image.MatrixCoefficients.BT2020_NCL, color.matrix());
+        assertEquals(com.github.auties00.smalt.image.ColorPrimaries.BT2020, color.primaries());
+        assertEquals(com.github.auties00.smalt.image.TransferCharacteristics.PQ, color.transfer());
+        assertEquals(com.github.auties00.smalt.image.ColorRange.LIMITED, color.range());
+        var cll = color.contentLightLevel().orElseThrow();
+        assertEquals(Integer.parseInt(light.get("max_content")), cll.maxContentLightLevel());
+        assertEquals(Integer.parseInt(light.get("max_average")), cll.maxFrameAverageLightLevel());
+        var display = color.masteringDisplay().orElseThrow();
+        // Matroska stores the values as floats, which ffmpeg turns into rationals
+        var tolerance = 1e-6;
+        assertEquals(ratio(mastering.get("red_x")), display.red().x(), tolerance);
+        assertEquals(ratio(mastering.get("red_y")), display.red().y(), tolerance);
+        assertEquals(ratio(mastering.get("green_x")), display.green().x(), tolerance);
+        assertEquals(ratio(mastering.get("green_y")), display.green().y(), tolerance);
+        assertEquals(ratio(mastering.get("blue_x")), display.blue().x(), tolerance);
+        assertEquals(ratio(mastering.get("blue_y")), display.blue().y(), tolerance);
+        assertEquals(ratio(mastering.get("white_point_x")), display.whitePoint().x(), tolerance);
+        assertEquals(ratio(mastering.get("white_point_y")), display.whitePoint().y(), tolerance);
+        assertEquals(ratio(mastering.get("max_luminance")), display.maxLuminance(), tolerance);
+        assertEquals(ratio(mastering.get("min_luminance")), display.minLuminance(), tolerance);
+        // yaw -180 and roll 90: ffprobe's display matrix {0, 1, 1, 0}, a mirror across the main diagonal
+        var matrix = com.github.auties00.smalt.container.ThirdPartyDemux.sideData(side, "Display Matrix")
+                .get("displaymatrix");
+        assertTrue(matrix.contains("00000000:            0       65536           0"), matrix);
+        assertTrue(matrix.contains("00000001:        65536           0           0"), matrix);
+        assertEquals(com.github.auties00.smalt.image.Orientation.TRANSPOSE, video.orientation());
+    }
+
+    private static double ratio(String value) {
+        var slash = value.indexOf('/');
+        return slash < 0 ? Double.parseDouble(value)
+                : Double.parseDouble(value.substring(0, slash)) / Double.parseDouble(value.substring(slash + 1));
+    }
+
+    @Test
     @DisplayName("ignores HDR10+ messages on audio packets")
     void audioIgnored() {
         var source = hevc();

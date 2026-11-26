@@ -36,7 +36,7 @@ class Mpeg4ConformanceTest {
             "vcon-asp14L4"})
     @DisplayName("Advanced Simple streams decode like the reference decoder, within the inverse DCT noise floor")
     void advancedSimple(String name) {
-        var file = Conformance.fetchListed("mpeg4visual-" + name + ".bits");
+        var file = Conformance.vector("mpeg4visual-" + name + ".bits");
         var decoded = Mpeg4TestStreams.decodeElementary(file, Mpeg4Decoder::new);
         var reference = Mpeg4TestStreams.reference(file, decoded.width(), decoded.height(), work);
         var frame = decoded.width() * decoded.height() * 3 / 2;

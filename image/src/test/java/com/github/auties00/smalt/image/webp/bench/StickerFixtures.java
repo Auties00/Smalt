@@ -1,9 +1,9 @@
 package com.github.auties00.smalt.image.webp.bench;
 
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -12,8 +12,8 @@ import java.util.List;
  * Sticker-shaped benchmark inputs: 512x512 RGBA pictures with a soft circular alpha mask, as a
  * cut-out sticker looks once fitted onto its square canvas.
  *
- * <p>Natural content comes from the Xiph {@code 720p5994_stockholm_ter} clip cached by the
- * conformance kit ({@code Conformance.directory()}); synthetic content from ffmpeg's
+ * <p>Natural content comes from the Xiph {@code 720p5994_stockholm_ter} vector of the hosted test data
+ * ({@link Conformance#vector(String)}); synthetic content from ffmpeg's
  * {@code testsrc2}. Every fixture is generated once by ffmpeg and cached by {@link Fixtures}.
  */
 public final class StickerFixtures {
@@ -28,14 +28,9 @@ public final class StickerFixtures {
         throw new AssertionError();
     }
 
-    /** Returns the cached Xiph stockholm clip. */
+    /** Returns the Xiph stockholm clip. */
     public static Path stockholm() {
-        var path = Path.of(com.github.auties00.smalt.testkit.Conformance.directory().toString(),
-                "720p5994_stockholm_ter.y4m");
-        if (!Files.isRegularFile(path)) {
-            throw new IllegalStateException("missing " + path + "; fetch it with the conformance kit first");
-        }
-        return path;
+        return Conformance.vector("720p5994_stockholm_ter.y4m");
     }
 
     /**

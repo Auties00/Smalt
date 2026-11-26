@@ -715,6 +715,14 @@ final class MusepackFrameDecoder {
     }
 
     /**
+     * Sets every subband sample of the frame to zero, the frame libmpcdec synthesizes past the end of a stream.
+     */
+    void silence() {
+        java.util.Arrays.fill(yL, 0);
+        java.util.Arrays.fill(yR, 0);
+    }
+
+    /**
      * Runs the synthesis filter bank over the requantized frame ({@code mpc_decoder_synthese_filter_float}).
      *
      * @param output one plane per channel, receiving 1152 samples from {@code offset}

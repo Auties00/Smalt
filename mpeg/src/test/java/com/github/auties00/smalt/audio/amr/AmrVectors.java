@@ -18,8 +18,8 @@ import java.util.stream.Stream;
 import java.util.zip.ZipInputStream;
 
 /**
- * Fetches the 3GPP digital test sequences of AMR-NB (TS 26.074) and AMR-WB (TS 26.174) and
- * extracts them once into the conformance cache, unpacking the zips nested inside the archives.
+ * Reads the 3GPP digital test sequences of AMR-NB (TS 26.074) and AMR-WB (TS 26.174) from the hosted test data and
+ * extracts them once into the writable cache, unpacking the zips nested inside the archives.
  *
  * <p>The AMR-NB tree holds the linear-PCM sequences: {@code T_INP/} with the encoder inputs and the mode file
  * {@code T21.MOD}, {@code T_475/} to {@code T_122/} with the {@code .COD} encoder outputs and
@@ -43,21 +43,16 @@ import java.util.zip.ZipInputStream;
  * is 320 samples per frame. File names keep the case they have in the archives.
  */
 final class AmrVectors {
-    private static final String NB_URL = "https://www.3gpp.org/ftp/Specs/archive/26_series/26.074/26074-i00.zip";
-    private static final String NB_SHA256 = "176b3281ca76cd9b4bd38d15d4e272b1b7cd54d94df1751bff158ca6958e986d";
-    private static final String WB_URL = "https://www.3gpp.org/ftp/Specs/archive/26_series/26.174/26174-i00.zip";
-    private static final String WB_SHA256 = "5e7ac548aa8219435ae5847e1050b1e9d319bcac130ee279c043abdf2856928f";
-
     private static final Object LOCK = new Object();
 
     private AmrVectors() {
     }
 
     /**
-     * Returns the root of the extracted AMR-NB linear sequences, fetching them when needed.
+     * Returns the root of the extracted AMR-NB linear sequences, extracting them when needed.
      */
     static Path narrowband() {
-        var archive = Conformance.fetch("3gpp-26074-i00.zip", NB_URL, NB_SHA256);
+        var archive = Conformance.vector("3gpp-26074-i00.zip");
         return extracted(archive, "3gpp-26074-i00", name -> {
             var upper = name.toUpperCase(Locale.ROOT);
             if (upper.endsWith(".ZIP")) {
@@ -70,11 +65,11 @@ final class AmrVectors {
     }
 
     /**
-     * Returns the root of the extracted A-law, mu-law and VAD option 2 AMR-NB sequences, fetching
+     * Returns the root of the extracted A-law, mu-law and VAD option 2 AMR-NB sequences, extracting
      * them when needed.
      */
     static Path narrowbandExtended() {
-        var archive = Conformance.fetch("3gpp-26074-i00.zip", NB_URL, NB_SHA256);
+        var archive = Conformance.vector("3gpp-26074-i00.zip");
         return extracted(archive, "3gpp-26074-i00-ext", name -> {
             var upper = name.toUpperCase(Locale.ROOT);
             if (upper.endsWith(".ZIP")) {
@@ -89,10 +84,10 @@ final class AmrVectors {
     }
 
     /**
-     * Returns the root of the extracted AMR-WB sequences, fetching them when needed.
+     * Returns the root of the extracted AMR-WB sequences, extracting them when needed.
      */
     static Path wideband() {
-        var archive = Conformance.fetch("3gpp-26174-i00.zip", WB_URL, WB_SHA256);
+        var archive = Conformance.vector("3gpp-26174-i00.zip");
         return extracted(archive, "3gpp-26174-i00", name -> {
             var upper = name.toUpperCase(Locale.ROOT);
             return upper.endsWith(".ZIP") || upper.endsWith(".COD") || upper.endsWith(".OUT")
@@ -152,15 +147,15 @@ final class AmrVectors {
     }
 
     private static Path extracted(Path archive, String name, Predicate<String> keep) {
-        var target = Conformance.directory().resolve(name);
+        var cache = Conformance.cache("amr");
+        var target = cache.resolve(name);
         var marker = target.resolve(".complete");
         synchronized (LOCK) {
             if (Files.isRegularFile(marker)) {
                 return target;
             }
             try {
-                Files.createDirectories(Conformance.directory());
-                var temporary = Files.createTempDirectory(Conformance.directory(), name + "-");
+                var temporary = Files.createTempDirectory(cache, name + "-");
                 try (var input = Files.newInputStream(archive)) {
                     unzip(input, temporary, keep, 0);
                 }

@@ -92,6 +92,26 @@ class Vp8AlphaDifferentialTest {
                 "the clip is translucent");
     }
 
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({"chromium-bear-vp8a.webm", "chromium-bear-vp8a-odd-dimensions.webm"})
+    @DisplayName("decodes Chromium's alpha WebM files, odd sizes included, to the frames of ffmpeg's libvpx decoder")
+    void chromium(String name) {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var smalt = AlphaClips.read(file);
+        assertFalse(smalt.isEmpty(), name);
+        int width;
+        int height;
+        try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(
+                com.github.auties00.smalt.io.MediaSource.of(com.github.auties00.smalt.testkit.Fixtures.read(file)))) {
+            var track = (com.github.auties00.smalt.track.VideoTrack) demuxer.tracks().stream()
+                    .filter(com.github.auties00.smalt.track.VideoTrack.class::isInstance).findFirst().orElseThrow();
+            width = track.width();
+            height = track.height();
+        }
+        DECODE.assertFrames(name, AlphaClips.ffmpegYuva(file, "libvpx"), concat(smalt),
+                AlphaClips.yuvaFrameSize(width, height));
+    }
+
     @Test
     @DisplayName("the core sample made by tools/testdata/behavior decodes like ffmpeg's libvpx decoder")
     void coreSample() {

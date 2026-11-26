@@ -208,4 +208,36 @@ class GsmCodecTest {
         assertEquals(500, decoder.conceal(500, (AudioBuffer block) -> produced[0] += block.frames()));
         assertEquals(500, produced[0]);
     }
+
+    @Test
+    @DisplayName("codes the Software Tool Library's sine to frames that libgsm, through ffmpeg, decodes to this decoder's samples")
+    void stlSine(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws IOException {
+        // sine.lin of the ITU-T STL RPE-LTP (cbacae9), 20 frames of 16-bit samples in the library's high-byte-first
+        // order; no reference coding ships with it, so libgsm, the coder the STL's RPE-LTP is, decodes ours
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var bytes = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                "rpeltp-stl-sine.lin"));
+        var samples = new short[bytes.length / 2];
+        ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).asShortBuffer().get(samples);
+        var plane = new int[samples.length];
+        for (var i = 0; i < samples.length; i++) {
+            plane[i] = samples[i];
+        }
+        var packets = TelephonyStreams.encode(new GsmEncoder(Codec.GSM), new int[][]{plane});
+        assertEquals(20, packets.size());
+        var file = directory.resolve("sine.gsm");
+        java.nio.file.Files.write(file, concat(packets));
+        var raw = com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG,
+                java.time.Duration.ofMinutes(1), List.of("-v", "error", "-xerror", "-f", "gsm", "-c:a", "libgsm", "-i",
+                        file.toString(), "-f", "s16le", "-"));
+        var reference = new short[raw.length / 2];
+        ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(reference);
+        var ours = TelephonyStreams.decodeShorts(AudioDecoders.create(track(Codec.GSM)), packets);
+        assertArrayEquals(reference, ours);
+        var peak = 0;
+        for (var sample : ours) {
+            peak = Math.max(peak, Math.abs(sample));
+        }
+        assertTrue(peak > 1000, "the decode of the sine is near silence: peak " + peak);
+    }
 }

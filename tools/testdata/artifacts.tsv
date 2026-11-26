@@ -1,0 +1,10 @@
+# The published test data, one OCI artifact per area; see testdata.py. Columns:
+# area	reference
+clips	ghcr.io/auties00/smalt-testdata@sha256:f55a9b081bb9f93a6964fbb625f2291819b14a52392b1be7d10c7e36ef0035da
+containers	ghcr.io/auties00/smalt-testdata@sha256:1baa70df7f6c33ba8212d4745cc1a38caf798b828aaf78a3b38730767671602c
+images	ghcr.io/auties00/smalt-testdata@sha256:6e2e37f5c56b930178ea50af49df3e8aba21c735af5b965b58c046bb88145c91
+mpeg-audio	ghcr.io/auties00/smalt-testdata@sha256:986c47f7df0b63c8df588839bef96c38ceeabb90c0ef2ef97affee9a24137667
+mpeg-video	ghcr.io/auties00/smalt-testdata@sha256:426a963aa21029b366a9c623e4123f55f8fc0eea3f2f59062ccdd688254d4604
+open-audio	ghcr.io/auties00/smalt-testdata@sha256:a524b0518b0ad8e99b603155562108ba716e9ae0d450fab3da6a2623ce368ac7
+open-video	ghcr.io/auties00/smalt-testdata@sha256:3ef0894217d64b9e924fb02f213b40c2a7e72b679ec04ae15695da99046849c1
+raw	ghcr.io/auties00/smalt-testdata@sha256:1a4dfbcff9385e7fbcf41bc0d18fe91be8c7ee16fa1b096645a1ae604c691bd9

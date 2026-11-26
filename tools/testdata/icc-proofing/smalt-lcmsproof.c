@@ -2,10 +2,11 @@
  * Writes the Little CMS reference outputs of the proofing, black-preserving, floating-point and profile building
  * tests of smalt-core (ProofingTransformTest, FloatTransformTest, BlackPreservationTest, ProfileBuildingTest).
  *
- *   smalt-lcmsproof <conformance cache> <advanced profiles> <smalt profiles or -> <directory>
+ *   smalt-lcmsproof <vectors> <advanced profiles> <smalt profiles or -> <directory>
  *
- * <conformance cache> holds the pinned third-party profiles of core's lcms/profiles.tsv (fetched by the tests into
- * ~/.smalt/cache/conformance), <advanced profiles> the profiles of core's image/color/advanced resources, and
+ * <vectors> holds the pinned third-party profiles of core's lcms/profiles.tsv (the vectors directory of the hosted
+ * test data, ~/.smalt/testdata/vectors by default), <advanced profiles> the profiles of core's image/color/advanced
+ * resources, and
  * <smalt profiles> the profiles the main method of the Java test class ProofingFixtures writes (or "-" to skip the
  * cases that read them). The directory receives:
  *   cases.tsv            one transform per line: name, kind (chain or proof), profiles (comma separated), intent
@@ -640,7 +641,7 @@ int main(int argc, char **argv) {
     const char *outputs[] = {"fogra", "swop", "japan", NULL};
     int i;
     if (argc != 5) {
-        fprintf(stderr, "usage: smalt-lcmsproof <conformance cache> <advanced profiles> <smalt profiles or -> <dir>\n");
+        fprintf(stderr, "usage: smalt-lcmsproof <vectors> <advanced profiles> <smalt profiles or -> <dir>\n");
         return 2;
     }
     cache_dir = argv[1];

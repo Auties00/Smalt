@@ -62,7 +62,9 @@ import java.util.Set;
  * layout of the {@code arw} Go package by Sjon Kosse; the tone curve
  * thresholds are read as quarter values on a 12-bit scale indexed by twice the 11-bit
  * value, which makes the curve span the 14-bit range. Sony's lossless compression (TIFF
- * compression 7) goes through the generic lossless JPEG reader. The levels of the models
+ * compression 7) goes through the generic lossless JPEG reader; its frames of four components at half the
+ * tile's width and height hold a two-by-two cell of photosites per pixel, an order found from the CC0 ILCE-1M2
+ * file, in which only this placement gives each color's photosites the smoothness of the scene. The levels of the models
  * without level tags and the white levels were derived from the values Adobe DNG Converter, run as
  * a black box, stores for CC0 sample files of every model of the raw.pixls.us archive, and so was the
  * A900's packing, which reproduces the converter's photosites exactly. So were the variable-length coding, its
@@ -104,6 +106,16 @@ final class ArwParser {
      * The samples of each pixel of an ARQ file.
      */
     private static final int ARQ_SAMPLES = 4;
+
+    /**
+     * The most bytes of a lossless JPEG block read to find its frame header.
+     */
+    private static final int FRAME_HEADER_BYTES = 4096;
+
+    /**
+     * The components of a lossless JPEG frame whose pixels each hold a two-by-two cell of photosites.
+     */
+    private static final int QUAD_COMPONENTS = 4;
 
     /**
      * The TIFF compression of lossless JPEG.
@@ -317,6 +329,9 @@ final class ArwParser {
         } else {
             try {
                 sensor.reader = TiffSamples.describe(raw, sensor);
+                if (compression == LOSSLESS_JPEG) {
+                    sensor.reader = quads(reader, raw, sensor, sensor.reader);
+                }
             } catch (MediaException.Unsupported exception) {
                 file.unsupported = exception.getMessage();
                 return;
@@ -333,14 +348,97 @@ final class ArwParser {
             deltaBlack(reader, tree.first, raw, sensor);
         }
         var crop = CROP_OF_MODEL.get(model);
+        var stated = statedCrop(raw, sensor);
         if (deltaCoded) {
             sensor.defaultCrop = deltaCrop(sensor);
+        } else if (stated != null) {
+            sensor.defaultCrop = stated;
         } else {
             sensor.defaultCrop = crop != null && crop[0] + crop[2] <= sensor.width && crop[1] + crop[3] <= sensor.height
                     ? crop.clone() : centeredCrop(tree.exif, sensor);
         }
         sensor.lens = VendorLens.sony(raw, file.model, sensor.width, sensor.height);
         file.sensor = sensor;
+    }
+
+    /**
+     * Returns the reader of the lossless JPEG blocks of a color filter array image whose frames hold four components
+     * at half the block's width and height, as Sony's lossless compression stores them: the four samples of a frame
+     * pixel are the two-by-two photosites it covers, row by row, not four photosites of one row as the raster order
+     * of DNG files places them. Blocks of another frame shape keep the raster order.
+     *
+     * @param reader the TIFF structure
+     * @param raw the raw image directory
+     * @param sensor the sensor description, its size and samples set
+     * @param stored the reader placing the samples in raster order
+     * @return the reader
+     */
+    private static Sensor.Reader quads(TiffReader reader, Ifd raw, Sensor sensor, Sensor.Reader stored) {
+        if (sensor.samplesPerPixel != 1 || sensor.floating) {
+            return stored;
+        }
+        var blocks = TiffSamples.blocks(raw, sensor.width, sensor.height);
+        var first = blocks[0];
+        var frame = losslessFrame(reader.bytes(first.offset(), Math.min(first.length(), FRAME_HEADER_BYTES)));
+        var blockWidth = first.width();
+        var blockHeight = first.height();
+        if (frame == null || frame[2] != QUAD_COMPONENTS || frame[0] * 2 != blockWidth || frame[1] * 2 != blockHeight) {
+            return stored;
+        }
+        var paddedWidth = (sensor.width + blockWidth - 1) / blockWidth * blockWidth;
+        var paddedHeight = (sensor.height + blockHeight - 1) / blockHeight * blockHeight;
+        return (plane, limits) -> {
+            // the raster order fills whole blocks, so the plane it fills is padded to whole blocks
+            var padded = new SensorPlane(paddedWidth, paddedHeight, 1, false, limits);
+            stored.read(padded, limits);
+            var in = padded.integers;
+            var out = plane.integers;
+            for (var top = 0; top < plane.height; top += blockHeight) {
+                for (var left = 0; left < plane.width; left += blockWidth) {
+                    for (var y = 0; y < blockHeight / 2; y++) {
+                        for (var index = 0; index < 2 * blockWidth; index++) {
+                            var component = index & 3;
+                            var row = top + 2 * y + (component >> 1);
+                            var column = left + 2 * (index >> 2) + (component & 1);
+                            if (row < plane.height && column < plane.width) {
+                                out[row * plane.width + column] = in[(top + 2 * y + index / blockWidth) * paddedWidth
+                                        + left + index % blockWidth];
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    /**
+     * Reads the frame header (SOF3) of a lossless JPEG stream.
+     *
+     * @param data the first bytes of the stream
+     * @return the frame's width, height and number of components, or {@code null} when the bytes hold no lossless
+     * frame header
+     */
+    private static int[] losslessFrame(byte[] data) {
+        if (data.length < 4 || (data[0] & 0xFF) != 0xFF || (data[1] & 0xFF) != 0xD8) {
+            return null;
+        }
+        var position = 2;
+        while (position + 4 <= data.length && (data[position] & 0xFF) == 0xFF) {
+            var marker = data[position + 1] & 0xFF;
+            var length = ByteArrays.u16be(data, position + 2);
+            if (marker == 0xC3) {
+                if (position + 10 > data.length) {
+                    return null;
+                }
+                return new int[]{ByteArrays.u16be(data, position + 7), ByteArrays.u16be(data, position + 5),
+                        data[position + 9] & 0xFF};
+            }
+            if (marker == 0xDA || length < 2) {
+                return null;
+            }
+            position += 2 + length;
+        }
+        return null;
     }
 
     /**
@@ -665,6 +763,26 @@ final class ArwParser {
         }
         file.color.asShotNeutral = neutral;
         return true;
+    }
+
+    /**
+     * Returns the default crop the raw image directory of the newer models states, with the DNG tags
+     * {@code DefaultCropOrigin} and {@code DefaultCropSize}: the ILCE-1M2's image starts 12 photosites from the
+     * top-left corner of a sensor image padded far past it, where a centered crop would take in the padding.
+     *
+     * @param raw the raw image directory
+     * @param sensor the sensor description, its size set
+     * @return the crop as x, y, width and height, or {@code null} when the directory states none inside the image
+     */
+    private static double[] statedCrop(Ifd raw, Sensor sensor) {
+        var origin = raw.doubles(50719);
+        var size = raw.doubles(50720);
+        if (origin == null || size == null || origin.length != 2 || size.length != 2 || size[0] <= 0 || size[1] <= 0
+                || origin[0] < 0 || origin[1] < 0 || origin[0] + size[0] > sensor.width
+                || origin[1] + size[1] > sensor.height) {
+            return null;
+        }
+        return new double[]{origin[0], origin[1], size[0], size[1]};
     }
 
     /**

@@ -270,4 +270,122 @@ class Mp4DemuxerTest {
             assertEquals(1, backward[1], "large samples crossing the read-ahead window are not read again");
         }
     }
+
+    @Nested
+    @DisplayName("FATE samples")
+    class Fate {
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"fate-mov-frag_overlap.mp4",
+                "fate-mov-fake-gp-media-with-real-gpmf.mp4", "fate-mov-mp4-init-nonkeyframe.mp4", "fate-mov-amve.mov",
+                "fate-mov-mov-t35-cdsc-track.mp4", "fate-mov-fcp_export8-236.mov"})
+        @DisplayName("match ffprobe packet by packet: overlapping fragments, GPMF, a non-key first sample, ambient "
+                + "viewing environment, a T.35 metadata track, Final Cut DV")
+        void matchesFfprobe(String name) {
+            com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe(name,
+                    source -> new Mp4Demuxer(source));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"fate-mov-displaymatrix.mov",
+                "fate-mov-white_zombie_scrunch-part.mov"})
+        @DisplayName("read a cut file up to the cut")
+        void cut(String name) {
+            com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe(name,
+                    source -> new Mp4Demuxer(source),
+                    com.github.auties00.smalt.container.ThirdPartyDemux.Options.DEFAULT.cutShort());
+        }
+
+        @Test
+        @DisplayName("reads the rotation of a display matrix as ffprobe does")
+        void displayMatrix() {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-mov-displaymatrix.mov");
+            var probe = ContainerProbe.probe(file);
+            // ffprobe's rotation is counter-clockwise, the orientation clockwise
+            var rotation = probe.streams().getFirst().rotation();
+            assertEquals(-90, rotation);
+            try (var source = MediaSource.of(file); var demuxer = new Mp4Demuxer(source)) {
+                var video = (VideoTrack) demuxer.tracks().getFirst();
+                assertEquals(Orientation.ofRotation(-rotation, false), video.orientation());
+            }
+        }
+
+        @Test
+        @DisplayName("rejects only as malformed the samples a 32-bit offset overflow puts past the end")
+        void faststartOverflow() {
+            // the co64 offset 0x100000016 lies past the 1301-byte file: ffmpeg reports a partial file
+            var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-mov-faststart-4gb-overflow.mov");
+            try (var source = MediaSource.of(file); var demuxer = new Mp4Demuxer(source)) {
+                var audio = (AudioTrack) demuxer.tracks().getFirst();
+                assertEquals(Codec.AAC, audio.codec());
+                assertEquals(48000, audio.timeBase().denominator());
+                var error = org.junit.jupiter.api.Assertions.assertThrows(
+                        com.github.auties00.smalt.MediaException.Malformed.class, demuxer::read);
+                assertTrue(error.getMessage().contains("4294967295") || error.getMessage().contains("past the end"),
+                        error.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("gives each sample of a recording's moov and fragment one contiguous presentation")
+        void fragmentedRecording() {
+            // the moov's samples have negative composition offsets, which both readers shift by 48 ticks (the cslg
+            // shift) so that no frame precedes zero; ffmpeg does not shift the fragment, which leaves a 48-tick gap
+            // in its presentation where ours continues from the moov's last frame
+            var name = "fate-mov-frag-recording-negative-cts.mov";
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var ours = com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe(name,
+                    source -> new Mp4Demuxer(source),
+                    com.github.auties00.smalt.container.ThirdPartyDemux.Options.DEFAULT.withoutTimestamps());
+            var expected = ContainerProbe.probe(file).packets();
+            var packets = ours.order();
+            assertEquals(20, packets.size());
+            var moovEnd = 0L;
+            var fragmentStart = Long.MAX_VALUE;
+            for (var index = 0; index < packets.size(); index++) {
+                var shift = index < 10 ? 0 : 48;
+                assertEquals(expected.get(index).pts() - shift, packets.get(index).pts(), "pts of " + index);
+                assertEquals(expected.get(index).dts() - shift, packets.get(index).dts(), "dts of " + index);
+                if (index < 10) {
+                    moovEnd = Math.max(moovEnd, packets.get(index).pts() + packets.get(index).duration());
+                } else {
+                    fragmentStart = Math.min(fragmentStart, packets.get(index).pts());
+                }
+            }
+            assertEquals(moovEnd, fragmentStart);
+            assertEquals(packets.get(9).dts() + packets.get(9).duration(), packets.get(10).dts());
+        }
+    }
+
+    @Nested
+    @DisplayName("GoPro cameras")
+    class GoPro {
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"gpmf-Fusion.mp4", "gpmf-hero5.mp4",
+                "gpmf-hero6-ble.mp4", "gpmf-hero6.mp4", "gpmf-hero6a.mp4", "gpmf-hero7.mp4", "gpmf-hero8.mp4",
+                "gpmf-karma.mp4", "gpmf-max-360mode.mp4", "gpmf-max-heromode.mp4"})
+        @DisplayName("read a camera file, its GPMF and timecode tracks included, as ffprobe does")
+        void matchesFfprobe(String name) {
+            var ours = com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe(name,
+                    source -> new Mp4Demuxer(source));
+            assertTrue(ours.tracks().stream().anyMatch(track -> track.kind() == TrackKind.DATA),
+                    name + " has its GPMF track");
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"gpmf-Fusion", "gpmf-hero5", "gpmf-hero6-ble",
+                "gpmf-hero6", "gpmf-karma"})
+        @DisplayName("return the GPMF payload gpmf-parser's sample extracts as a packet of the GPMF track")
+        void payload(String name) throws Exception {
+            var raw = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                    name + ".raw"));
+            var ours = ContainerProbe.demux(com.github.auties00.smalt.testkit.Conformance.vector(name + ".mp4"),
+                    source -> new Mp4Demuxer(source));
+            // the payload is a GPMF KLV stream: DEVC, the device container, first
+            assertEquals("DEVC", new String(raw, 0, 4, java.nio.charset.StandardCharsets.US_ASCII));
+            var found = ours.tracks().stream().filter(track -> track.kind() == TrackKind.DATA)
+                    .flatMap(track -> ours.packetsOf(track).stream())
+                    .anyMatch(packet -> Arrays.equals(raw, packet.data()));
+            assertTrue(found, name + ": no packet of the GPMF track is the extracted payload");
+        }
+    }
 }

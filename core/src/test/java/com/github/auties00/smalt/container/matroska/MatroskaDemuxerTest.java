@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.ContainerProbe;
 import com.github.auties00.smalt.container.DemuxAssertions;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.container.ThirdPartyDemux;
 import com.github.auties00.smalt.image.ChromaSiting;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ContentLightLevel;
@@ -13,6 +14,7 @@ import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.compress.CompressVectors;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.container.DemuxerAsserts;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -27,6 +29,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -934,6 +937,54 @@ class MatroskaDemuxerTest {
                     // the block cut in half
                 }
                 assertTrue(count > 10);
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("FATE samples")
+    class Fate {
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"fate-mkv-lzo.mka", "fate-mkv-prores_zlib.mkv", "fate-mkv-subtitle_zlib.mks",
+                "fate-mkv-xiph_lacing.mka", "fate-mkv-zero_length_block.mks", "fate-mkv-codec_delay_opus.mkv",
+                "fate-mkv-flac_channel_layouts.mka"})
+        @DisplayName("match ffprobe packet by packet: LZO, zlib and header stripping, Xiph lacing, CodecDelay, Tracks "
+                + "found through a second SeekHead")
+        void matchesFfprobe(String name) {
+            // block timestamps are in milliseconds: a sample time rescaled to them rounds within one
+            ThirdPartyDemux.assertMatchesFfprobe(name, source -> new MatroskaDemuxer(source),
+                    ThirdPartyDemux.Options.DEFAULT.ptsTolerance(1));
+        }
+
+        @Test
+        @DisplayName("reads a cut file up to the cut")
+        void cut() {
+            ThirdPartyDemux.assertMatchesFfprobe("fate-mkv-1242-small.mkv", source -> new MatroskaDemuxer(source),
+                    ThirdPartyDemux.Options.DEFAULT.ptsTolerance(1).cutShort());
+        }
+
+        @Test
+        @DisplayName("decompresses bzip2 ProRes frames to the frames of the uncompressed track")
+        void bzip2() {
+            var file = Conformance.vector("fate-mkv-prores_bz2.mkv");
+            var ours = ContainerProbe.demux(file, source -> new MatroskaDemuxer(source));
+            var probe = ContainerProbe.probe(file);
+            var data = ContainerProbe.packetData(file);
+            assertEquals(2, ours.tracks().size());
+            assertEquals(probe.packets().size(), ours.order().size());
+            for (var index = 0; index < data.size(); index++) {
+                // the Matroska ProRes mapping stores a frame without its first 8 bytes (frame size and 'icpf'),
+                // which ffmpeg restores
+                var expected = data.get(index);
+                assertEquals("icpf", new String(expected, 4, 4, java.nio.charset.StandardCharsets.US_ASCII));
+                assertArrayEquals(Arrays.copyOfRange(expected, 8, expected.length), ours.order().get(index).data(),
+                        "packet " + index);
+            }
+            var plain = ours.packetsOf(ours.tracks().get(0));
+            var compressed = ours.packetsOf(ours.tracks().get(1));
+            assertEquals(plain.size(), compressed.size());
+            for (var index = 0; index < plain.size(); index++) {
+                assertArrayEquals(plain.get(index).data(), compressed.get(index).data(), "frame " + index);
             }
         }
     }

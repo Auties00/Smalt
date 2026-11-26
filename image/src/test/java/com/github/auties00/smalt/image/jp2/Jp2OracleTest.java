@@ -41,7 +41,7 @@ class Jp2OracleTest {
     @DisplayName("decodes the same samples")
     void same(String name, int reduction, int layers) {
         OpenJpeg.assume("opj_decompress");
-        var data = Jp2TestVectors.fetch("input/conformance/" + name);
+        var data = Jp2TestVectors.vector("input/conformance/" + name);
         var options = Jp2DecoderOptions.builder().reduction(reduction)
                 .limits(MediaLimits.builder().maxChannels(16384).build()).build();
         if (layers > 0) {

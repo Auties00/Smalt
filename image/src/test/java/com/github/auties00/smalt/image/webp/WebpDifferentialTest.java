@@ -259,8 +259,7 @@ class WebpDifferentialTest {
         @Test
         @DisplayName("gstatic animated/1.webp composites to libwebp WebPAnimDecoder's frames (needs VP8)")
         void gstatic() throws Exception {
-            var path = Conformance.fetch("gstatic-animated-1.webp", "https://www.gstatic.com/webp/animated/1.webp",
-                    "8afc28fef9bba14b5eecbbc6bb8b4379dc96b6ebc3e0845607ced41b7dda337c");
+            var path = Conformance.vector("gstatic-animated-1.webp");
             var file = WebpTestSupport.readFile(path);
             var info = WebpDecoder.probe(MediaSource.of(file));
             assertEquals(300, info.width());

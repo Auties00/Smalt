@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.io;
 
-import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.image.ChannelPicture;
@@ -122,10 +121,7 @@ class SourceKindsDecodeTest {
                 image("tiff", "tiff"),
                 image("jpeg 2000", "jp2", "-c:v", "libopenjpeg"),
                 image("avif", "avif", "-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "8")));
-        var jxl = Conformance.directory().resolve("jxl-conformance-sunset_logo.jxl");
-        if (Files.isRegularFile(jxl)) {
-            fixtures.add(new Fixture("jpeg xl", true, jxl));
-        }
+        fixtures.add(new Fixture("jpeg xl", true, Conformance.vector("jxl-conformance-sunset_logo.jxl")));
         return fixtures;
     }
 
@@ -306,7 +302,6 @@ class SourceKindsDecodeTest {
     @MethodSource("cases")
     @DisplayName("decodes exactly as from a byte array")
     void decodes(Fixture fixture, Kind kind) {
-        Skip.unless(Files.isRegularFile(fixture.path()), "data:fixture", fixture.path() + " was not written");
         var expected = EXPECTED.computeIfAbsent(fixture.name(), _ -> decode(fixture, path -> MediaSource.of(read(path))));
         assertFalse(expected.isEmpty(), "the reference decode produced nothing");
         assertEquals(expected, decode(fixture, kind.open()));

@@ -267,7 +267,7 @@ class AvifSampleTransformTest {
         @Test
         @DisplayName("decode to 16 bits as 16 * base + hidden - 128 of its two inputs decoded on their own")
         void handComposition() throws IOException {
-            var data = Files.readAllBytes(Conformance.fetchListed(VECTOR));
+            var data = Files.readAllBytes(Conformance.vector(VECTOR));
             var source = MediaSource.of(data);
             var file = HeifFile.parse(source, MediaLimits.DEFAULT);
             var sato = file.items().stream().filter(item -> item.type().equals("sato")).findFirst().orElseThrow();
@@ -298,7 +298,7 @@ class AvifSampleTransformTest {
         @DisplayName("decode closer to the 16-bit PNG it was encoded from than its 12-bit base image alone")
         void againstSource() throws IOException {
             Oracle.assume(Oracle.Tool.FFMPEG);
-            var data = Files.readAllBytes(Conformance.fetchListed(VECTOR));
+            var data = Files.readAllBytes(Conformance.vector(VECTOR));
             var source = MediaSource.of(data);
             var decoded = assertInstanceOf(Yuv16Picture.class, AvifDecoder.decode(source, WIDE).picture());
             var file = HeifFile.parse(source, MediaLimits.DEFAULT);
@@ -315,7 +315,7 @@ class AvifSampleTransformTest {
             var raw = Files.createTempFile("weld", ".rgb48");
             try {
                 Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), List.of("-v", "error", "-y", "-i",
-                        Conformance.fetchListed(REFERENCE).toString(), "-f", "rawvideo", "-pix_fmt", "rgb48le",
+                        Conformance.vector(REFERENCE).toString(), "-f", "rawvideo", "-pix_fmt", "rgb48le",
                         raw.toString()));
                 var reference = Files.readAllBytes(raw);
                 var transformed = psnr(ImageOps.toRgba16(decoded), reference);

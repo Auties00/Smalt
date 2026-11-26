@@ -45,24 +45,20 @@ class JpegChannelsTest {
         return JpegDecoder.decode(MediaSource.of(jpeg), options);
     }
 
-    static byte[] skia(String name, String sha256, String file) {
+    static byte[] skia(String name) {
         try {
-            return Files.readAllBytes(Conformance.fetch(name,
-                    "https://raw.githubusercontent.com/google/skia/0c98530bf7d68e59147c2f1b06d8825c4302af8c/resources/images/"
-                            + file, sha256));
+            return Files.readAllBytes(Conformance.vector(name));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
     }
 
     static byte[] mandrill() {
-        return skia("skia-image-mandrill_cmyk.jpg", "5a9f4a74035b1795575bad48bf2b54ed12987f2862feb4eb590badc51fdc4470",
-                "mandrill_cmyk.jpg");
+        return skia("skia-image-mandrill_cmyk.jpg");
     }
 
     static byte[] cmyk() {
-        return skia("skia-image-CMYK.jpg", "8d2abbcf9bd9460b54198e1939e518bd2ca92baee234a5767c86461dbe455ec1",
-                "CMYK.jpg");
+        return skia("skia-image-CMYK.jpg");
     }
 
     @Nested

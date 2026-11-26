@@ -292,7 +292,7 @@ class JxlFeaturesTest {
             var icc = JxlCodestream.open(data, MediaLimits.DEFAULT).icc();
             assertArrayEquals(icc, image.iccProfile().orElseThrow());
             var curve = grayCurve(icc);
-            var reference = test.reference();
+            var reference = test.referenceDecode();
             var picture = ImageOps.toRgba16(image.picture());
             var expected = new byte[picture.width() * picture.height()];
             var actual = new byte[expected.length];
@@ -692,6 +692,78 @@ class JxlFeaturesTest {
                             JxlDifferentialTest.tight((RgbaPicture) actual.picture()));
                 }
             }
+        }
+    }
+
+    /**
+     * libjxl's test data ({@code jxl-testdata-*}): cropped frames blended over earlier frames and splines on the
+     * first frame, against the reference renders shipped next to them (8-bit PNGs, compared within one level, the
+     * rounding of libjxl's 8-bit export), and the splines and extended-size container files against djxl.
+     */
+    @Nested
+    @DisplayName("libjxl test data")
+    class LibjxlTestData {
+        private static byte[] read(String name) {
+            try {
+                return Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector("jxl-testdata-" + name));
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+        }
+
+        private static byte[] png(String name) {
+            return com.github.auties00.smalt.testkit.image.RasterTesting.tight(ImageOps.toRgba(ImageOps.toEightBit(
+                    com.github.auties00.smalt.image.png.PngDecoder.decode(MediaSource.of(read(name)),
+                            ImageDecoderOptions.defaults()).picture())));
+        }
+
+        @Test
+        @DisplayName("blends the cropped frames of cropped_traffic_light as its reference frames show")
+        void croppedFrames() {
+            try (var reader = JxlDecoder.openAnimation(MediaSource.of(read("cropped_traffic_light.jxl")),
+                    ImageDecoderOptions.defaults())) {
+                for (var index = 0; index < 4; index++) {
+                    var frame = reader.read();
+                    assertNotNull(frame, "frame " + index);
+                    var ours = com.github.auties00.smalt.testkit.image.RasterTesting.tight(ImageOps.toRgba(
+                            ImageOps.toEightBit(frame.picture())));
+                    Tolerance.maxAbs(1).assertWithin("frame " + index,
+                            png("cropped_traffic_light_frame-" + index + ".png"), ours);
+                }
+                assertNull(reader.read(), "four frames");
+            }
+        }
+
+        @Test
+        @DisplayName("draws the splines of a first frame as its reference render shows")
+        void splineOnFirstFrame() {
+            var image = JxlDecoder.decode(MediaSource.of(read("spline_on_first_frame.jxl")));
+            var ours = com.github.auties00.smalt.testkit.image.RasterTesting.tight(ImageOps.toRgba(
+                    ImageOps.toEightBit(image.picture())));
+            Tolerance.maxAbs(1).assertWithin("spline_on_first_frame", png("spline_on_first_frame.png"), ours);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"splines.jxl", "square-extended-size-container.jxl"})
+        @DisplayName("decodes splines and a container of 64-bit box sizes as djxl does")
+        void againstDjxl(String name) {
+            com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.DJXL);
+            var file = read(name);
+            var input = com.github.auties00.smalt.testkit.image.RasterTesting.write("testdata-" + name, file);
+            var output = input.resolveSibling("testdata-" + name + ".png");
+            com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.DJXL,
+                    java.time.Duration.ofMinutes(2), List.of(input.toString(), output.toString(), "--quiet"));
+            byte[] expected;
+            try {
+                expected = com.github.auties00.smalt.testkit.image.RasterTesting.tight(ImageOps.toRgba(
+                        ImageOps.toEightBit(com.github.auties00.smalt.image.png.PngDecoder.decode(MediaSource.of(
+                                Files.readAllBytes(output)), ImageDecoderOptions.defaults()).picture())));
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+            var ours = com.github.auties00.smalt.testkit.image.RasterTesting.tight(ImageOps.toRgba(
+                    ImageOps.toEightBit(JxlDecoder.decode(MediaSource.of(file)).picture())));
+            Tolerance.maxAbs(1).assertWithin(name, expected, ours);
         }
     }
 }

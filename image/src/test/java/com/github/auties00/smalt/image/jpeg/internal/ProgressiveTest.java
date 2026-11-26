@@ -51,17 +51,16 @@ class ProgressiveTest {
                 .optimizeHuffman(false).build());
     }
 
-    private static byte[] vector(String name, String url, String sha256) {
+    private static byte[] vector(String name) {
         try {
-            return Files.readAllBytes(Conformance.fetch(name, url, sha256));
+            return Files.readAllBytes(Conformance.vector(name));
         } catch (IOException exception) {
             throw new java.io.UncheckedIOException(exception);
         }
     }
 
     private static byte[] testorigPpm() {
-        return vector("ljt-testorig.ppm", "https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/testorig.ppm",
-                "4afe49cb62ba87be1a958d7fd29b822a2ba1a0e966d1136f616ee5353691a002");
+        return vector("ljt-testorig.ppm");
     }
 
     private static JpegCoefficients coefficients(byte[] jpeg) {
@@ -161,10 +160,8 @@ class ProgressiveTest {
     @Test
     @DisplayName("reproduces IJG's testimgp.jpg (cjpeg -dct int -progressive -optimize) byte for byte")
     void testimgp() {
-        var ppm = vector("ijg6b-testimg.ppm", "https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/jpeg-6b/testimg.ppm",
-                "b64a47d529e289e5570648db9f0385d9b240448724cdde7716fa0139b121d491");
-        var expected = vector("ijg6b-testimgp.jpg", "https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/jpeg-6b/testimgp.jpg",
-                "e9486e697b7082a324fe2812310303e13b0ddf67b073eacb4b9d8a53e50b7ea7");
+        var ppm = vector("ijg6b-testimg.ppm");
+        var expected = vector("ijg6b-testimgp.jpg");
         var writer = TestJpegWriter.of(coefficients(ppmToJpeg(ppm, ChromaFormat.YUV420)));
         var actual = writer.progressive(TestJpegWriter.simpleProgression(3, true));
         try {

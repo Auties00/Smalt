@@ -215,7 +215,7 @@ class ImageDecoderBehaviorTest {
     @MethodSource("pngSuite")
     @DisplayName("PngSuite: identical pictures under every source behavior and clean faults")
     void pngSuite(String name) {
-        var files = RasterTesting.untarGz(Conformance.fetchListed("PngSuite-2017jul19.tgz"));
+        var files = RasterTesting.untarGz(Conformance.vector("PngSuite-2017jul19.tgz"));
         ImageDecoderAsserts.of("pngsuite/" + name, files.get(name)).run();
     }
 
@@ -224,7 +224,7 @@ class ImageDecoderBehaviorTest {
     @DisplayName("BMP Suite: identical pictures under every source behavior and clean faults")
     void bmpSuite(String name) throws IOException {
         var files = new HashMap<String, byte[]>();
-        try (var input = new ZipInputStream(Files.newInputStream(Conformance.fetchListed("bmpsuite-2.8.zip")))) {
+        try (var input = new ZipInputStream(Files.newInputStream(Conformance.vector("bmpsuite-2.8.zip")))) {
             for (var entry = input.getNextEntry(); entry != null; entry = input.getNextEntry()) {
                 files.put(entry.getName().substring(entry.getName().indexOf('/') + 1), input.readAllBytes());
             }
@@ -237,7 +237,7 @@ class ImageDecoderBehaviorTest {
             "T83_process15/P2.JPG"})
     @DisplayName("ITU-T T.83 lossless streams: identical pictures under every source behavior and clean faults")
     void t83(String entry) throws IOException {
-        try (var zip = new ZipFile(Conformance.fetchListed("itu-t83-data-files.zip").toFile());
+        try (var zip = new ZipFile(Conformance.vector("itu-t83-data-files.zip").toFile());
              var input = zip.getInputStream(zip.getEntry(entry))) {
             ImageDecoderAsserts.of("t83/" + entry.substring(entry.indexOf('/') + 1), input.readAllBytes()).run();
         }
@@ -249,7 +249,7 @@ class ImageDecoderBehaviorTest {
             "T87_test-11-12/T16E3.JLS"})
     @DisplayName("ITU-T T.87 JPEG-LS streams: identical pictures under every source behavior and clean faults")
     void t87(String entry) throws IOException {
-        try (var zip = new ZipFile(Conformance.fetchListed("itu-t87-data-set.zip").toFile());
+        try (var zip = new ZipFile(Conformance.vector("itu-t87-data-set.zip").toFile());
              var input = zip.getInputStream(zip.getEntry(entry))) {
             ImageDecoderAsserts.of("t87/" + entry.substring(entry.indexOf('/') + 1), input.readAllBytes()).run();
         }
@@ -259,7 +259,7 @@ class ImageDecoderBehaviorTest {
     @MethodSource("vectors")
     @DisplayName("smoke vectors: identical pictures under every source behavior and clean faults")
     void vector(String name) throws IOException {
-        ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+        ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.vector(name))).run();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -268,7 +268,7 @@ class ImageDecoderBehaviorTest {
             "ImageFuzzTestInputs/jpegGainMap/valid-ultrahdr-multichannel.jpg"})
     @DisplayName("JPEG gain maps: identical pictures, gain maps and auxiliary images under every source behavior")
     void jpegGainMap(String name) throws IOException {
-        var data = name.startsWith("libavif-") ? Files.readAllBytes(Conformance.fetchListed(name))
+        var data = name.startsWith("libavif-") ? Files.readAllBytes(Conformance.vector(name))
                 : Files.readAllBytes(Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "image",
                 "fuzz").resolve(name));
         ImageDecoderAsserts.of("gainmap/" + name.substring(name.lastIndexOf('/') + 1), data)

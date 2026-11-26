@@ -49,9 +49,6 @@ class Av1DifferentialTest {
     /** AV1 reconstruction is normative, so every frame equals ffmpeg's decode. */
     static final Tolerance TOLERANCE = Tolerance.exact();
 
-    private static final String FOREMAN_URL = "https://media.xiph.org/video/derf/y4m/foreman_cif.y4m";
-    private static final String FOREMAN_SHA256 = "b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b";
-
     record Case(String name, String extension, List<String> input, List<String> output, String pixelFormat) {
         @Override
         public String toString() {
@@ -60,7 +57,7 @@ class Av1DifferentialTest {
     }
 
     private static List<String> foreman(int frames, String filter) {
-        var input = new ArrayList<>(List.of("-i", Conformance.fetch("foreman_cif.y4m", FOREMAN_URL, FOREMAN_SHA256).toString(),
+        var input = new ArrayList<>(List.of("-i", Conformance.vector("foreman_cif.y4m").toString(),
                 "-frames:v", Integer.toString(frames)));
         if (filter != null) {
             input.addAll(List.of("-vf", filter));

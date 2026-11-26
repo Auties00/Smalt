@@ -615,7 +615,7 @@ class Mpeg4ObjectConformanceTest {
         var archive = Conformance.archive(set);
         var path = archive.members().stream().filter(member -> member.endsWith("/" + name) || member.equals(name))
                 .findFirst().orElseThrow();
-        return archive.fetch(path);
+        return archive.member(path);
     }
 
     private static byte[] keep(byte[] frames, int frameSize, int count, Set<Integer> excluded) {

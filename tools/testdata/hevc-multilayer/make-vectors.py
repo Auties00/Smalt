@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Writes the committed multi-layer HEVC vectors of smalt-mpeg's HevcMultilayerVectorTest.
 
-The JCT-VC and JCT-3V conformance streams of the scalable and multiview extensions are fetched, never committed (their
-licence is unstated), so the tests also decode short streams the SHM reference encoder of those extensions
+The JCT-VC and JCT-3V conformance streams of the scalable and multiview extensions come only from the hosted test data,
+never the repository (their licence is unstated), so the tests also decode short streams the SHM reference encoder of those extensions
 (TAppEncoder, BSD-3-Clause, used as a black-box encoder) coded from ffmpeg's testsrc pattern. Every stream carries MD5
 decoded picture hash SEI messages of each layer; the SHM reference decoder (TAppDecoder) checks every hash while it
 decodes the stream, and the script fails unless it reports every picture of every layer as matching and its output is

@@ -978,7 +978,7 @@ class X3fParserTest {
     })
     @DisplayName("decodes the layers of the sample files exactly as the X3F tools library does")
     void samples(RawSamples sample, String sha256) throws Exception {
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             assertEquals(sha256, sha256(decode(RawParser.parse(source, MediaLimits.DEFAULT))));
         }
     }
@@ -995,7 +995,7 @@ class X3fParserTest {
     @DisplayName("describes the sample files: the camera, the image area, the levels and the previews")
     void sampleInfo(RawSamples sample, String model, int width, int height, int sensorWidth, int sensorHeight,
                     long iso, String time, int previews, int bits) {
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var info = RawDecoder.info(source);
             assertEquals(RawFormat.X3F, info.format());
             assertEquals("SIGMA", info.make().orElseThrow());
@@ -1030,7 +1030,7 @@ class X3fParserTest {
     @Test
     @DisplayName("reads the SD14's uncompressed RGB thumbnail, which shows the scene of its JPEG preview")
     void sd14Thumbnail() {
-        try (var source = MediaSource.of(RawSamples.X3F_SD14.fetch())) {
+        try (var source = MediaSource.of(RawSamples.X3F_SD14.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var thumbnail = file.previews.stream().filter(preview -> preview.pixels() != null).findFirst()
                     .orElseThrow();

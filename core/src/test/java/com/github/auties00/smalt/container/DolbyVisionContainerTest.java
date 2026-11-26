@@ -327,8 +327,8 @@ class DolbyVisionContainerTest {
         @Test
         @DisplayName("reads the profile 8.1 configuration and the RPUs dovi_tool extracts, and keeps both in a remux")
         void read() {
-            var mkv = Fixtures.read(com.github.auties00.smalt.testkit.Conformance.fetchListed("dovi-tool-regular.mkv"));
-            var expected = Fixtures.read(com.github.auties00.smalt.testkit.Conformance.fetchListed(
+            var mkv = Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector("dovi-tool-regular.mkv"));
+            var expected = Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(
                     "dovi-tool-regular_rpu.bin"));
             var demuxed = MuxSupport.demux(mkv);
             var track = video(demuxed);
@@ -439,6 +439,55 @@ class DolbyVisionContainerTest {
             var track = video(MuxSupport.demux(data));
             assertEquals(Codec.HEVC, track.codec());
             assertFalse(track.dolbyVision().isPresent());
+        }
+    }
+
+    @Nested
+    @DisplayName("FATE samples")
+    class Fate {
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"fate-mkv-dovi-p7-hvce.mkv", "fate-mpegts-dovi-p7.ts"})
+        @DisplayName("read the profile 7 configuration record of a dual-layer stream as ffprobe does")
+        void profile7(String name) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var ours = name.endsWith(".ts") ? com.github.auties00.smalt.container.ThirdPartyDemux.assertTransportStream(name)
+                    : com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe(name,
+                    com.github.auties00.smalt.container.Containers::openDemuxer);
+            var probe = com.github.auties00.smalt.container.ContainerProbe.probe(file);
+            var side = com.github.auties00.smalt.container.ThirdPartyDemux.sideData(file);
+            var checked = 0;
+            for (var index = 0; index < probe.streams().size(); index++) {
+                var record = com.github.auties00.smalt.container.ThirdPartyDemux.sideData(side.get(index),
+                        "DOVI configuration record");
+                if (record.isEmpty()) {
+                    continue;
+                }
+                var stream = probe.streams().get(index);
+                var track = ours.tracks().stream().filter(candidate -> stream.get("id") == null
+                        || stream.get("id").equals("N/A") ? candidate == ours.tracks().get(stream.index())
+                        : candidate.id() == Long.decode(stream.get("id"))).findFirst().orElseThrow();
+                var video = org.junit.jupiter.api.Assertions.assertInstanceOf(
+                        com.github.auties00.smalt.track.VideoTrack.class, track, name + ": the stream of the record");
+                var dolby = video.dolbyVision().orElseThrow();
+                assertEquals(Integer.parseInt(record.get("dv_version_major")), dolby.versionMajor());
+                assertEquals(Integer.parseInt(record.get("dv_version_minor")), dolby.versionMinor());
+                assertEquals(Integer.parseInt(record.get("dv_profile")), dolby.profile());
+                assertEquals(Integer.parseInt(record.get("dv_level")), dolby.level());
+                assertEquals(record.get("rpu_present_flag").equals("1"), dolby.rpuPresent());
+                assertEquals(record.get("el_present_flag").equals("1"), dolby.enhancementLayerPresent());
+                assertEquals(record.get("bl_present_flag").equals("1"), dolby.baseLayerPresent());
+                assertEquals(Integer.parseInt(record.get("dv_bl_signal_compatibility_id")),
+                        dolby.baseLayerCompatibility());
+                var compression = switch (record.get("dv_md_compression")) {
+                    case "none" -> 0;
+                    case "limited" -> 1;
+                    case "reserved" -> 2;
+                    default -> 3;
+                };
+                assertEquals(compression, dolby.metadataCompression());
+                checked++;
+            }
+            assertTrue(checked > 0);
         }
     }
 }

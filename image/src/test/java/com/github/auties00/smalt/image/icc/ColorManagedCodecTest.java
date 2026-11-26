@@ -77,12 +77,12 @@ class ColorManagedCodecTest {
     }
 
     static Stream<Arguments> images() {
-        return rows().stream().map(row -> Arguments.of(row[0], row[1], row[2], row[5]));
+        return rows().stream().map(row -> Arguments.of(row[0], row[5]));
     }
 
-    static byte[] fetch(String name, String sha256, String url) {
+    static byte[] vector(String name) {
         try {
-            return Files.readAllBytes(Conformance.fetch(name, url, sha256));
+            return Files.readAllBytes(Conformance.vector(name));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
@@ -117,8 +117,8 @@ class ColorManagedCodecTest {
         @ParameterizedTest(name = "{0}")
         @MethodSource("com.github.auties00.smalt.image.icc.ColorManagedCodecTest#images")
         @DisplayName("converts to sRGB as Little CMS does")
-        void convertsLikeLittleCms(String name, String sha256, String url, String digest) {
-            var file = fetch(name, sha256, url);
+        void convertsLikeLittleCms(String name, String digest) {
+            var file = vector(name);
             var plain = decode(file, false);
             var converted = decode(file, true);
             if (digest.equals("-")) {
@@ -147,7 +147,7 @@ class ColorManagedCodecTest {
         @DisplayName("reports a CMYK JPEG's profile only through its bytes, since the default pixels are naive RGB")
         void cmykProfileNotReported() {
             var row = rows().stream().filter(r -> r[0].equals("skia-image-mandrill_cmyk.jpg")).findFirst().orElseThrow();
-            var plain = decode(fetch(row[0], row[1], row[2]), false);
+            var plain = decode(vector(row[0]), false);
             assertTrue(plain.iccProfile().isPresent());
             assertTrue(plain.colorProfile().isEmpty());
             assertEquals(ProfileColorSpace.CMYK, ColorProfile.parse(plain.iccProfile().get()).colorSpace());
@@ -157,7 +157,7 @@ class ColorManagedCodecTest {
         @DisplayName("reports a Display P3 JPEG's profile and keeps its planar picture by default")
         void displayP3() {
             var row = rows().stream().filter(r -> r[0].equals("skia-image-gradient_displayp3.jpeg")).findFirst().orElseThrow();
-            var plain = decode(fetch(row[0], row[1], row[2]), false);
+            var plain = decode(vector(row[0]), false);
             assertInstanceOf(YuvPicture.class, plain.picture());
             var profile = plain.colorProfile().orElseThrow();
             assertEquals(ProfileColorSpace.RGB, profile.colorSpace());
@@ -300,9 +300,7 @@ class ColorManagedCodecTest {
         @DisplayName("a JPEG splits a large profile over several APP2 segments")
         void largeProfileJpeg() {
             // US Web Coated (SWOP), 557168 bytes: nine APP2 segments
-            var row = fetch("skia-icc-misc-US_Web_Coated_SWOP_CMYK.icc",
-                    "4855b8fabb96bdc6495d45d089bb8c8efb1ae18389e0dc9e75a5f701a9c0b662",
-                    "https://raw.githubusercontent.com/google/skia/0c98530bf7d68e59147c2f1b06d8825c4302af8c/resources/icc_profiles/misc/US_Web_Coated_SWOP_CMYK.icc");
+            var row = vector("skia-icc-misc-US_Web_Coated_SWOP_CMYK.icc");
             var profile = ColorProfile.parse(row);
             var file = JpegEncoder.encode(picture(), JpegEncoderOptions.builder().colorProfile(profile).build());
             assertTrue(file.length > row.length);
@@ -337,9 +335,7 @@ class ColorManagedCodecTest {
         @Test
         @DisplayName("a JPEG or a PNG iCCP holding a cicp-tagged PQ profile decodes as HDR")
         void hdrForeignProfile() {
-            var skia = fetch("skia-icc-misc-Rec2020_PQ_cicp.icc",
-                    "fb590ac84cc567c2486fd04c10a074ce08806be07a88a1fc137512b67f29678a",
-                    "https://raw.githubusercontent.com/google/skia/0c98530bf7d68e59147c2f1b06d8825c4302af8c/resources/icc_profiles/misc/Rec2020_PQ_cicp.icc");
+            var skia = vector("skia-icc-misc-Rec2020_PQ_cicp.icc");
             var profile = ColorProfile.parse(skia);
             for (var file : List.of(JpegEncoder.encode(picture(), JpegEncoderOptions.builder().colorProfile(profile).build()),
                     PngEncoder.encode(picture(), PngEncoderOptions.builder().colorProfile(profile).build()))) {

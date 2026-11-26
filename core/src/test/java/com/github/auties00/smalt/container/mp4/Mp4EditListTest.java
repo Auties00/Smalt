@@ -6,7 +6,9 @@ import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.container.ContainerProbe;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.container.ThirdPartyDemux;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
@@ -374,6 +376,75 @@ class Mp4EditListTest {
              var demuxer = new Mp4Demuxer(source)) {
             var demuxed = ContainerProbe.demuxAll(demuxer);
             assertEquals(expected, demuxed.order().stream().map(Mp4EditListTest::describe).toList());
+        }
+    }
+
+    @Nested
+    @DisplayName("FATE samples")
+    class Fate {
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"fate-mov-mov-1elist-ends-last-bframe.mov", "fate-mov-elst_ends_betn_b_and_i.mp4",
+                "fate-mov-empty_edit_5s.mp4", "fate-mov-aac-2048-priming.mov", "fate-mov-mov_neg_first_pts_discard.mov",
+                "fate-mov-invalid_elst_entry_count.mov", "fate-gapless-102400samples_qt-lc-aac.m4a"})
+        @DisplayName("match ffprobe packet by packet")
+        void matchesFfprobe(String name) {
+            ThirdPartyDemux.assertMatchesFfprobe(name, source -> new Mp4Demuxer(source));
+        }
+
+        @Test
+        @DisplayName("keeps every sample of three edits that ffmpeg expands into repeated samples")
+        void threeEdits() {
+            ThirdPartyDemux.assertSamples("fate-mov-mov-3elist.mov", source -> new Mp4Demuxer(source));
+        }
+
+        @Test
+        @DisplayName("starts the presentation after an empty edit of five seconds, as ffprobe's start time")
+        void emptyEdit() {
+            var file = Conformance.vector("fate-mov-empty_edit_5s.mp4");
+            var probe = ContainerProbe.probe(file);
+            var demuxed = ContainerProbe.demux(file, source -> new Mp4Demuxer(source));
+            var track = demuxed.tracks().getFirst();
+            var start = Double.parseDouble(probe.streams().getFirst().get("start_time"));
+            assertEquals(5.0, start);
+            assertEquals(Math.round(start * track.timeBase().denominator() / track.timeBase().numerator()),
+                    demuxed.order().getFirst().pts());
+        }
+
+        @Test
+        @DisplayName("skips the 2048 priming samples an edit list declares")
+        void priming() {
+            var demuxed = ContainerProbe.demux(Conformance.vector("fate-mov-aac-2048-priming.mov"),
+                    source -> new Mp4Demuxer(source));
+            assertEquals(2048, ((AudioTrack) demuxed.tracks().getFirst()).skipSamples());
+        }
+
+        @Test
+        @DisplayName("takes the encoder delay and the length from an iTunSMPB tag of data type 0")
+        void iTunesGapless() {
+            // iTunSMPB " 00000000 00000840 000003C0 0000000000019000 ...": 2112 priming samples, 102400 samples
+            var demuxed = ContainerProbe.demux(Conformance.vector("fate-gapless-102400samples_qt-lc-aac.m4a"),
+                    source -> new Mp4Demuxer(source));
+            var audio = (AudioTrack) demuxed.tracks().getFirst();
+            assertEquals(2112, audio.skipSamples());
+            assertEquals(102400, audio.timeBase().rescale(audio.duration(),
+                    com.github.auties00.smalt.track.Rational.timeBaseOf(audio.sampleRate())));
+        }
+
+        @Test
+        @DisplayName("announces the second sample description of a track on its first sample")
+        void multipleSampleDescriptions() {
+            var ours = ThirdPartyDemux.assertSamples("fate-mov-multi-stsd-edits.mov", source -> new Mp4Demuxer(source));
+            var packets = ours.order();
+            var track = ours.tracks().getFirst();
+            // ffprobe marks the third packet with new extradata: the stsc moves to the second avc1 entry there. The
+            // edits present the second entry's samples first, so the track's configuration is that entry's and the
+            // first packet announces the first entry's
+            var first = packets.get(0).sideData().newCodecConfig().orElseThrow();
+            var change = packets.get(2).sideData().newCodecConfig().orElseThrow();
+            org.junit.jupiter.api.Assertions.assertFalse(java.util.Arrays.equals(first, change));
+            org.junit.jupiter.api.Assertions.assertArrayEquals(track.codecConfig().orElseThrow(), change);
+            assertTrue(packets.get(1).sideData().newCodecConfig().isEmpty());
+            assertTrue(packets.get(3).sideData().newCodecConfig().isEmpty());
         }
     }
 }

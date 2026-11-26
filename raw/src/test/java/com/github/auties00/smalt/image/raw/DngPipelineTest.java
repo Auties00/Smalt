@@ -26,7 +26,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Checks the DNG pipeline on synthetic files written by {@link TinyDng}: each layout, compression,
- * predictor, level and opcode against values computed by hand.
+ * predictor, level and opcode against values computed by hand; and the opcode lists of camera files against the
+ * DNG SDK's stage 2 image.
  */
 class DngPipelineTest {
     static RawImage raw(TinyDng dng) {
@@ -279,6 +280,18 @@ class DngPipelineTest {
             return dng;
         }
 
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"DNG_PIXEL_6_PRO", "DNG_LEICA_Q"})
+        @DisplayName("the opcode lists of camera files apply as the DNG SDK applies them")
+        void cameraOpcodes(RawSamples sample) {
+            // the Pixel 6 Pro's list 2 holds a GainMap of steep gains for each Bayer plane (row and column pitch 2)
+            // and the Leica Q's list 1 a FixBadPixelsConstant; both carry a WarpRectilinear in list 3, which the stage
+            // 2 image does not include. The SDK steps the interpolated gain along each row in 32-bit floating point,
+            // which leaves its products a few codes off the exact interpolation: within one code in root mean square
+            DngValidateTest.assertStage2(sample.name() + ".dng", sample.path(),
+                    com.github.auties00.smalt.testkit.Tolerance.rms(1));
+        }
+
         @Test
         @DisplayName("GainMap multiplies by bilinearly interpolated gains")
         void gainMap() {
@@ -288,9 +301,10 @@ class DngPipelineTest {
             params.putFloat(1f).putFloat(2f).putFloat(1f).putFloat(2f);
             dng.opcodes2 = new TinyDng.Opcodes().add(9, 0, params).build();
             var samples = unsigned(raw(dng).samples());
-            assertEquals(20000, samples[0], 1);
+            // the map is sampled at the photosites' centers, as the DNG SDK samples it
+            assertEquals(Math.round(20000 * (1 + 0.5f / 32)), samples[0], 1);
             var x = 16;
-            assertEquals(Math.round(20000 * (1 + x / 32f)), samples[5 * 32 + x], 2);
+            assertEquals(Math.round(20000 * (1 + (x + 0.5f) / 32)), samples[5 * 32 + x], 2);
         }
 
         @Test

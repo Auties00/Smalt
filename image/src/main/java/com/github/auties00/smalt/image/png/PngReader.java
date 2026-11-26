@@ -43,14 +43,17 @@ import java.util.zip.CRC32;
  *       skipped. Unknown ancillary chunks are skipped without reading their data.</li>
  *   <li>{@code tRNS} is honored for grayscale, truecolor and indexed-color images; a
  *       {@code tRNS} with more entries than the palette, the wrong length for its color type, or
- *       a grayscale key outside the bit depth is ignored, as libpng does.</li>
+ *       a grayscale key outside the bit depth is ignored, as libpng does; the bits of a truecolor
+ *       key above the bit depth are masked to zero, as the PNG specification requires of decoders
+ *       and libpng and ffmpeg do.</li>
  *   <li>{@code iCCP} is inflated with its output bounded; {@code eXIf} (only before {@code IDAT},
  *       per PNG 3rd edition Table 7) supplies the Exif block and orientation.</li>
  *   <li>{@code cICP}, {@code sRGB}, {@code gAMA} and {@code cHRM} (each the first valid one before
  *       {@code PLTE} and {@code IDAT}) describe the color space with the iCCP profile, as
  *       {@link #colorProfile()} combines them; pixels are returned as stored. The {@code mDCV}
  *       and {@code cLLI} chunks (also spelled {@code mDCv} and {@code cLLi}), under the same
- *       placement rule, add their metadata to a {@code cICP} description.</li>
+ *       placement rule, add their metadata to a {@code cICP} description or to the description of a
+ *       high-dynamic-range {@code iCCP} profile.</li>
  *   <li>{@code pHYs} (the first one before {@code IDAT}) supplies the {@link #density()}; one of another
  *       length than 9 bytes, with a bad CRC, a zero value, a value above {@code 2^31 - 1} or an unknown unit
  *       gives none.</li>
@@ -941,13 +944,10 @@ final class PngReader {
             }
             case PngHeader.RGB -> {
                 if (data.length == 6) {
-                    var red = ByteArrays.u16be(data, 0);
-                    var green = ByteArrays.u16be(data, 2);
-                    var blue = ByteArrays.u16be(data, 4);
-                    if (red <= maximum && green <= maximum && blue <= maximum) {
-                        transparencyKey = new int[]{red, green, blue};
-                        transparency = true;
-                    }
+                    // PNG: decoders mask the bits above the bit depth to zero (libpng and ffmpeg match the masked key)
+                    transparencyKey = new int[]{ByteArrays.u16be(data, 0) & maximum,
+                            ByteArrays.u16be(data, 2) & maximum, ByteArrays.u16be(data, 4) & maximum};
+                    transparency = true;
                 }
             }
             case PngHeader.PALETTE -> {
@@ -1048,7 +1048,9 @@ final class PngReader {
      * <p>The chunks are combined as the PNG specification (third edition) ranks them: a
      * {@code cICP} with RGB code points and supported primaries and transfer comes first, then a
      * valid {@code iCCP} profile, then {@code sRGB}, then {@code gAMA} and {@code cHRM}. A
-     * {@code cICP} description carries the {@code mDCV} and {@code cLLI} metadata. A
+     * {@code cICP} description carries the {@code mDCV} and {@code cLLI} metadata, and so does the
+     * description of a high-dynamic-range {@code iCCP} profile (one whose {@code cicp} tag declares
+     * PQ or HLG), which then replaces the parsed profile. A
      * {@code gAMA} alone uses the BT.709 primaries and a D65 white, a {@code cHRM} alone a gamma of
      * 2.2; a pair within rounding of sRGB ({@code gAMA} {@code 45455 +- 500} and the BT.709
      * primaries within {@code 0.001}) declares sRGB itself, as almost every PNG writer means it.
@@ -1072,7 +1074,14 @@ final class PngReader {
         }
         if (iccProfile != null) {
             try {
-                return ColorProfile.parse(iccProfile);
+                var parsed = ColorProfile.parse(iccProfile);
+                if (parsed.isHighDynamicRange() && (masteringDisplay != null || contentLightLevel != null)) {
+                    // the HDR description of the profile's cicp tag, with the mDCV and cLLI metadata the ICC form
+                    // cannot hold
+                    return ColorProfile.of(parsed.colorInfo().orElseThrow().withMasteringDisplay(masteringDisplay)
+                            .withContentLightLevel(contentLightLevel));
+                }
+                return parsed;
             } catch (MediaException exception) {
                 // a damaged iCCP falls back to the other chunks
             }

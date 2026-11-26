@@ -61,7 +61,7 @@ class LoudnessFfmpegTest {
         if (vector == null) {
             Files.write(wav, Signals.wav(speechLike(), 48_000));
         } else {
-            var source = Conformance.fetchListed(vector);
+            var source = Conformance.vector(vector);
             run(List.of("-v", "error", "-y", "-i", source.toString(), "-c:a", "pcm_f32le", wav.toString()));
         }
         var stats = Loudness.measure(MediaSource.of(wav));

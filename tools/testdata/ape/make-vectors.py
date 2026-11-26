@@ -5,7 +5,7 @@ encoded with the Monkey's Audio 13.45 command line tool (MAC, BSD 3-Clause, buil
 compression level each vector exercises, and decoded back with the same tool to record the MD5 of the reference
 decode (the bytes of its WAVE data chunk). The vectors are self-generated, so they carry Smalt's license; the
 expected decodes are the reference library's. With --fate, the files of the FFmpeg FATE samples that older Monkey's
-Audio versions wrote (fetched by the tests through tools/testdata/vectors.tsv) are decoded too, frame by frame up
+Audio versions wrote (hosted test data listed in tools/testdata/vectors.tsv) are decoded too, frame by frame up
 to the first frame the truncated excerpts cut, with tools/testdata/ape-oracle/smalt-apedec (built against the same
 SDK), and their sample counts and MD5s printed for ApeDecoderTest.
 

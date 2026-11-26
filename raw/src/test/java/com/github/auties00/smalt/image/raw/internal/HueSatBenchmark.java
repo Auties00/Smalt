@@ -44,7 +44,7 @@ public class HueSatBenchmark {
 
     @Setup
     public void setup() {
-        try (var input = MediaSource.of(RawSamples.ADC_5D3_LOSSLESS.fetch())) {
+        try (var input = MediaSource.of(RawSamples.ADC_5D3_LOSSLESS.path())) {
             var color = RawParser.parse(input, MediaLimits.DEFAULT).color;
             var dims = table.equals("map") ? color.hueSatDims : color.lookDims;
             var cells = table.equals("map") ? color.hueSatMap[0] : color.lookTable;

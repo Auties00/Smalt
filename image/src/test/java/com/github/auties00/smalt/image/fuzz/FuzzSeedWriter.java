@@ -148,7 +148,7 @@ class FuzzSeedWriter {
     void bmpVariants() throws IOException {
         // the public-domain BMP Suite images of a few kilobytes, none of which embeds an ICC profile
         var suite = new LinkedHashMap<String, byte[]>();
-        try (var input = new ZipInputStream(Files.newInputStream(Conformance.fetchListed("bmpsuite-2.8.zip")))) {
+        try (var input = new ZipInputStream(Files.newInputStream(Conformance.vector("bmpsuite-2.8.zip")))) {
             for (var entry = input.getNextEntry(); entry != null; entry = input.getNextEntry()) {
                 suite.put(entry.getName().substring(entry.getName().indexOf('/') + 1), input.readAllBytes());
             }

@@ -1,6 +1,6 @@
 package com.github.auties00.smalt.video.h264.encoder;
 
-import com.github.auties00.smalt.testkit.Skip;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -17,7 +17,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -28,6 +27,7 @@ import java.util.function.IntFunction;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins the H.264 encoder's bitstream: each configuration encodes a fixed input and the SHA-256 of
@@ -204,10 +204,8 @@ class H264EncoderGoldenTest {
     }
 
     private static List<YuvPicture> clip(String clip, int width, int height, int frames) throws IOException {
-        var root = Path.of(System.getProperty("smalt.test.clips",
-                Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips").toString()));
-        var file = root.resolve(clip);
-        Skip.unless(Files.isRegularFile(file), "data:clip", "clip " + clip + " is not cached");
+        var file = Conformance.clips().resolve(clip);
+        assertTrue(Files.isRegularFile(file), "clip " + clip + " is missing from " + Conformance.clips());
         var luma = width * height;
         var frameSize = luma * 3 / 2;
         var pictures = new ArrayList<YuvPicture>(frames);
@@ -224,7 +222,7 @@ class H264EncoderGoldenTest {
                         .build());
             }
         }
-        Skip.unless(pictures.size() == frames, "data:clip", "clip " + clip + " is shorter than " + frames + " frames");
+        assertEquals(frames, pictures.size(), "clip " + clip + " is shorter than " + frames + " frames");
         return pictures;
     }
 }

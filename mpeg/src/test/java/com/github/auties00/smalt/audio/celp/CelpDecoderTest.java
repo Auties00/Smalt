@@ -12,7 +12,7 @@ import com.github.auties00.smalt.container.mp4.Mp4Muxer;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
-import com.github.auties00.smalt.testkit.Conformance;
+import com.github.auties00.smalt.audio.aac.Mpeg4AudioVectors;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -335,7 +335,7 @@ class CelpDecoderTest {
     @Test
     @DisplayName("the audio reader seeks to the samples of a decode from the start")
     void seek() {
-        var data = Fixtures.read(Conformance.fetchListed("mpeg4audio-ce00.mp4"));
+        var data = Fixtures.read(Mpeg4AudioVectors.file("ce00.mp4"));
         var linear = new CelpTestSupport.Samples();
         try (var reader = AudioReader.open(MediaSource.of(data))) {
             assertEquals(8000, reader.sampleRate());

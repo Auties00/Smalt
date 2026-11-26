@@ -52,7 +52,7 @@ class VideoDecoderBehaviorTest {
     @ValueSource(strings = {"vp90-2-02-size-64x64.webm", "av1-av1-1-b8-03-sizeup.mkv", "av1-av1-1-b8-01-size-16x16.ivf"})
     @DisplayName("video smoke vectors: identical frames under every source behavior and clean faults")
     void video(String name) throws IOException {
-        ReaderAsserts.video("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+        ReaderAsserts.video("vectors/" + name, Files.readAllBytes(Conformance.vector(name))).run();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -62,7 +62,7 @@ class VideoDecoderBehaviorTest {
             "avif-libavif-weld_sato_12B_8B_q0.avif"})
     @DisplayName("AVIF smoke vectors: identical pictures under every source behavior and clean faults")
     void avif(String name) throws IOException {
-        ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+        ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.vector(name))).run();
     }
 
     @Test
@@ -99,7 +99,7 @@ class VideoDecoderBehaviorTest {
             "valid-tmap-multichannel.avif"})
     @DisplayName("AVIF gain maps: identical pictures, gain maps and auxiliary images under every source behavior")
     void avifGainMap(String name) throws IOException {
-        var data = name.startsWith("libavif-") ? Files.readAllBytes(Conformance.fetchListed(name))
+        var data = name.startsWith("libavif-") ? Files.readAllBytes(Conformance.vector(name))
                 : Files.readAllBytes(Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video",
                 "fuzz", "VideoFuzzTestInputs", "avifGainMap").resolve(name));
         ImageDecoderAsserts.of("gainmap/" + name, data)

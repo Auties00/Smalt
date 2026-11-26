@@ -47,7 +47,7 @@ class HeAacSignalingTest {
     }
 
     static AacTestSupport.Stream stream(String name) {
-        return AacTestSupport.parseMp4(Fixtures.read(HeAacConformanceTest.fetch(name)));
+        return AacTestSupport.parseMp4(Fixtures.read(HeAacConformanceTest.file(name)));
     }
 
     @Nested
@@ -266,6 +266,75 @@ class HeAacSignalingTest {
                     assertArrayEquals(Arrays.copyOfRange(clean.planes()[c], index * length, (index + 1) * length),
                             collected.get(index)[c], "frame " + index + " channel " + c);
                 }
+            }
+        }
+    }
+
+    /**
+     * The Coding Technologies DecoderCheck package: one HE-AAC v2 programme with SBR and PS signaled implicitly
+     * ({@code i}), backward-compatibly ({@code bc}) or hierarchically ({@code bic}) in ADTS, MP4 and 3GP files. Every
+     * variant must decode to 44.1 kHz stereo with SBR and PS, the MP4 and 3GP variants to the same samples, and each
+     * file within the 16-bit conformance criterion of ffmpeg's decode.
+     */
+    @Nested
+    @DisplayName("Coding Technologies DecoderCheck streams")
+    class DecoderCheck {
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"sbr_bc-ps_bc.mp4", "sbr_bc-ps_i.3gp", "sbr_bc-ps_i.mp4", "sbr_bic-ps_i.3gp",
+                "sbr_i-ps_bic.mp4", "sbr_i-ps_i.mp4", "sbr_i-ps_i.aac", "File1.aac"})
+        @DisplayName("every signaling variant decodes to SBR and PS stereo within the conformance criterion")
+        void variants(String name) {
+            com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+            var data = Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector("aac-CT_DecoderCheck-" + name));
+            HeAacContainersTest.assertLikeFfmpeg("ct-" + name, data, 44100, 2);
+        }
+
+        @Test
+        @DisplayName("the MP4 and 3GP variants decode to the same samples")
+        void sameOutput() {
+            float[][] first = null;
+            for (var name : new String[]{"sbr_bc-ps_bc.mp4", "sbr_bc-ps_i.3gp", "sbr_bc-ps_i.mp4", "sbr_bic-ps_i.3gp",
+                    "sbr_i-ps_bic.mp4", "sbr_i-ps_i.mp4"}) {
+                var stream = AacTestSupport.parseMp4(Fixtures.read(com.github.auties00.smalt.testkit.Conformance
+                        .vector("aac-CT_DecoderCheck-" + name)));
+                AacTestSupport.Decoded decoded;
+                try (var decoder = new AacDecoder(HeAacConformanceTest.detectingTrack(stream))) {
+                    decoded = AacTestSupport.decodeAll(decoder, stream.frames());
+                }
+                assertEquals(44100, decoded.sampleRate(), name);
+                assertEquals(2, decoded.planes().length, name);
+                if (first == null) {
+                    first = decoded.planes();
+                } else {
+                    for (var c = 0; c < 2; c++) {
+                        assertArrayEquals(first[c], decoded.planes()[c], name + " channel " + c);
+                    }
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("ships with its licence")
+        void licence() {
+            var text = new String(Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "aac-CT_DecoderCheck-license.txt")), java.nio.charset.StandardCharsets.ISO_8859_1);
+            assertTrue(text.contains("DecoderCheck Package"), "licence of the package");
+        }
+
+        @Test
+        @DisplayName("decodes to its reference waveform within the conformance criterion")
+        void reference() {
+            var expected = AacTestSupport.readWav(Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(
+                    "aac-CT_DecoderCheck-aacPlusv2.wav")));
+            var stream = AacTestSupport.parseMp4(Fixtures.read(
+                    com.github.auties00.smalt.testkit.Conformance.vector("aac-CT_DecoderCheck-sbr_i-ps_i.mp4")));
+            AacTestSupport.Decoded decoded;
+            try (var decoder = new AacDecoder(HeAacConformanceTest.detectingTrack(stream))) {
+                decoded = AacTestSupport.decodeAll(decoder, stream.frames());
+            }
+            assertEquals(expected.length, decoded.planes().length);
+            for (var c = 0; c < expected.length; c++) {
+                AacConformanceTest.assertConformant(expected[c], decoded.planes()[c], 2048, "channel " + c);
             }
         }
     }

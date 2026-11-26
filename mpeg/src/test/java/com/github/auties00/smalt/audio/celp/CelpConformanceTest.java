@@ -118,6 +118,25 @@ class CelpConformanceTest {
     }
 
     /**
+     * The alternative-format CELP streams of the 2nd edition of ISO/IEC 14496-26 ({@code add-opt/ceNNa}), against
+     * their references at the layer each names ({@code _layN}).
+     */
+    @TestFactory
+    @DisplayName("every alternative-format CELP stream of the 2nd edition matches its references at every layer")
+    Stream<DynamicTest> alternative() {
+        return com.github.auties00.smalt.testkit.Conformance.archive("mpeg4audio-ed2-references").members().stream()
+                .map(member -> member.substring(member.lastIndexOf('/') + 1))
+                .filter(name -> name.matches("ce\\d+a(_lay\\d+)?\\.wav")).sorted().map(name -> {
+                    var reference = name.substring(0, name.length() - 4);
+                    var stream = reference.replaceFirst("_lay\\d+$", "");
+                    var layer = reference.equals(stream) ? -1 : Integer.parseInt(reference.substring(
+                            reference.lastIndexOf("_lay") + 4));
+                    return DynamicTest.dynamicTest(stream + " " + reference,
+                            () -> check(stream, reference, layer, FULL_ACCURACY));
+                });
+    }
+
+    /**
      * Decodes a stream up to a layer and compares it with a reference.
      *
      * @param stream the stream name

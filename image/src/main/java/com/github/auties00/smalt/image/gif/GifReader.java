@@ -30,8 +30,8 @@ import java.util.Arrays;
  *   <li>the ICC profile is the data of the first {@code ICCRGBG1} {@code 012} application
  *       extension before the first image, and the XMP packet the content of the first
  *       {@code XMP DataXMP} application extension before the first image, cut after its
- *       closing {@code xpacket} instruction; an extension the input ends inside of is left
- *       out.</li>
+ *       closing {@code xpacket} instruction, or before the magic trailer when the packet has no
+ *       {@code xpacket} wrapper; an extension the input ends inside of is left out.</li>
  * </ul>
  */
 final class GifReader {
@@ -69,6 +69,12 @@ final class GifReader {
      * The opening of the processing instruction that closes an XMP packet.
      */
     private static final byte[] XMP_END = "<?xpacket end".getBytes(StandardCharsets.US_ASCII);
+
+    /**
+     * The length of the XMP magic trailer as it appears in an extension's content: {@code 0x01}
+     * and the bytes {@code 0xFF} down to {@code 0x00}.
+     */
+    private static final int XMP_MAGIC_TRAILER = 257;
 
     /**
      * Classifies the application extensions by what is kept of their content.
@@ -464,8 +470,14 @@ final class GifReader {
      * Cuts the content of an XMP extension after the packet's closing processing instruction,
      * dropping the trailer that follows it.
      *
+     * <p>A packet without the {@code xpacket} wrapper, which XMP allows, has no closing
+     * instruction: its content is cut before the magic trailer of XMP Part 3 instead, the bytes
+     * {@code 0x01, 0xFF, 0xFE, ..., 0x00} that end every XMP extension (the block terminator that
+     * follows them is not part of the content).
+     *
      * @param content the extension content, sub-block length bytes included
-     * @return the packet, or {@code content} when it has no closing instruction
+     * @return the packet, or {@code content} when it has neither a closing instruction nor a
+     * magic trailer
      */
     private static byte[] packet(byte[] content) {
         for (var i = content.length - XMP_END.length; i >= 0; i--) {
@@ -475,10 +487,30 @@ final class GifReader {
                         return Arrays.copyOf(content, j + 2);
                     }
                 }
+                return withoutMagicTrailer(content);
+            }
+        }
+        return withoutMagicTrailer(content);
+    }
+
+    /**
+     * Drops the XMP Part 3 magic trailer, {@code 0x01} followed by the 256 bytes {@code 0xFF} down
+     * to {@code 0x00}, from the end of an XMP extension's content.
+     *
+     * @param content the extension content, sub-block length bytes included
+     * @return the content before the trailer, or {@code content} when it does not end with one
+     */
+    private static byte[] withoutMagicTrailer(byte[] content) {
+        var start = content.length - XMP_MAGIC_TRAILER;
+        if (start < 0 || content[start] != 1) {
+            return content;
+        }
+        for (var k = 0; k < 256; k++) {
+            if ((content[start + 1 + k] & 0xFF) != 0xFF - k) {
                 return content;
             }
         }
-        return content;
+        return Arrays.copyOf(content, start);
     }
 
     /**

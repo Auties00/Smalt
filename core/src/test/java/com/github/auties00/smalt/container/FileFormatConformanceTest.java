@@ -392,6 +392,27 @@ class FileFormatConformanceTest {
             Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R3-0003.mp4", "published/nalu/svc/mp4-live-LastTime-depRep.mp4")
     );
 
+    /**
+     * The vectors that hold the bytes of a path published twice upstream, by vector name: the hosted data keeps one
+     * copy, and the path keeps its own GPAC dump.
+     */
+    private static final Map<String, String> DUPLICATES = Map.of(
+            "mpegff-shvc_hev1_hev2_multiple_tracks_extractors.mp4", "mpegff-mhvc_hev1_hev2_multiple_tracks_extractors.mp4",
+            "mpegff-shvc_hev1_single_track.mp4", "mpegff-mhvc_hev1_single_track.mp4",
+            "mpegff-shvc_hev2_single_track.mp4", "mpegff-mhvc_hev2_single_track.mp4",
+            "mpegff-shvc_hvc1_hvc2_multiple_tracks_extractors.mp4", "mpegff-mhvc_hvc1_hvc2_multiple_tracks_extractors.mp4",
+            "mpegff-shvc_hvc1_single_track.mp4", "mpegff-mhvc_hvc1_single_track.mp4",
+            "mpegff-shvc_hvc2_single_track.mp4", "mpegff-mhvc_hvc2_single_track.mp4");
+
+    /**
+     * The paths whose bytes are a member of an archive set rather than a vector, by path: the scalable AAC file the
+     * suite publishes is the ISO/IEC 14496-26 conformance stream ac01.mp4, hosted once as a member of the MPEG-4 audio
+     * conformance set.
+     */
+    private static final Map<String, String[]> ARCHIVED = Map.of(
+            "published/mpeg-audio-conformance/ac01.mp4", new String[]{"mpeg4audio-ed2-streams-smoke",
+                    "../mpeg4audio-conformance2ndEd_20230125/compressedMp4/ac01.mp4"});
+
     /** Codecs whose packets are not the file's samples: one packet per WebVTT cue, PCM in packets of 1024 frames. */
     private static final Set<Codec> REPACKETIZED = Set.of(Codec.WEBVTT);
 
@@ -769,7 +790,7 @@ class FileFormatConformanceTest {
             var directory = Files.createDirectories(work.resolve("external"));
             var movie = Files.copy(file, directory.resolve(path.substring(path.lastIndexOf('/') + 1)),
                     StandardCopyOption.REPLACE_EXISTING);
-            var referenced = Files.copy(Conformance.fetchListed("mpegff-" + sibling), directory.resolve(sibling),
+            var referenced = Files.copy(Conformance.vector("mpegff-" + sibling), directory.resolve(sibling),
                     StandardCopyOption.REPLACE_EXISTING);
             var options = DemuxerOptions.builder().dataReferences(DataReferenceResolver.directory(directory)).build();
             var ours = ContainerProbe.demux(movie, source -> new Mp4Demuxer(source, options));
@@ -928,7 +949,7 @@ class FileFormatConformanceTest {
 
     private static String read(String vector) {
         try {
-            return Files.readString(Conformance.fetchListed(vector), StandardCharsets.UTF_8);
+            return Files.readString(Conformance.vector(vector), StandardCharsets.UTF_8);
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
@@ -939,7 +960,12 @@ class FileFormatConformanceTest {
      * extracted, into the work directory.
      */
     private Path file(String path) {
-        var vector = Conformance.fetchListed("mpegff-" + path.substring(path.lastIndexOf('/') + 1));
+        var archived = ARCHIVED.get(path);
+        if (archived != null) {
+            return Conformance.archive(archived[0]).member(archived[1]);
+        }
+        var name = "mpegff-" + path.substring(path.lastIndexOf('/') + 1);
+        var vector = Conformance.vector(DUPLICATES.getOrDefault(name, name));
         var init = INITIALIZATION.get(path);
         if (init != null) {
             try {

@@ -35,7 +35,24 @@ class MxfThirdPartyTest {
         var archive = Conformance.archive(set);
         Oracle.assume(Oracle.Tool.FFPROBE);
         for (var member : archive.members()) {
-            var file = archive.fetch(member);
+            assertMatches(archive.member(member), member);
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"netflix-SolLevante-IMF-AUDIO_4467fc2f-2536-44ba-b1f9-010e0ae3f6b1.mxf",
+            "fate-mxf-Avid-00005.mxf", "fate-mxf-C0023S01.mxf", "fate-mxf-Meridian-Apple_ProResProxy-HDR10.mxf",
+            "fate-mxf-Sony-00001.mxf", "fate-mxf-multiple_components.mxf",
+            "fate-mxf-omneon_8.3.0.0_xdcam_startc_footer.mxf", "fate-mxf-opatom_essencegroup_alpha_raw.mxf",
+            "fate-mxf-opatom_missing_index.mxf", "fate-mxf-track_01_v02.mxf", "fate-mxf-track_02_a01.mxf"})
+    @DisplayName("every packet of an IMF track file and of FATE's MXF samples has ffprobe's size and checksum")
+    void thirdParty(String name) {
+        assertMatches(Conformance.vector(name), name);
+    }
+
+    private static void assertMatches(java.nio.file.Path file, String member) {
+        Oracle.assume(Oracle.Tool.FFPROBE);
+        {
             try (var source = MediaSource.of(file)) {
                 assertEquals(ContainerFormat.MXF, Containers.detect(source).orElseThrow());
             }
@@ -61,6 +78,9 @@ class MxfThirdPartyTest {
                 }
                 expected.computeIfAbsent(stream, ignored -> new ArrayList<>()).add(size + " " + hash);
             }
+            // ffprobe lists the timecode and other data tracks as streams without packets; the tracks are matched
+            // in order to the streams that have packets
+            var streams = new ArrayList<>(new java.util.TreeSet<>(expected.keySet()));
             try (var source = MediaSource.of(file); var demuxer = new MxfDemuxer(source)) {
                 var tracks = demuxer.tracks();
                 assertEquals(expected.size(), tracks.size(), "stream count of " + member);
@@ -72,7 +92,7 @@ class MxfThirdPartyTest {
                 for (var index = 0; index < tracks.size(); index++) {
                     var track = tracks.get(index);
                     var ours = actual.getOrDefault(track.id(), List.of());
-                    var theirs = expected.getOrDefault(index, List.of());
+                    var theirs = expected.getOrDefault(streams.get(index), List.of());
                     assertFalse(ours.isEmpty(), "track " + track.id() + " of " + member + " has packets");
                     if (track.codec().isPcm()) {
                         assertEquals(sum(theirs), sum(ours), "sample bytes of track " + track.id() + " of " + member);

@@ -231,7 +231,7 @@ final class MatroskaTrackEntry {
     ColorInfo color;
 
     /**
-     * The display orientation of the {@code Projection} roll of a rectangular projection.
+     * The display orientation of the {@code Projection} pose of a rectangular projection.
      */
     Orientation orientation = Orientation.NORMAL;
 
@@ -439,7 +439,7 @@ final class MatroskaTrackEntry {
     }
 
     /**
-     * Parses a {@code Projection} element: the roll of a rectangular projection becomes the orientation, and the
+     * Parses a {@code Projection} element: the pose of a rectangular projection becomes the orientation, and the
      * other projections, with their private data and pose, the spherical projection. A missing private data reads
      * as zero bytes, except for a mesh projection; a projection whose private data or pose is invalid is ignored.
      *
@@ -465,9 +465,13 @@ final class MatroskaTrackEntry {
             }
         }
         if (type == 0) {
-            if (Double.isFinite(roll)) {
-                // the roll is counter-clockwise, the orientation clockwise
-                orientation = Orientation.ofRotation((int) Math.round(-roll), false);
+            // RFC 9559 5.1.4.1.32.4 to 5.1.4.1.32.6: on a rectangular projection a yaw of 180 degrees mirrors left to
+            // right and a pitch of 180 degrees top to bottom; the yaw applies before the roll, which is
+            // counter-clockwise where the orientation is clockwise. Any other pose is not a 2D transform.
+            if (pitch == 0 && (yaw == 0 || Math.abs(yaw) == 180) && Double.isFinite(roll)) {
+                orientation = Orientation.ofRotation((int) Math.round(-roll), yaw != 0);
+            } else if (yaw == 0 && roll == 0 && Math.abs(pitch) == 180) {
+                orientation = Orientation.FLIP_VERTICAL;
             }
             return;
         }

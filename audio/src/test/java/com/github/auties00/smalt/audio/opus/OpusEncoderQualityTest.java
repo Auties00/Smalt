@@ -28,13 +28,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * libopus encoder at equal settings: bitrate, segmental SNR and log-spectral distance against
  * the original, clean decoding of every configuration, and how many packets are bit-identical.
  *
- * <p>Speech comes from a public-domain LibriVox recording (pinned by SHA-256); music is the
- * decoded RFC 8251 {@code testvector07}.
+ * <p>Speech comes from a public-domain LibriVox recording (a vector of the hosted test data) and from the clean studio
+ * recordings of the Edinburgh DataShare speech test set; music is the decoded RFC 8251 {@code testvector07}.
  */
 class OpusEncoderQualityTest {
     private static final String SPEECH = "librivox-art_of_war_03-04_64kb.mp3";
-    private static final String SPEECH_URL = "https://archive.org/download/art_of_war_librivox/art_of_war_03-04_sun_tzu_64kb.mp3";
-    private static final String SPEECH_SHA256 = "57e879fe7822578fd22010f1280185799a119a3482e025d9a71f49878ff45ba7";
 
     /** Result of one encoding: packets, the Ogg file and ffmpeg's decode of it. */
     record Encoded(List<byte[]> packets, Path ogg, float[] decoded, double bitrate) {
@@ -43,11 +41,29 @@ class OpusEncoderQualityTest {
     /** Returns interleaved float PCM of the LibriVox speech at the given rate and channel count. */
     static float[] speechInput(int sampleRate, int channels, int seconds) {
         Oracle.assume(Oracle.Tool.FFMPEG);
-        var mp3 = Conformance.fetch(SPEECH, SPEECH_URL, SPEECH_SHA256);
+        var mp3 = Conformance.vector(SPEECH);
         var raw = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), List.of("-v", "error", "-ss", "20", "-t",
                 Integer.toString(seconds), "-i", mp3.toString(), "-ac", Integer.toString(channels), "-ar",
                 Integer.toString(sampleRate), "-f", "f32le", "-"));
         return floats(raw);
+    }
+
+    /**
+     * Returns the clean recordings of the Edinburgh DataShare speech test set subset (speakers p232 and p257, 48 kHz),
+     * one after the other, resampled by ffmpeg to a rate, mono.
+     */
+    static float[] cleanSpeechInput(int sampleRate) {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var archive = Conformance.archive("edinburgh-clean-testset-subset");
+        var pcm = new java.io.ByteArrayOutputStream();
+        for (var member : archive.members()) {
+            var raw = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-i",
+                    archive.member(member).toString(), "-ac", "1", "-ar", "48000", "-f", "s16le", "-"));
+            pcm.writeBytes(raw);
+        }
+        var joined = temp(".s16", pcm.toByteArray());
+        return floats(Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), List.of("-v", "error", "-f", "s16le", "-ar",
+                "48000", "-ac", "1", "-i", joined.toString(), "-ar", Integer.toString(sampleRate), "-f", "f32le", "-")));
     }
 
     /** Returns interleaved float PCM of the music vector at 48 kHz stereo. */
@@ -233,6 +249,12 @@ class OpusEncoderQualityTest {
             Oracle.assume(Oracle.Tool.FFMPEG);
             var config = OpusEncoderOptions.defaults().toBuilder().bitrate(bitrate).build();
             compare(config, musicInput(10), 20000, 0.5, 0.3);
+        }
+
+        @Test
+        @DisplayName("forSpeech(16 kb/s) on real studio speech of two talkers: same bitrate and quality within a small margin")
+        void cleanSpeech() {
+            compare(OpusEncoderOptions.forSpeech(16000), cleanSpeechInput(16000), 8000, 0.5, 0.3);
         }
 
         @Test

@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Benchmarks the real-time VP8 encoder: the time to encode one frame of a running call-like
  * stream (speed 6, one-pass CBR, error resilient), at 640x480 and 1280x720, on one thread and on
- * four. The frames are the first 60 of the cached Xiph clip played forwards and backwards, so the
+ * four. The frames are the first 60 of the hosted Xiph clip played forwards and backwards, so the
  * motion never jumps; the bitrates match the libvpx comparison runs of the report.
  */
 @State(Scope.Benchmark)
@@ -52,7 +52,7 @@ public class Vp8RtEncodeBenchmark {
         var width = size == 720 ? 1280 : 640;
         var height = size == 720 ? 720 : 480;
         var clip = RtTestVideo.clip(size == 720 ? "johnny720.yuv" : "johnny480.yuv");
-        frames = clip != null ? RtTestVideo.read(clip, width, height, 0, 60) : RtTestVideo.synthesize(width, height, 60);
+        frames = RtTestVideo.read(clip, width, height, 0, 60);
         encoder = Vp8Setup.of(width, height, new Rational(30, 1), new Rational(1, 30),
                 size == 720 ? 1_200_000 : 600_000, 4, 63, 0, speed, true, 1, false, 1000, 500, 600, 1, threads).encoder();
         pts = 0;

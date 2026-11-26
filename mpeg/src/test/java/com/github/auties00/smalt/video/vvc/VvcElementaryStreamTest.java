@@ -168,7 +168,7 @@ class VvcElementaryStreamTest {
             "OPI_B_3, 1, 7, 416, 240"})
     @DisplayName("describes the output layer set with the most layers in the vvcC record of a multi-layer stream")
     void multiLayerConfig(String name, int olsIndex, int sublayers, int width, int height) throws Exception {
-        var stream = VvcConformanceTest.bitstream(name, name + ".bit");
+        var stream = VvcConformanceTest.bitstream(name);
         var file = Files.write(Scratch.directory("vvc-layers").resolve(name + ".vvc"), stream);
         var mp4 = Fixtures.ffmpeg("mp4", List.of("-r", "25", "-f", "vvc", "-i", file.toAbsolutePath().toString()),
                 List.of("-c", "copy"));
@@ -189,8 +189,17 @@ class VvcElementaryStreamTest {
         // constant_frame_rate always 1 and its picture size that of the base layer, so only the structure and the
         // parameter sets are compared
         var length = ptlLength(record, 4, sublayers);
-        assertArrayEquals(Arrays.copyOfRange(reference, 4, 4 + length),
-                Arrays.copyOfRange(record, 4, 4 + length), "VvcPTLRecord");
+        var expectedPtl = Arrays.copyOfRange(reference, 4, 4 + length);
+        var actualPtl = Arrays.copyOfRange(record, 4, 4 + length);
+        if (name.equals("ILRPL_A_2")) {
+            // its H.266.1 (01/2026) revision (ILRPL_A_3) gives the two-layer set the Multilayer Main 10 profile and
+            // the base layer set Main 10: ffmpeg describes set 0, whose ptl_multilayer_enabled_flag is 0, the record
+            // the set with both layers, whose flag must be 1 (H.266 7.4.4.1, A.3.5)
+            assertEquals(0x40, actualPtl[3] & 0x40, "ptl_multilayer_enabled_flag of the two-layer set");
+            expectedPtl[3] &= (byte) ~0x40;
+            actualPtl[3] &= (byte) ~0x40;
+        }
+        assertArrayEquals(expectedPtl, actualPtl, "VvcPTLRecord");
         var size = 4 + length;
         assertEquals(width, ((record[size] & 0xFF) << 8) | (record[size + 1] & 0xFF), "max_picture_width");
         assertEquals(height, ((record[size + 2] & 0xFF) << 8) | (record[size + 3] & 0xFF), "max_picture_height");

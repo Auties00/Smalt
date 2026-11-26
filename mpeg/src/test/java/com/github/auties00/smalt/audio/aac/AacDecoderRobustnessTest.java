@@ -4,7 +4,6 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
-import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -14,9 +13,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
+import java.util.stream.Stream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
@@ -120,7 +121,7 @@ class AacDecoderRobustnessTest {
         @ValueSource(strings = {"am02_48", "am07_48", "ap02_48", "as03_48", "as17_48", "er_ap10_48_ep0"})
         @DisplayName("decode or raise MediaException for mutations of AAC Main, LTP, SSR and ER LTP streams")
         void objectTypes(String name) {
-            var stream = AacTestSupport.parseMp4(Fixtures.read(AacObjectTypesConformanceTest.fetch(name + ".mp4")));
+            var stream = AacTestSupport.parseMp4(Fixtures.read(AacObjectTypesConformanceTest.file(name + ".mp4")));
             assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
                 var random = new Random(name.hashCode());
                 for (var round = 0; round < 150; round++) {
@@ -150,7 +151,7 @@ class AacDecoderRobustnessTest {
         @ValueSource(strings = {"er_bs01_48_ep0", "er_bs09_48_ep0", "er_bs13_sbr_1_48"})
         @DisplayName("decode or raise MediaException for mutations of ER BSAC streams")
         void bsac(String name) {
-            var stream = AacTestSupport.parseMp4(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + name + ".mp4")));
+            var stream = AacTestSupport.parseMp4(Fixtures.read(Mpeg4AudioVectors.file(name + ".mp4")));
             assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
                 var random = new Random(name.hashCode());
                 for (var round = 0; round < 150; round++) {
@@ -185,7 +186,7 @@ class AacDecoderRobustnessTest {
         void errorResilient(String name) {
             // virtual codebooks, RVLC and codeword reordering read lengths and offsets from the stream, and the
             // low delay SBR payload fills the rest of the block, so mutations reach every bounds check
-            var stream = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4")));
+            var stream = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.file(name + ".mp4")));
             assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
                 var random = new Random(name.hashCode());
                 for (var round = 0; round < 150; round++) {
@@ -216,7 +217,7 @@ class AacDecoderRobustnessTest {
         @ValueSource(strings = {"er_al21_48_ep1", "er_al23_48_ep1", "er_ad2160np_48_ep1"})
         @DisplayName("decode or raise MediaException for mutated, dropped and reordered category instances")
         void separateCategories(String name) {
-            var tracks = AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4")));
+            var tracks = AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.file(name + ".mp4")));
             assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
                 var random = new Random(name.hashCode());
                 var decoder = new AacDecoder(tracks.getFirst().track());
@@ -378,5 +379,34 @@ class AacDecoderRobustnessTest {
         encoder.flush(p -> frames.add(p.data()));
         var decoder = new AacDecoder(track(encoder.codecConfig().orElseThrow()));
         assertEquals(0, decodeTolerantly(decoder, frames));
+    }
+
+    static Stream<String> unsupportedTools() {
+        return AacErrorResilientConformanceTest.edition2("(er_(ad|eld)_ldmps_.*|al_sbr_esbr.*)\\.mp4");
+    }
+
+    /**
+     * The 2nd edition of ISO/IEC 14496-26 adds streams of tools the decoder does not implement: low delay MPEG
+     * Surround over AAC-LD and AAC-ELD ({@code er_*_ldmps_*}) and enhanced SBR in HE-AAC ({@code al_sbr_esbr_*}).
+     * Each must decode its core (the downmix, or the AAC core with or without SBR) to finite samples or be refused
+     * with a {@link com.github.auties00.smalt.MediaException}, within a bounded time.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("unsupportedTools")
+    @DisplayName("streams of unsupported tools decode their core or fail cleanly")
+    void unsupportedTool(String stream) {
+        var data = Fixtures.read(Mpeg4AudioVectors.file(stream + ".mp4"));
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofMinutes(1), () -> {
+            try {
+                var decoded = AacTestSupport.decodeAll(AacTestSupport.parseMp4(data));
+                for (var plane : decoded.planes()) {
+                    for (var sample : plane) {
+                        assertTrue(Float.isFinite(sample) && Math.abs(sample) < 8, stream + " sample " + sample);
+                    }
+                }
+            } catch (com.github.auties00.smalt.MediaException expected) {
+                org.junit.jupiter.api.Assertions.assertNotNull(expected.getMessage(), stream);
+            }
+        });
     }
 }

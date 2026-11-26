@@ -33,9 +33,7 @@ class ImageIoHeicTest {
                 ImageIO.getImageReadersByMIMEType("image/heic"))) {
             assertInstanceOf(SmaltImageReader.class, readers.next());
         }
-        var file = Conformance.fetch("heic-pillow-tests-images-heif-RGBA_8__128x128.heif",
-                "https://raw.githubusercontent.com/bigcat88/pillow_heif/b16be1196dfa465a342d68894696e685ca3655cb/tests/images/heif/RGBA_8__128x128.heif",
-                "df634be2fa51f3d9a244dc9c987d7179411814e7b171bc40273a4486181c559f");
+        var file = Conformance.vector("heic-pillow-tests-images-heif-RGBA_8__128x128.heif");
         var image = ImageIO.read(file.toFile());
         assertNotNull(image);
         assertEquals(128, image.getWidth());

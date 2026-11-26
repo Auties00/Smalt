@@ -569,4 +569,17 @@ class ProbeTest {
         assertFalse(Media.probe(MediaSource.of(Fixtures.read(file))).attachedPictures().isEmpty());
         assertTrue(Media.probe(MediaSource.of(Fixtures.read(file)), ProbeOptions.headersOnly()).attachedPictures().isEmpty());
     }
+
+    @Test
+    @DisplayName("probes a 9-hour audiobook of 1,430,569 AAC samples as ffprobe does")
+    void longAudiobook() {
+        // more samples than the default frame limit: the probe reads the header only and must not index the samples
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("librivox-CountOfMonteCristoPart148kb_librivox.m4b");
+        var probe = ffprobe(file);
+        var info = Media.probe(MediaSource.of(file));
+        assertEquals(Double.parseDouble(probe.get("format.duration")) * 1_000_000, info.durationMicros().orElseThrow(), 50_000);
+        var audio = info.audioStreams().getFirst();
+        assertAudio("monte cristo", probe, "streams.stream.0.", audio);
+        assertChapters("monte cristo", probe, info);
+    }
 }

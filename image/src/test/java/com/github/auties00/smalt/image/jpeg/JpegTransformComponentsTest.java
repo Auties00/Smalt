@@ -711,7 +711,7 @@ class JpegTransformComponentsTest {
 
     // ITU-T T.83 compliance streams of conformance data (itu-t83-data-files.zip), fetched, never committed
     private static byte[] t83(String name) {
-        var archive = com.github.auties00.smalt.testkit.Conformance.fetchListed("itu-t83-data-files.zip");
+        var archive = com.github.auties00.smalt.testkit.Conformance.vector("itu-t83-data-files.zip");
         try (var zip = new java.util.zip.ZipFile(archive.toFile())) {
             var entry = zip.getEntry(name);
             try (var input = zip.getInputStream(entry)) {

@@ -366,16 +366,10 @@ class EditListDecodeTest {
     @Test
     @DisplayName("plays the samples HE-AAC edits select bit-exactly, its pre-roll rebuilding the SBR state")
     void heAacEdits() {
-        var explicit = Fixtures.read(com.github.auties00.smalt.testkit.Conformance.fetch("mpeg4audio-al_sbr_sig_48_2_sig0.mp4",
-                "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/"
-                        + "mpeg4audio-conformance/compressedMp4/al_sbr_sig_48_2_sig0.mp4",
-                "f115fd344f97ea6bc63e5975556a6e54dc46f4e18ae0f83f408c1488049f74f5"));
+        var explicit = Fixtures.read(Mpeg4AudioStreams.file("al_sbr_sig_48_2_sig0.mp4"));
         var result = editedAndExpected(explicit, 48_000);
         assertArrayEquals(result[1], result[0], mismatches(result[0], result[1]));
-        var parametricStereo = Fixtures.read(com.github.auties00.smalt.testkit.Conformance.fetch("mpeg4audio-al_sbr_i_44_1.mp4",
-                "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/"
-                        + "mpeg4audio-conformance/compressedMp4/al_sbr_i_44_1.mp4",
-                "93f9a8e33ca65f529139ed4827bf37214fe28a17aa786f3a23ba6cfd571cf36c"));
+        var parametricStereo = Fixtures.read(Mpeg4AudioStreams.file("al_sbr_i_44_1.mp4"));
         result = editedAndExpected(parametricStereo, 44_100);
         assertArrayEquals(result[1], result[0], mismatches(result[0], result[1]));
     }
@@ -384,17 +378,11 @@ class EditListDecodeTest {
     @DisplayName("plays the samples edits of a predictive AAC object type select bit-exactly, decoding every packet up to a forward edit")
     void predictiveAacEdits() {
         // AAC Main: backward-adaptive prediction, whose state a few packets of pre-roll do not rebuild
-        var main = Fixtures.read(com.github.auties00.smalt.testkit.Conformance.fetch("mpeg4audio-am00_48.mp4",
-                "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/"
-                        + "mpeg4audio-conformance/compressedMp4/am00_48.mp4",
-                "c7a8afd61ec5ff6a10d96458022006a2d8eea3a8bce4f709684bb4e7d1dfe5f6"));
+        var main = Fixtures.read(Mpeg4AudioStreams.file("am00_48.mp4"));
         var result = editedAndExpected(main, 48_000, new long[][]{{10_000, 30}, {-1, 5}, {50_000, 20}, {120_000, 17}});
         assertArrayEquals(result[1], result[0], mismatches(result[0], result[1]));
         // AAC-ELD without SBR: a window of four frames, rebuilt by three packets of pre-roll even after a jump back
-        var eld = Fixtures.read(com.github.auties00.smalt.testkit.Conformance.fetch("mpeg4audio-er_eld1000np_48_ep0.mp4",
-                "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/"
-                        + "mpeg4audio-conformance/compressedMp4/er_eld1000np_48_ep0.mp4",
-                "64acfe4c29a7733a2f09a0e1d6ba297f932e0ca7c888cdd650b4da69055f7f37"));
+        var eld = Fixtures.read(Mpeg4AudioStreams.file("er_eld1000np_48_ep0.mp4"));
         result = editedAndExpected(eld, 48_000);
         assertArrayEquals(result[1], result[0], mismatches(result[0], result[1]));
     }

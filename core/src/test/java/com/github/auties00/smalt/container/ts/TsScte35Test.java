@@ -281,4 +281,59 @@ class TsScte35Test {
         assertEquals(90_000, adjustedSpliceTime(packets.get(1).data()));
         assertEquals(10 * 1920, packets.get(1).pts(), "a section gets the latest decoding time");
     }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"tsduck-test-084.ts", "tsduck-test-209.ts"})
+    @DisplayName("returns every splice section of a broadcast stream as the stream carries it, and none of an idle PID")
+    void broadcast(String name) throws Exception {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var bytes = java.nio.file.Files.readAllBytes(file);
+        var demuxed = com.github.auties00.smalt.container.ContainerProbe.demux(file,
+                com.github.auties00.smalt.container.Containers::openDemuxer);
+        var tracks = demuxed.tracks().stream()
+                .filter(track -> track instanceof DataTrack data && data.handler().filter("scte35"::equals).isPresent()).toList();
+        assertTrue(!tracks.isEmpty(), "a SCTE 35 track");
+        var sections = 0;
+        for (var track : tracks) {
+            var expected = rawSections(bytes, track.id());
+            var actual = demuxed.packetsOf(track);
+            assertEquals(expected.size(), actual.size(), "sections of PID " + track.id());
+            for (var index = 0; index < expected.size(); index++) {
+                assertSameButAdjustment(expected.get(index), actual.get(index).data());
+            }
+            sections += actual.size();
+        }
+        // 084 carries splice_insert sections; 209 (a PTS wrap) declares a SCTE 35 PID that carries none
+        assertEquals(name.equals("tsduck-test-084.ts"), sections > 0, sections + " sections");
+    }
+
+    @Test
+    @DisplayName("reads the splice_insert section of a single-packet capture")
+    void singlePacket() throws Exception {
+        var packet = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
+                "tsduck-test-091.ts"));
+        assertEquals(188, packet.length);
+        var section = rawSections(packet, TsTesting.pid(packet)).getFirst();
+        assertEquals(0xFC, section[0] & 0xFF, "splice_info_section");
+        assertEquals(5, section[13], "splice_insert");
+        assertEquals(0, Crc32Mpeg.update(Crc32Mpeg.MPEG_INIT, section, 0, section.length), "CRC_32");
+        var writer = new TsWriter().pat(1, 0x1000, 0).pmt(0x1000, 1, 0, 0x100, TsWriter.registration("CUEI"),
+                List.of(new TsWriter.Stream(0x0F, 0x100), new TsWriter.Stream(0x86, 0x1F0)));
+        var adts = new byte[]{(byte) 0xFF, (byte) 0xF1, 0x4C, (byte) 0x80, 0x02, 0x1F, (byte) 0xFC};
+        var frame = TsWriter.concat(adts, TsMuxerTest.silentAacFrame());
+        frame[3] = (byte) (0x80 | (frame.length >> 11));
+        frame[4] = (byte) (frame.length >> 3);
+        frame[5] = (byte) ((frame.length & 7) << 5 | 0x1F);
+        for (var index = 0; index < 10; index++) {
+            writer.pes(0x100, 0xC0, 90_000 + index * 1920L, -1, TsWriter.concat(frame, frame), true);
+            if (index == 2) {
+                writer.section(0x1F0, section);
+            }
+        }
+        var demuxed = TsTesting.demux(writer.toByteArray());
+        var track = demuxed.tracks().stream().filter(candidate -> candidate.id() == 0x1F0).findFirst().orElseThrow();
+        var packets = demuxed.packetsOf(track);
+        assertEquals(1, packets.size());
+        assertSameButAdjustment(section, packets.getFirst().data());
+    }
 }

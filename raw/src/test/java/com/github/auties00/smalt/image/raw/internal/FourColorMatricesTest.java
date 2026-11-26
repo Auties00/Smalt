@@ -48,8 +48,8 @@ class FourColorMatricesTest {
     @EnumSource(value = RawSamples.class, names = {"CRW_G1", "NEF_E5700"})
     @DisplayName("every fitted matrix is re-derived from its sample against the embedded preview")
     void derivation(RawSamples sample) {
-        var fit = FourColorMatrixDerivation.fit(sample.fetch());
-        try (var source = MediaSource.of(sample.fetch())) {
+        var fit = FourColorMatrixDerivation.fit(sample.path());
+        try (var source = MediaSource.of(sample.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var entry = FourColorMatrices.find(file.make, file.model);
             assertNotNull(entry, file.make + " " + file.model);
@@ -68,7 +68,7 @@ class FourColorMatricesTest {
     @EnumSource(value = RawSamples.class, names = {"CRW_G1", "NEF_E5700"})
     @DisplayName("a file of a fitted model gets its matrix under D65 and reports calibrated colors")
     void complete(RawSamples sample) {
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var entry = FourColorMatrices.find(file.make, file.model);
             assertArrayEquals(entry.d65(), file.color.colorMatrix[0]);
@@ -87,7 +87,7 @@ class FourColorMatricesTest {
     @EnumSource(value = RawSamples.class, names = {"CRW_G1", "NEF_E5700"})
     @DisplayName("the default rendering matches the camera's preview in structure, balance and chroma")
     void rendering(RawSamples sample) {
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var preview = grid(Images.decode(MediaSource.of(RawDecoder.extractPreview(source).orElseThrow())).picture());
             var rendered = grid(RawDecoder.decode(source).picture());
             assertTrue(correlation(luminance(rendered), luminance(preview)) > 0.97,
@@ -115,7 +115,7 @@ class FourColorMatricesTest {
     @Test
     @DisplayName("an unknown four-color model gets the generic matrix of its filter colors and reports approximate colors")
     void unknownModel() {
-        try (var source = MediaSource.of(RawSamples.NEF_E5700.fetch())) {
+        try (var source = MediaSource.of(RawSamples.NEF_E5700.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             file.model = "E9999";
             file.color.colorMatrix[0] = null;
@@ -132,7 +132,7 @@ class FourColorMatricesTest {
     @Test
     @DisplayName("a file with matrices of its own keeps them")
     void keepsOwnMatrices() {
-        try (var source = MediaSource.of(RawSamples.NEF_E5700.fetch())) {
+        try (var source = MediaSource.of(RawSamples.NEF_E5700.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var own = new double[]{0.4, 0.6, -0.1, 0.1, 0.9, 0, 0.6, 0.2, 0.3, -0.1, 0.4, 0.7};
             file.color.colorMatrix[0] = own.clone();
@@ -190,7 +190,7 @@ class FourColorMatricesTest {
     @EnumSource(value = RawSamples.class, names = {"CRW_G1", "NEF_E5700"})
     @DisplayName("a four-color neutral is estimated from the preview, else from every unclipped cell, largest component 1")
     void fourColorNeutral(RawSamples sample) {
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var linear = Renderer.linearize(file, file.sensor, true);
             var window = Renderer.window(file.sensor, linear, true);
@@ -226,7 +226,7 @@ class FourColorMatricesTest {
     @Test
     @DisplayName("a cell whose mean is below black still counts as holding every color plane")
     void negativeCells() {
-        try (var source = MediaSource.of(RawSamples.NEF_E5700.fetch())) {
+        try (var source = MediaSource.of(RawSamples.NEF_E5700.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var linear = Renderer.linearize(file, file.sensor, true);
             Arrays.fill(linear.data, -0.001f);

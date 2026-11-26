@@ -1110,4 +1110,99 @@ class ExtendedFormatsTest {
     static Stream<H264Profile> highProfiles() {
         return Stream.of(H264Profile.HIGH, H264Profile.HIGH_10, H264Profile.HIGH_422, H264Profile.HIGH_444_PREDICTIVE);
     }
+
+    /**
+     * Natural content ({@link com.github.auties00.smalt.video.hevc.encoder.NaturalVideo}): windows of the Xiph 4:2:2 and 4:4:4
+     * {@code ducks_take_off} frames, of Netflix's 10-bit 4:2:0 Sintel source and of the interlaced 4:2:2 NTSC
+     * {@code football} frames, coded with deblocking: Smalt and ffmpeg must decode the stream to the same samples,
+     * and the pictures stay close to the source.
+     */
+    @Nested
+    @DisplayName("natural content")
+    class Natural {
+        static Stream<Arguments> progressive() {
+            return Stream.of(
+                    Arguments.of("ducks_take_off_422_720p50-25f.y4m", H264Profile.HIGH_422, ChromaFormat.YUV422, 8),
+                    Arguments.of("ducks_take_off_444_720p50-25f.y4m", H264Profile.HIGH_444_PREDICTIVE,
+                            ChromaFormat.YUV444, 8),
+                    Arguments.of("Sintel-Weapon_3840x1632_24fps_10bit_420-8f.yuv", H264Profile.HIGH_10,
+                            ChromaFormat.YUV420, 10));
+        }
+
+        private static List<Picture> source(String vector, int width, int height) {
+            return vector.endsWith(".yuv")
+                    ? com.github.auties00.smalt.video.hevc.encoder.NaturalVideo.yuv420p10(vector, 3840, 1632, 4, 1600, 640, width,
+                    height)
+                    : widen(com.github.auties00.smalt.video.hevc.encoder.NaturalVideo.y4m(vector, 4, 480, 256, width,
+                    height));
+        }
+
+        /** Returns 8-bit pictures as 16-bit pictures of depth 8, the form the encoder runs of this test take. */
+        static List<Picture> widen(List<Picture> pictures) {
+            var result = new java.util.ArrayList<Picture>();
+            for (var picture : pictures) {
+                var narrow = (YuvPicture) picture;
+                var wide = Yuv16Picture.allocate(narrow.width(), narrow.height(), narrow.chromaFormat(), 8, false,
+                        narrow.color());
+                for (var y = 0; y < narrow.height(); y++) {
+                    for (var x = 0; x < narrow.width(); x++) {
+                        wide.y()[y * wide.yStride() + x] = (short) (narrow.y()[y * narrow.yStride() + x] & 0xFF);
+                    }
+                }
+                for (var y = 0; y < narrow.chromaHeight(); y++) {
+                    for (var x = 0; x < narrow.chromaWidth(); x++) {
+                        wide.u()[y * wide.uvStride() + x] = (short) (narrow.u()[y * narrow.uvStride() + x] & 0xFF);
+                        wide.v()[y * wide.uvStride() + x] = (short) (narrow.v()[y * narrow.uvStride() + x] & 0xFF);
+                    }
+                }
+                result.add(wide);
+            }
+            return result;
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("progressive")
+        @DisplayName("progressive frames decode alike in Smalt and ffmpeg and stay close to the source")
+        void progressive(String vector, H264Profile profile, ChromaFormat format, int depth) {
+            var width = 320;
+            var height = 192;
+            var sources = source(vector, width, height);
+            var options = options(profile, format, depth).quality(20).build();
+            var run = run(width, height, options, sources, true);
+            var smalt = decodeSmalt(run.packets());
+            assertSame(run.decoded(), smalt, "Smalt");
+            for (var i = 0; i < smalt.size(); i++) {
+                var quality = psnr(sources.get(i), smalt.get(i)[0], depth);
+                assertTrue(quality > 36, vector + " frame " + i + " luma PSNR " + quality);
+            }
+            if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
+                assertSame(smalt, decodeFfmpeg("natural-" + format + "-" + depth, run.stream(), format, depth, width,
+                        height), "ffmpeg");
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.EnumSource(value = H264FieldCoding.class, names = {"MBAFF",
+                "FIELD_PICTURES"})
+        @DisplayName("interlaced 4:2:2 frames decode alike in Smalt and ffmpeg and stay close to the source")
+        void interlaced(H264FieldCoding coding) {
+            var width = 320;
+            var height = 192;
+            var sources = widen(com.github.auties00.smalt.video.hevc.encoder.NaturalVideo.y4m(
+                    "football_422_ntsc-60f.y4m", 4, 200, 148, width, height));
+            var options = options(H264Profile.HIGH_422, ChromaFormat.YUV422, 8).fieldOrder(FieldOrder.TOP_FIRST)
+                    .fieldCoding(coding).quality(20).build();
+            var run = run(width, height, options, sources, true);
+            var smalt = decodeSmalt(run.packets());
+            assertSame(run.decoded(), smalt, "Smalt");
+            for (var i = 0; i < smalt.size(); i++) {
+                var quality = psnr(sources.get(i), smalt.get(i)[0], 8);
+                assertTrue(quality > 34, coding + " frame " + i + " luma PSNR " + quality);
+            }
+            if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
+                assertSame(smalt, decodeFfmpeg("natural-football-" + coding, run.stream(), ChromaFormat.YUV422, 8,
+                        width, height), "ffmpeg");
+            }
+        }
+    }
 }

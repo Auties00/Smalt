@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.video.vp8;
 
-import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -160,30 +159,18 @@ class Vp8VideoEncoderTest {
         }
     }
 
-    /** Returns the frames of a cached clip, read lazily, or synthetic frames when it is absent. */
-    /**
-     * Returns the frames of a cached clip, skipping the calling test without it; for assertions calibrated on
-     * the clip's content, which synthetic video does not reproduce.
-     */
-    static IntFunction<YuvPicture> clipOrSkip(String name, int width, int height, int frames) throws IOException {
+    /** Returns the first frames of a raw clip of the hosted test data, read lazily. */
+    static IntFunction<YuvPicture> clip(String name, int width, int height, int frames) throws IOException {
         var clip = RtTestVideo.clip(name);
-        Skip.unless(clip != null && Files.size(clip) >= (long) frames * width * height * 3 / 2, "data:clip",
-                "clip " + name + " is not cached (python tools/testdata/testdata.py fetch --tier full)");
-        return clipOrSynthetic(name, width, height, frames);
-    }
-
-    static IntFunction<YuvPicture> clipOrSynthetic(String name, int width, int height, int frames) throws IOException {
-        var clip = RtTestVideo.clip(name);
-        if (clip != null && Files.size(clip) >= (long) frames * width * height * 3 / 2) {
-            return i -> {
-                try {
-                    return RtTestVideo.read(clip, width, height, i, 1).getFirst();
-                } catch (IOException exception) {
-                    throw new UncheckedIOException(exception);
-                }
-            };
-        }
-        return RtTestVideo.synthesize(width, height, frames)::get;
+        assertTrue(Files.size(clip) >= (long) frames * width * height * 3 / 2,
+                "clip " + name + " is shorter than " + frames + " frames");
+        return i -> {
+            try {
+                return RtTestVideo.read(clip, width, height, i, 1).getFirst();
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+        };
     }
 
     static boolean isKey(Packet packet) {
@@ -230,7 +217,7 @@ class Vp8VideoEncoderTest {
         @Test
         @DisplayName("a natural clip at 640x480 decodes to the reconstruction, error resilient or not")
         void naturalClip() throws IOException {
-            var frames = clipOrSynthetic("johnny480.yuv", 640, 480, 60);
+            var frames = clip("johnny480.yuv", 640, 480, 60);
             for (var errorResilient : new boolean[]{false, true}) {
                 var run = encode(with(config(640, 480, 600_000), 6, errorResilient, 1, 1, 1), frames, 60, true,
                         i -> false, null);
@@ -431,7 +418,7 @@ class Vp8VideoEncoderTest {
         /** Encodes a clip whose bitrate steps every {@link #SEGMENT} frames, returning each frame's bits (0 if dropped). */
         static long[] encodeSteps(String clip, int width, int height, int[] steps, boolean dropFrames) throws IOException {
             var count = SEGMENT * steps.length;
-            var frames = clipOrSkip(clip, width, height, count);
+            var frames = clip(clip, width, height, count);
             var c = config(width, height, steps[0]);
             var base = Vp8Setup.of(width, height, c.frameRate(), c.timeBase(), steps[0], 4, 63, 0, 6, false,
                     1, dropFrames, 1000, 500, 600, 1, 1);
@@ -554,7 +541,7 @@ class Vp8VideoEncoderTest {
             var raise = 240;
             var count = raise + 30;
             var c = config(width, height, from);
-            var run = encode(c, clipOrSkip(clip, width, height, count), count, false, i -> false,
+            var run = encode(c, clip(clip, width, height, count), count, false, i -> false,
                     i -> i == raise ? c.withBitrate(to) : null);
             var bits = run.packets().stream().filter(p -> p.pts() >= raise).mapToLong(p -> p.size() * 8L).sum();
             assertTrue(Math.abs(bits - to) <= 0.08 * to, bits + " bits in the second after the raise to " + to);
@@ -583,7 +570,7 @@ class Vp8VideoEncoderTest {
         void ambientKeyFrames() throws IOException {
             var c = Vp8Setup.of(640, 480, new Rational(30, 1), new Rational(1, 30), 500_000, 4, 63, 60, 6,
                     true, 1, true, 1000, 500, 600, 1, 1);
-            var frames = clipOrSynthetic("johnny480.yuv", 640, 480, 181);
+            var frames = clip("johnny480.yuv", 640, 480, 181);
             try (var encoder = c.encoder()) {
                 var recent = new ArrayDeque<Integer>();
                 for (var i = 0; i <= 180; i++) {
@@ -610,7 +597,7 @@ class Vp8VideoEncoderTest {
         @DisplayName("a key frame limit makes requested key frames smaller")
         void keyframeLimit() throws IOException {
             var c = config(640, 480, 400_000);
-            var frames = clipOrSynthetic("kriste480.yuv", 640, 480, 120);
+            var frames = clip("kriste480.yuv", 640, 480, 120);
             IntPredicate force = i -> i == 60 || i == 90;
             var unlimited = encode(c, frames, 120, false, force, null);
             var limited = encode(c.withMaxKeyframeBitratePercent(150), frames, 120, false, force, null);

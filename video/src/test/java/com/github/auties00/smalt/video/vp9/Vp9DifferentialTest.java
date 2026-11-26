@@ -3,6 +3,7 @@ package com.github.auties00.smalt.video.vp9;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.Tolerance;
@@ -25,13 +26,14 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Decodes VP9 streams made by ffmpeg's libvpx-vp9 encoder with many settings (tiles, row
  * multithreading, realtime with error resilience, lossless, frame-parallel mode, adaptive
- * quantization, every profile and bit depth) from natural video (the Xiph {@code foreman} clip
- * when cached, else a synthetic scene), plus the libvpx scaled-reference vectors, and requires
+ * quantization, every profile and bit depth) from natural video (the Xiph {@code foreman} clip),
+ * plus the libvpx scaled-reference vectors, and requires
  * every frame to match ffmpeg's decode through libvpx and through its native VP9 decoder bit
  * for bit, single-threaded and with parallel tiles.
  */
@@ -40,22 +42,9 @@ class Vp9DifferentialTest {
     /** VP9 reconstruction is normative, so every shown frame equals libvpx's and ffmpeg's decodes; frame MD5s compare equal. */
     static final Tolerance TOLERANCE = Tolerance.exact();
 
-    static Path foreman() {
-        var path = Path.of(com.github.auties00.smalt.testkit.Conformance.directory().toString(), "foreman_cif.y4m");
-        return Files.isRegularFile(path) ? path : null;
-    }
-
     static Path encode(String label, int width, int height, List<String> options, int frames) {
-        var source = foreman();
-        var input = source != null ? List.of("-i", source.toString())
-                : List.of("-f", "lavfi", "-i", "mandelbrot=size=352x288:rate=30", "-f", "lavfi", "-i",
-                "testsrc2=size=352x288:rate=30");
-        var output = new ArrayList<String>();
-        if (source == null) {
-            output.addAll(List.of("-filter_complex", "[0][1]blend=all_mode=average,scale=" + width + ":" + height));
-        } else {
-            output.addAll(List.of("-vf", "scale=" + width + ":" + height));
-        }
+        var input = List.of("-i", Conformance.vector("foreman_cif.y4m").toString());
+        var output = new ArrayList<>(List.of("-vf", "scale=" + width + ":" + height));
         output.addAll(List.of("-frames:v", Integer.toString(frames), "-c:v", "libvpx-vp9"));
         output.addAll(options);
         output.addAll(List.of("-an", "-f", "webm"));
@@ -209,5 +198,61 @@ class Vp9DifferentialTest {
             }
             assertEquals(theirs, ours, name + " vs " + decoder);
         }
+    }
+
+    /**
+     * VP9 from pipelines other than ffmpeg's libvpx encodes: libvpx's YouTube-like ladder (alternate reference
+     * pyramids; 1x1 tiles, a height that is not a multiple of 8, 1x4 tiles in frame parallel mode) and Chromium's
+     * samples (profile 1 4:2:2, profile 2 10-bit, BT.709 signalled in the bitstream and the WebM Colour element, and
+     * 4:4:4 RGB in MP4).
+     */
+    static Stream<Arguments> realWorld() {
+        return Stream.of(
+                Arguments.of("vp90-2-bbb_426x240_tile_1x1_180kbps.webm", "yuv420p"),
+                Arguments.of("vp90-2-sintel_426x182_tile_1x1_171kbps.webm", "yuv420p"),
+                Arguments.of("vp90-2-tos_1280x534_tile_1x4_fpm_952kbps.webm", "yuv420p"),
+                Arguments.of("chromium-bear-vp9-i422.webm", "yuv422p"),
+                Arguments.of("chromium-bear-320x240-vp9_profile2.webm", "yuv420p10le"),
+                Arguments.of("chromium-bear-vp9-bt709.webm", "yuv420p"),
+                // VP9 codes RGB as G, B, R in its three planes, ffmpeg's gbrp order
+                Arguments.of("chromium-gbrp-vp9.mp4", "gbrp"));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("realWorld")
+    @DisplayName("real-world streams match ffmpeg's libvpx and native decoders")
+    void realWorld(String name, String pixelFormat) {
+        var file = Conformance.vector(name);
+        // the ladder streams run for minutes: their first 240 packets hold key frames, alternate reference pyramids
+        // and every tile layout, and keep the raw frames within the heap
+        var all = webmPackets(file);
+        var packets = all.subList(0, Math.min(240, all.size()));
+        var ours = decodeRaw(packets, false);
+        for (var decoder : List.of("libvpx-vp9", "vp9")) {
+            var expected = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), List.of("-v", "error", "-c:v", decoder,
+                    "-i", file.toString(), "-frames:v", Integer.toString(ours.size()), "-f", "rawvideo", "-pix_fmt",
+                    pixelFormat, "-fps_mode", "passthrough", "-"));
+            assertSameFrames(expected, ours, name + " vs " + decoder);
+        }
+        assertEquals(frameMd5s(packets, false), frameMd5s(packets, true), name + " parallel");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({"chromium-bear-vp9-bt709.webm,2,false",
+            "chromium-gbrp-vp9.mp4,7,true"})
+    @DisplayName("reads the color space and range of the uncompressed header (VP9 7.2: CS_BT_709 2, CS_RGB 7)")
+    void colorSpace(String name, int colorSpace, boolean fullRange) {
+        var decoder = new Vp9FrameDecoder(MediaLimits.DEFAULT, false);
+        var frames = 0;
+        for (var packet : webmPackets(Conformance.vector(name))) {
+            decoder.decodePacket(packet, 0, packet.length);
+            var frame = decoder.shownFrame();
+            if (frame != null) {
+                assertEquals(colorSpace, frame.colorSpace, name + " frame " + frames);
+                assertEquals(fullRange, frame.fullRange, name + " frame " + frames);
+                frames++;
+            }
+        }
+        assertTrue(frames > 0, name);
     }
 }

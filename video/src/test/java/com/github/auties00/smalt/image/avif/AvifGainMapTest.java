@@ -57,7 +57,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AvifGainMapTest {
     static byte[] vector(String name) {
         try {
-            return Files.readAllBytes(Conformance.fetchListed("libavif-" + name));
+            return Files.readAllBytes(Conformance.vector("libavif-" + name));
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
@@ -133,6 +133,20 @@ class AvifGainMapTest {
     @Nested
     @DisplayName("libavif test files")
     class Libavif {
+        @Test
+        @DisplayName("reads the gain map of a base image with an ICC profile, the profile kept on the base")
+        void seineIcc() {
+            var data = vector("seine_sdr_gainmap_srgb_icc.avif");
+            var plain = AvifDecoder.decodeGainMap(MediaSource.of(vector("seine_sdr_gainmap_srgb.avif"))).orElseThrow();
+            var gainMap = AvifDecoder.decodeGainMap(MediaSource.of(data)).orElseThrow();
+            // the same gain map as the file without the profile
+            assertEquals(plain.metadata(), gainMap.metadata());
+            assertEquals(plain.image().width(), gainMap.image().width());
+            var base = AvifDecoder.decode(MediaSource.of(data));
+            var icc = base.iccProfile().orElseThrow();
+            assertEquals("acsp", new String(icc, 36, 4, java.nio.charset.StandardCharsets.US_ASCII));
+        }
+
         @Test
         @DisplayName("reads the gain map of the Camera Raw conversion as the JPEG XMP gives it")
         void seine() {

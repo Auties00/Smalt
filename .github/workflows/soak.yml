@@ -25,7 +25,6 @@ permissions:
 
 env:
   JAVA_VERSION: '26'
-  SMALT_CONFORMANCE_DOWNLOAD: 'false'
 
 jobs:
   soak:

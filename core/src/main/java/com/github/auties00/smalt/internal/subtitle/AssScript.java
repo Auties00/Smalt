@@ -475,12 +475,13 @@ public final class AssScript {
     }
 
     /**
-     * Returns whether {@code \n} breaks lines in the script, as it does under wrap style 2.
+     * Returns whether {@code \n} breaks lines in the script: in an SSA script and in an ASS script under wrap
+     * style 2, as renderers such as libass read it.
      *
-     * @return {@code true} when {@code WrapStyle} is 2
+     * @return {@code true} when the script is SSA or its {@code WrapStyle} is 2
      */
     public boolean softBreaksAreLineBreaks() {
-        return "2".equals(info("WrapStyle"));
+        return isSsa() || "2".equals(info("WrapStyle"));
     }
 
     /**

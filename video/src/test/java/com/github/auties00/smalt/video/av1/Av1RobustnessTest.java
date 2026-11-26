@@ -24,7 +24,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Random;
 import java.util.TreeMap;
 import java.util.stream.Stream;
@@ -44,18 +43,16 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 @DisplayName("AV1 robustness against hostile input")
 class Av1RobustnessTest {
-    private static final String BASE = "https://storage.googleapis.com/aom-test-data/";
-
-    // SHA-256 digests of the libaom test vectors, as pinned by Av1ConformanceTest.
-    private static final Map<String, String> VECTORS = Map.of(
-            "av1-1-b8-01-size-66x66.ivf", "5f9285cbc417b0457c806df9154a1898f0f9ca09066abfdfd828cb3b2ba0371b",
-            "av1-1-b8-04-cdfupdate.ivf", "14a3dbf537b6bf15efc003182d9916d61438c93624a8bd26e6e3ae7eaf33ea82",
-            "av1-1-b8-06-mfmv.ivf", "b59bf9586d8546dfda81dfec4ee4e32ceb502c9d22412ab0b63a2abb534a1f14",
-            "av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf", "0252716fe7a7c7f1ebb1eb23920a6737f45c10dfba942304bd339ae42b5c576c",
-            "av1-1-b8-22-svc-L2T2-2.ivf", "f2af0263e91d460366d4230e83724a91dbcc8b86fb217ca0f417b58df4e2c0ad",
-            "av1-1-b8-23-film_grain-50.ivf", "ba3edd82a58414f009e1c821b947ec8de4e0420f33803ca7bfea39af6aeea155",
-            "av1-1-b10-00-quantizer-10.ivf", "a93c66b9ad673049b7ad123dfa00c190f70ac3d208de5d49b3653dcf61225f33",
-            "av1-1-b10-24-monochrome.ivf", "6a1b0729305a167f10737a5375f0570139f055bcd7916df260b653ab2210adc1");
+    // The libaom test vectors, read as av1-<name> from the hosted test data.
+    private static final List<String> VECTORS = List.of(
+            "av1-1-b8-01-size-66x66.ivf",
+            "av1-1-b8-04-cdfupdate.ivf",
+            "av1-1-b8-06-mfmv.ivf",
+            "av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf",
+            "av1-1-b8-22-svc-L2T2-2.ivf",
+            "av1-1-b8-23-film_grain-50.ivf",
+            "av1-1-b10-00-quantizer-10.ivf",
+            "av1-1-b10-24-monochrome.ivf");
 
     // Small enough that a corrupted frame size is rejected rather than allocated.
     private static final MediaLimits SMALL = MediaLimits.builder().maxDimension(1024).maxPixels(1 << 20)
@@ -65,7 +62,7 @@ class Av1RobustnessTest {
     }
 
     static Stream<String> vectors() {
-        return VECTORS.keySet().stream().sorted();
+        return VECTORS.stream().sorted();
     }
 
     static Clip load(Path file) {
@@ -83,7 +80,7 @@ class Av1RobustnessTest {
     }
 
     static Clip vector(String name) {
-        return load(Conformance.fetch("av1-" + name, BASE + name, VECTORS.get(name)));
+        return load(Conformance.vector("av1-" + name));
     }
 
     /**
@@ -335,8 +332,7 @@ class Av1RobustnessTest {
         @ValueSource(ints = {1, 4})
         @DisplayName("recovers bit-exactly at the next key frame after corrupt frames")
         void recovery(int frameDelay) {
-            var foreman = Conformance.fetch("foreman_cif.y4m", "https://media.xiph.org/video/derf/y4m/foreman_cif.y4m",
-                    "b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b");
+            var foreman = Conformance.vector("foreman_cif.y4m");
             var file = Fixtures.ffmpeg("ivf", List.of("-i", foreman.toString(), "-frames:v", "24", "-vf", "scale=176:144"),
                     List.of("-c:v", "libaom-av1", "-usage", "realtime", "-cpu-used", "8", "-b:v", "200k", "-g", "6",
                             "-keyint_min", "6"));
@@ -413,5 +409,110 @@ class Av1RobustnessTest {
             }
             return out;
         }
+    }
+
+    /**
+     * libaom's invalid-file vectors (oss-fuzz, Chromium and Google bug reproducers), each with the decode result
+     * libaom expects per frame in {@code .res} (or a {@code .res.<n>} variant): 0 for a frame that decodes, a
+     * nonzero {@code aom_codec_err_t} for one that is rejected.
+     */
+    static Stream<String> invalidFiles() {
+        return Conformance.vectors("av1-invalid-").stream().filter(name -> name.endsWith(".ivf"));
+    }
+
+    /** Returns the libaom per-frame results of an invalid file, read from its first listed result file. */
+    static List<Integer> results(String name) {
+        for (var suffix : List.of(".res", ".res.2", ".res.3", ".res.4")) {
+            if (Conformance.listed(name + suffix)) {
+                try {
+                    return Files.readAllLines(Conformance.vector(name + suffix)).stream().map(String::strip)
+                            .filter(line -> !line.isEmpty()).map(Integer::valueOf).toList();
+                } catch (IOException exception) {
+                    throw new UncheckedIOException(exception);
+                }
+            }
+        }
+        throw new AssertionError("no result file for " + name);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidFiles")
+    @DisplayName("libaom's invalid files only throw media exceptions, and frames libaom decodes decode")
+    void invalidFiles(String name) throws IOException {
+        var results = results(name);
+        var frames = ivfFrames(Conformance.vector(name));
+        var outcomes = new ArrayList<String>();
+        assertTimeoutPreemptively(Duration.ofSeconds(120), () -> {
+            try (var decoder = new Av1Decoder(bareTrack(), Av1DecoderOptions.builder().limits(SMALL).build())) {
+                for (var i = 0; i < frames.size(); i++) {
+                    outcomes.add(decodeQuietly(decoder, new Packet(1, frames.get(i), i, i, 1, false), name + " frame " + i));
+                }
+                flushQuietly(decoder, name + " flush");
+            }
+        });
+        System.out.printf("%s: libaom %s, ours %s%n", name, results, outcomes);
+        if (results.stream().allMatch(result -> result == 0)) {
+            assertTrue(outcomes.stream().allMatch("ok"::equals), name + ": libaom decodes every frame, ours " + outcomes);
+        }
+    }
+
+    /**
+     * dav1d's oss-fuzz reproducers (asan, msan and ubsan crashers of its single and multi-threaded fuzzers), fed as
+     * dav1d's fuzzer feeds them: a 32-byte IVF file header, then frames of a 4-byte size and an 8-byte timestamp.
+     */
+    static Stream<String> dav1dFuzzerInputs() {
+        return Conformance.vectors("dav1d-oss-fuzz-").stream().filter(name -> !name.endsWith("meson.build"));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("dav1dFuzzerInputs")
+    @DisplayName("dav1d's oss-fuzz crashers only throw media exceptions, single-threaded and with frame threads")
+    void dav1dFuzzerInputs(String name) throws IOException {
+        var data = Files.readAllBytes(Conformance.vector(name));
+        var frames = new ArrayList<byte[]>();
+        for (var position = 32; position + 12 <= data.length; ) {
+            var size = (data[position] & 0xFF) | (data[position + 1] & 0xFF) << 8 | (data[position + 2] & 0xFF) << 16
+                    | (long) (data[position + 3] & 0xFF) << 24;
+            position += 12;
+            if (size > data.length - position) {
+                break;
+            }
+            frames.add(Arrays.copyOfRange(data, position, position + (int) size));
+            position += (int) size;
+        }
+        assertTimeoutPreemptively(Duration.ofSeconds(120), () -> {
+            for (var delay : new int[]{1, 4}) {
+                var options = Av1DecoderOptions.builder().limits(SMALL).maxFrameDelay(delay).build();
+                try (var decoder = new Av1Decoder(bareTrack(), options)) {
+                    for (var i = 0; i < frames.size(); i++) {
+                        decodeQuietly(decoder, new Packet(1, frames.get(i), i, i, 1, false), name + " frame " + i);
+                    }
+                    flushQuietly(decoder, name + " flush");
+                }
+            }
+        });
+    }
+
+    static List<byte[]> ivfFrames(Path file) throws IOException {
+        var data = Files.readAllBytes(file);
+        var frames = new ArrayList<byte[]>();
+        // libaom's IVF reader skips a 32-byte header whatever its header size field says
+        var position = 32;
+        while (position + 12 <= data.length) {
+            var size = (data[position] & 0xFF) | (data[position + 1] & 0xFF) << 8 | (data[position + 2] & 0xFF) << 16
+                    | (long) (data[position + 3] & 0xFF) << 24;
+            position += 12;
+            if (size > data.length - position) {
+                break;
+            }
+            frames.add(Arrays.copyOfRange(data, position, position + (int) size));
+            position += (int) size;
+        }
+        return frames;
+    }
+
+    static VideoTrack bareTrack() {
+        return VideoTrack.builder().id(1).codec(com.github.auties00.smalt.track.Codec.AV1)
+                .timeBase(new com.github.auties00.smalt.track.Rational(1, 30)).build();
     }
 }

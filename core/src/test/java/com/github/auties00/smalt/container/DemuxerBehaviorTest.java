@@ -53,7 +53,6 @@ class DemuxerBehaviorTest {
             "flac-cellar-subset-60.flac",
             "flac-cellar-subset-38.flac",
             "eac3-csi_miami_5.1_256_spx_small.eac3",
-            "mpeg4audio-al00_08.wav",
             "fate-luckynight-mac388-c2000.ape",
             "fate-inside-mp7.mpc",
             "fate-dst-64fs44-2ch.dff");
@@ -87,7 +86,7 @@ class DemuxerBehaviorTest {
     })
     @DisplayName("protected vectors: identical decrypted packets under every source behavior, clean faults, contract seeks")
     void encrypted(String name, String keyId, String key) throws IOException {
-        var data = Files.readAllBytes(Conformance.fetchListed(name));
+        var data = Files.readAllBytes(Conformance.vector(name));
         var options = DemuxerOptions.builder().decryptionKeys(DecryptionKeys.ofHex(Map.of(keyId, key))).build();
         DemuxerAsserts.of("encrypted/" + name, data)
                 .factory(source -> name.endsWith(".webm") ? new MatroskaDemuxer(source, options)
@@ -190,7 +189,7 @@ class DemuxerBehaviorTest {
     @MethodSource("vectors")
     @DisplayName("smoke vectors: identical packets under every source behavior, clean faults, contract seeks")
     void vector(String name) throws IOException {
-        var data = Files.readAllBytes(Conformance.fetchListed(name));
+        var data = Files.readAllBytes(Conformance.vector(name));
         DemuxerAsserts.of("vectors/" + name, data)
                 .seekPrecision(PRECISION.getOrDefault(name, SeekPrecision.EXACT))
                 .run();

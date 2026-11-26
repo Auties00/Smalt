@@ -492,4 +492,53 @@ class AvifStructureTest {
                         "-still-picture", "1")))), ImageDecoderOptions.builder().highBitDepth(true).build());
         assertEquals(10, assertInstanceOf(Yuv16Picture.class, deep.picture()).bitDepth());
     }
+
+    /**
+     * libavif's structure test files: a pixi box with extensions, an alpha item without ispe, unknown transform-like
+     * properties ({@code clop}, {@code imor}) and custom properties, each decoding as ffmpeg decodes its items.
+     */
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"libavif-extended_pixi.avif",
+            "libavif-clop_irot_imor.avif", "libavif-circle_custom_properties.avif"})
+    @DisplayName("libavif's structure edge cases decode as ffmpeg decodes their items")
+    void libavifStructures(String vector) {
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        var decoded = AvifDecoder.decode(MediaSource.of(data),
+                com.github.auties00.smalt.image.ImageDecoderOptions.builder().highBitDepth(true).build()).picture();
+        AvifConformanceTest.assertPlanesEqual(AvifReference.primary(data), AvifReference.Planes.of(decoded), vector);
+    }
+
+    @Test
+    @DisplayName("an alpha item without ispe decodes with its color as ffmpeg decodes the color item")
+    void alphaWithoutIspe() {
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("libavif-alpha_noispe.avif");
+        var decoded = assertInstanceOf(YuvPicture.class, AvifDecoder.decode(MediaSource.of(
+                com.github.auties00.smalt.testkit.Fixtures.read(file))).picture());
+        org.junit.jupiter.api.Assertions.assertTrue(decoded.hasAlpha(), "alpha");
+        var expected = com.github.auties00.smalt.testkit.Oracle.decodeVideo(file, "yuv444p", 1);
+        var ours = new java.io.ByteArrayOutputStream();
+        for (var plane : java.util.List.of(decoded.y(), decoded.u(), decoded.v())) {
+            var stride = plane == decoded.y() ? decoded.yStride() : decoded.uvStride();
+            for (var row = 0; row < decoded.height(); row++) {
+                ours.write(plane, row * stride, decoded.width());
+            }
+        }
+        org.junit.jupiter.api.Assertions.assertArrayEquals(expected, ours.toByteArray());
+    }
+
+    @Test
+    @DisplayName("libavif's security reproducer poc_b_506387278 decodes or fails with a media exception, in bounded time")
+    void securityReproducer() {
+        var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector("libavif-poc_b_506387278.avif"));
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(30), () -> {
+            try {
+                var picture = AvifDecoder.decode(MediaSource.of(data)).picture();
+                org.junit.jupiter.api.Assertions.assertTrue(picture.width() > 0 && picture.height() > 0);
+            } catch (com.github.auties00.smalt.MediaException rejected) {
+                // failing cleanly is the contract
+            }
+        });
+    }
 }

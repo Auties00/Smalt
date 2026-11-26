@@ -27,9 +27,7 @@ class CameraMatricesTest {
     @Test
     @DisplayName("every matrix is re-derived from the rawtoaces-data spectral sensitivities")
     void derivation() throws Exception {
-        var archive = Conformance.fetch("rawtoaces-data-e9b8503cf8a0641f40e5345d9757bde60c15f423.tar.gz",
-                "https://codeload.github.com/AcademySoftwareFoundation/rawtoaces-data/tar.gz/e9b8503cf8a0641f40e5345d9757bde60c15f423",
-                "583eb822932be044a38c9c19bc950a4db1bab409c979bcfd1419afde9029ffa6");
+        var archive = Conformance.vector("rawtoaces-data-e9b8503cf8a0641f40e5345d9757bde60c15f423.tar.gz");
         var cameras = CameraMatrixDerivation.derive(archive);
         assertEquals(52, cameras.size());
         for (var camera : cameras) {
@@ -72,7 +70,7 @@ class CameraMatricesTest {
     @Test
     @DisplayName("a NEF file of a known model gets its matrices, a DNG file keeps its own")
     void complete() {
-        try (var source = MediaSource.of(RawSamples.NEF_D7000_LOSSY_12.fetch())) {
+        try (var source = MediaSource.of(RawSamples.NEF_D7000_LOSSY_12.path())) {
             var color = RawParser.parse(source, MediaLimits.DEFAULT).color;
             var entry = CameraMatrices.find("Nikon", "D7000");
             assertArrayEquals(entry.a(), color.colorMatrix[0]);
@@ -80,7 +78,7 @@ class CameraMatricesTest {
             assertEquals(17, color.illuminant[0]);
             assertEquals(21, color.illuminant[1]);
         }
-        try (var source = MediaSource.of(RawSamples.ADC_5D3_LOSSLESS.fetch())) {
+        try (var source = MediaSource.of(RawSamples.ADC_5D3_LOSSLESS.path())) {
             var color = RawParser.parse(source, MediaLimits.DEFAULT).color;
             var entry = CameraMatrices.find("Canon", "EOS 5D Mark III");
             assertNotNull(color.colorMatrix[0]);

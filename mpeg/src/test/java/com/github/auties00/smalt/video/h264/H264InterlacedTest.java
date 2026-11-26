@@ -1,7 +1,6 @@
 package com.github.auties00.smalt.video.h264;
 
 import com.github.auties00.smalt.image.YuvPicture;
-import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.Packet;
 import org.junit.jupiter.api.DisplayName;
@@ -37,9 +36,7 @@ class H264InterlacedTest {
     private static List<byte[]> conformanceNals(String name) throws IOException {
         var vector = H264ConformanceTest.vectors().stream().filter(entry -> entry.name().equals(name)).findFirst()
                 .orElseThrow();
-        var archive = Conformance.fetch("h264-" + vector.directory() + "-" + vector.archive(),
-                "https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/" + vector.directory() + "/"
-                        + vector.archive(), vector.sha256());
+        var archive = H264ConformanceTest.archive(vector);
         try (var zip = new ZipFile(archive.toFile())) {
             return H264TestStreams.nalUnits(zip.getInputStream(zip.getEntry(vector.bitstream())).readAllBytes());
         }

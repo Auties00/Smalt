@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.dv;
 
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.video.FieldOrder;
@@ -100,5 +101,76 @@ class DvDifferentialTest {
         var difference = IntraTesting.difference(expected, actual, false, 255);
         System.out.printf("%s: %s%n", label, difference);
         TOLERANCE.check(label, difference);
+    }
+
+    /**
+     * Returns the frames of a DV file: the packets of its container, or for a raw DIF stream, frames of the size its
+     * first header announces (DSF set: 625/50 system).
+     */
+    static List<com.github.auties00.smalt.track.Packet> frames(String name, Path file) {
+        if (!name.endsWith(".dv")) {
+            return IntraTesting.demux(file).packets();
+        }
+        var bytes = Fixtures.read(file);
+        return DvTesting.split(bytes, (bytes[3] & 0x80) != 0 ? DvProfile.DV_625 : DvProfile.DV_525);
+    }
+
+    /**
+     * Files written by camcorders and broadcast tools rather than ffmpeg: Panasonic DVCPRO HD 1080i50, 1080p25 and
+     * 720p50 in QuickTime, a DVCPRO50 AVI, and raw DV25 camcorder streams (NTSC 4:1:1, and PAL 4:2:0 with subcode
+     * and auxiliary data).
+     */
+    static Stream<Arguments> recorded() {
+        return Stream.of(
+                Arguments.of("dv-fate-dvcprohd_1080i50.mov", "yuv422p"),
+                Arguments.of("dv-fate-dvcprohd_1080p25.mov", "yuv422p"),
+                Arguments.of("dv-fate-dvcprohd_720p50.mov", "yuv422p"),
+                Arguments.of("dv-samples-dvcpro50.avi", "yuv422p"),
+                Arguments.of("dv-samples-pond.dv", "yuv411p"),
+                Arguments.of("dv-samples-small_test2.dv", "yuv420p"));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("recorded")
+    @DisplayName("decodes files of other recorders as ffmpeg does within the DCT rounding")
+    void recorded(String name, String pixelFormat) {
+        var file = Conformance.vector(name);
+        var decoder = new DvDecoder();
+        var ours = new ByteArrayOutputStream();
+        var packets = frames(name, file);
+        var rejected = new ArrayList<Integer>();
+        for (var index = 0; index < packets.size(); index++) {
+            try {
+                decoder.decode(packets.get(index), frame -> {
+                    assertTrue(frame.keyframe());
+                    ours.writeBytes(DvTesting.raw(frame.picture(), pixelFormat));
+                });
+            } catch (com.github.auties00.smalt.MediaException.Malformed damaged) {
+                // pond.dv's frames 28 and 60 have their header block overwritten by a tape dropout; ffmpeg's demuxer
+                // does not look at it, Smalt rejects the frame: only the other frames are compared
+                assertTrue(name.endsWith(".dv"), name + " frame " + index + ": " + damaged);
+                rejected.add(index);
+            }
+        }
+        assertTrue(rejected.size() <= 2, name + " rejected " + rejected);
+        // the coded frames, not the clean aperture ffmpeg 7.1 crops the DVCPRO HD rasters to; of a raw stream only
+        // its whole frames
+        var expected = IntraTesting.ffmpegDecode(file, List.of("-apply_cropping", "none"), pixelFormat,
+                name.endsWith(".dv") ? packets.size() : 0);
+        if (!rejected.isEmpty()) {
+            var frameSize = expected.length / packets.size();
+            var kept = new ByteArrayOutputStream();
+            for (var index = 0; index < packets.size(); index++) {
+                if (!rejected.contains(index)) {
+                    kept.write(expected, index * frameSize, frameSize);
+                }
+            }
+            expected = kept.toByteArray();
+        }
+        var actual = ours.toByteArray();
+        assertEquals(expected.length, actual.length, name);
+        var difference = IntraTesting.difference(expected, actual, false, 255);
+        System.out.printf("%s: %s%n", name, difference);
+        TOLERANCE.check(name, difference);
     }
 }

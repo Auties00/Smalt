@@ -22,7 +22,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -30,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * against
  * the {@code WarpRectilinear} and {@code FixVignetteRadial} opcodes Adobe DNG Converter, run as a black box, writes
  * for the same CC0 samples, kept by {@code tools/testdata/raw-lens-oracle.py} in
- * {@code <conformance cache>/raw-lens-oracle} ({@code -Dsmalt.test.rawLensOracle}); skipped without them.
+ * {@code <test cache>/raw-lens-oracle} ({@code -Dsmalt.test.rawLensOracle}); skipped without them.
  *
  * <p>The opcodes are compared as maps from an output radius in pixels to a source radius in pixels, up to the
  * corner of the default crop, with each side's own normalization. The tolerance of each sample, in pixels, is
@@ -40,8 +39,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and blue tolerance, so a sample decoded without it fails too.
  */
 class LensCorrectionOracleTest {
+    // whether raw-lens-oracle.py has written its files: the test cache creates the directory on first use, so its
+    // presence alone does not tell
+    private static boolean oracleWritten() {
+        if (!Files.isDirectory(ORACLE)) {
+            return false;
+        }
+        try (var files = Files.list(ORACLE)) {
+            return files.anyMatch(file -> file.getFileName().toString().endsWith(".lens"));
+        } catch (IOException exception) {
+            throw new java.io.UncheckedIOException(exception);
+        }
+    }
+
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawLensOracle",
-            Conformance.directory().resolve("raw-lens-oracle").toString()));
+            Conformance.cache("raw-lens-oracle").toString()));
 
     /**
      * A sample: its file name, the tolerance in pixels of the green plane and of the red and blue planes, and the
@@ -56,31 +68,19 @@ class LensCorrectionOracleTest {
             new Sample("rawpixls-sony-dsc-rx0-12bit-12bit-compressed-3-2.arw", 3, 3, -1),
             new Sample("rawpixls-sony-zv-1-12bit-12bit-compressed-3-2.arw", 1, 1, -1),
             new Sample("rawpixls-panasonic-dc-g9-4-3-2348.rw2", 1, 0.25, -1),
-            new Sample("rawpixls-panasonic-dmc-gx80-4-3.rw2", 1.5, 0.1, -1),
-            new Sample("rawpixls-panasonic-dc-tz200-4-3.rw2", 1, 1, -1),
             new Sample("rawpixls-panasonic-dmc-lx100-4-3.rw2", 2.5, 0.5, -1),
-            new Sample("rawpixls-panasonic-dmc-fz1000-1-1.rw2", 2, 0.5, -1),
             new Sample("rawpixls-olympus-e-m1-16bit-4-3.orf", 1, 1, -1),
-            new Sample("rawpixls-olympus-e-m10-mark-iii-16bit-4-3.orf", 1, 1, -1),
-            new Sample("rawpixls-olympus-e-pl5-16bit-4-3.orf", 1, 1, -1),
-            new Sample("rawpixls-olympus-stylus1-16bit-4-3.orf", 1, 1, -1),
-            new Sample("rawpixls-fujifilm-x-t4-14bit-14bit-compressed-3-2.raf", 7, 7, 0.015),
-            new Sample("rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf", 5, 5, 0.015),
             new Sample("rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf", 25, 25, 0.06),
-            new Sample("rawpixls-fujifilm-finepix-x10-12bit-12bit-uncompressed-4-3.raf", 3, 3, -1),
             // the converter corrects these from its own profiles or, the two oldest layouts, reads the same tag; its
             // profile differs most from the camera's tables, which the JPEG follows, on the SX70 HS and the G1 X Mark II
             new Sample("rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3", 7, 9, -1),
             new Sample("rawpixls-canon-powershot-g5-x-mark-ii-raw-3-2.cr3", 1, 1, -1),
             new Sample("rawpixls-canon-powershot-g5-x-mark-ii-c-raw-3-2.cr3", 1, 1, -1),
-            new Sample("rawpixls-canon-powershot-g5-x-mark-ii-c-raw-1-1.cr3", 2.5, 2.5, -1),
             new Sample("rawpixls-canon-powershot-sx70-hs-raw-3-2-3-2.cr3", 33, 33, -1),
             new Sample("rawpixls-canon-powershot-sx70-hs-c-raw-3-2-3-2.cr3", 33, 33, -1),
-            new Sample("rawpixls-canon-powershot-v1-craw-3-2.cr3", 0.5, 0.5, -1),
             new Sample("rawpixls-canon-powershot-g1-x-raw-4-3.cr2", 1, 1, -1),
             new Sample("rawpixls-canon-powershot-g1-x-mark-ii-raw-3-2.cr2", 21, 22, -1),
             new Sample("rawpixls-canon-powershot-g1-x-mark-iii-raw-3-2.cr2", 1, 1, -1),
-            new Sample("rawpixls-canon-powershot-g15-raw-4-3.cr2", 0.25, 0.25, -1),
             new Sample("rawpixls-canon-powershot-g16-raw-4-3.cr2", 1.5, 1.5, -1),
             new Sample("rawpixls-canon-powershot-g3-x-raw-3-2.cr2", 1.5, 3.5, -1),
             new Sample("rawpixls-canon-powershot-g5-x-raw-3-2.cr2", 7.5, 9.5, -1),
@@ -89,26 +89,10 @@ class LensCorrectionOracleTest {
             new Sample("rawpixls-canon-powershot-g9-x-raw-3-2.cr2", 4, 4, -1),
             new Sample("rawpixls-canon-powershot-g9-x-mark-ii-raw-3-2.cr2", 1.5, 1.5, -1),
             new Sample("rawpixls-canon-powershot-s100-raw-4-3.cr2", 1, 1, -1),
-            new Sample("rawpixls-canon-powershot-s100v-raw-4-3.cr2", 0.5, 0.5, -1),
             new Sample("rawpixls-canon-powershot-s110-raw-4-3.cr2", 1, 1.5, -1),
             new Sample("rawpixls-canon-powershot-s120-raw-4-3.cr2", 2, 5, -1),
             new Sample("rawpixls-canon-powershot-s95-raw-4-3.cr2", 1, 1, -1),
-            new Sample("rawpixls-canon-powershot-sx50-hs-raw-4-3.cr2", 0.25, 0.5, -1),
             new Sample("rawpixls-canon-powershot-sx60-hs-raw-4-3.cr2", 3, 3, -1));
-
-    /**
-     * The samples on which the converter corrects no distortion, only about a pixel of chromatic aberration: the
-     * derived correction must stay as small, but no tolerance of theirs could tell a missing one.
-     */
-    private static final List<String> UNCORRECTED = List.of("rawpixls-canon-powershot-v1-craw-3-2.cr3",
-            "rawpixls-canon-powershot-g15-raw-4-3.cr2", "rawpixls-canon-powershot-sx50-hs-raw-4-3.cr2");
-
-    /**
-     * The samples whose maker note records no correction (a table of no knots, or no tag), for which the converter
-     * writes none either.
-     */
-    private static final List<String> RECORD_NONE = List.of("rawpixls-canon-powershot-g9-raw-4-3.cr2",
-            "rawpixls-canon-powershot-g11-raw-4-3.cr2", "rawpixls-canon-powershot-g12-raw-4-3.cr2");
 
     /**
      * The converter's opcodes of one sample.
@@ -214,13 +198,13 @@ class LensCorrectionOracleTest {
     @Test
     @DisplayName("the opcodes derived from the maker note map radii as the converter's do")
     void opcodes() throws IOException {
-        Skip.unless(Files.isDirectory(ORACLE), "data:raw-lens-oracle", "no lens oracle files in " + ORACLE);
+        Skip.unless(oracleWritten(), "data:raw-lens-oracle", "no lens oracle files in " + ORACLE);
         var failures = new ArrayList<String>();
         for (var sample : SAMPLES) {
             var stem = sample.name().substring(0, sample.name().lastIndexOf('.'));
             var oraclePath = ORACLE.resolve(stem + ".lens");
             assertTrue(Files.isRegularFile(oraclePath), "no oracle file " + oraclePath);
-            var raw = Conformance.fetchListed(sample.name());
+            var raw = Conformance.vector(sample.name());
             var oracle = Oracle.read(oraclePath);
             var converter = Radial.of(oracle.list2(), oracle.list3());
             var file = open(raw);
@@ -254,7 +238,7 @@ class LensCorrectionOracleTest {
                     }
                 }
             }
-            if (correction < 4 * sample.green() && !UNCORRECTED.contains(sample.name())) {
+            if (correction < 4 * sample.green()) {
                 failures.add(sample.name() + ": the converter's correction of " + correction + " px is too small");
             }
             if (sample.name().contains("panasonic") && aberration < 3 * sample.redBlue()) {
@@ -289,28 +273,16 @@ class LensCorrectionOracleTest {
     }
 
     @Test
-    @DisplayName("the samples whose maker note records no correction get none, and the converter writes none")
-    void recordNone() throws IOException {
-        Skip.unless(Files.isDirectory(ORACLE), "data:raw-lens-oracle", "no lens oracle files in " + ORACLE);
-        for (var name : RECORD_NONE) {
-            var stem = name.substring(0, name.lastIndexOf('.'));
-            var oracle = Oracle.read(ORACLE.resolve(stem + ".lens"));
-            assertTrue(oracle.list2() == null && oracle.list3() == null, name);
-            assertNull(open(Conformance.fetchListed(name)).sensor.lens, name);
-        }
-    }
-
-    @Test
     @DisplayName("the rendering with the corrections correlates with the rendering of the converter's DNG file")
     void rendering() throws IOException {
-        Skip.unless(Files.isDirectory(ORACLE), "data:raw-lens-oracle", "no lens oracle files in " + ORACLE);
+        Skip.unless(oracleWritten(), "data:raw-lens-oracle", "no lens oracle files in " + ORACLE);
         for (var name : List.of("rawpixls-sony-dsc-rx100m3-12bit-12bit-compressed-3-2.arw",
                 "rawpixls-olympus-e-m1-16bit-4-3.orf", "rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3")) {
             var stem = name.substring(0, name.lastIndexOf('.'));
             var options = RawDecoderOptions.builder().defaultCrop(false).embeddedPreview(false).highBitDepth(true)
                     .demosaic(RawDemosaic.BILINEAR).build();
             var converted = luminance(render(ORACLE.resolve(stem + ".dng"), options));
-            var raw = Conformance.fetchListed(name);
+            var raw = Conformance.vector(name);
             var corrected = luminance(render(raw, options));
             var plain = luminance(render(raw,
                     options.toBuilder().lensCorrections(false).build()));

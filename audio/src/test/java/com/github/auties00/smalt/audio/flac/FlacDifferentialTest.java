@@ -188,7 +188,7 @@ class FlacDifferentialTest {
         var vector = FlacConformanceCorpus.all().stream()
                 .filter(candidate -> candidate.group().equals("uncommon") && candidate.number().equals(number))
                 .findFirst().orElseThrow();
-        var segments = decode(vector.fetch());
+        var segments = decode(vector.file());
         if (number.compareTo("04") <= 0) {
             assertTrue(segments.size() > 1, "expected a mid-stream format change");
         }

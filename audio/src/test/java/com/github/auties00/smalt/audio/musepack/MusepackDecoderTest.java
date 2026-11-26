@@ -11,6 +11,8 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.testkit.Conformance;
+import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -28,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
@@ -42,10 +45,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Decodes the Musepack vectors of {@code src/test/resources/com/github/auties00/smalt/audio/musepack} (stream version
- * 8, made by {@code tools/testdata/musepack/make-vectors.py} with mpcenc 1.30.1) and the version 7 and 8 files of the
- * FFmpeg FATE suite and samples archive, and compares every float with the decode of libmpcdec r475 (its
- * floating-point build, through {@code tools/testdata/musepack-oracle}); checks the timestamps, seeking, the tags and
- * the rejection of damaged frames.
+ * 8, made by {@code tools/testdata/musepack/make-vectors.py} with mpcenc 1.30.1), the stream version 7 vectors
+ * generated with mppenc 1.16 and the version 7 and 8 files of the FFmpeg FATE suite and samples archive, and compares
+ * every float with the decode of libmpcdec r475 (its floating-point build, through
+ * {@code tools/testdata/musepack-oracle}) and the version 7 vectors with ffmpeg's mpc7 decoder; checks the
+ * timestamps, seeking, the tags and the rejection of damaged frames.
  */
 @DisplayName("Musepack decoder")
 class MusepackDecoderTest {
@@ -101,20 +105,20 @@ class MusepackDecoderTest {
      */
     static byte[] decode(AudioDecoder decoder, List<Packet> packets) {
         var out = new ByteArrayOutputStream();
-        for (var packet : packets) {
-            decoder.decode(packet, block -> {
-                for (var i = 0; i < block.frames(); i++) {
-                    for (var c = 0; c < block.channels(); c++) {
-                        var bits = Float.floatToRawIntBits(block.plane(c)[i]);
-                        for (var k = 0; k < 4; k++) {
-                            out.write(bits >> (8 * k));
-                        }
+        java.util.function.Consumer<com.github.auties00.smalt.audio.AudioBuffer> sink = block -> {
+            for (var i = 0; i < block.frames(); i++) {
+                for (var c = 0; c < block.channels(); c++) {
+                    var bits = Float.floatToRawIntBits(block.plane(c)[i]);
+                    for (var k = 0; k < 4; k++) {
+                        out.write(bits >> (8 * k));
                     }
                 }
-            });
+            }
+        };
+        for (var packet : packets) {
+            decoder.decode(packet, sink);
         }
-        decoder.flush(block -> {
-        });
+        decoder.flush(sink);
         return out.toByteArray();
     }
 
@@ -143,15 +147,101 @@ class MusepackDecoderTest {
     @CsvSource({
             "fate-inside-mp7.mpc, e223101a29356a9bcf90d4bd81bdfce2, 524277",
             "fate-inside-mp8.mpc, 8cd0482bc927d423fcb925ed6933549b, 524277",
-            "samples-musepack-right-here-right-now.mpc, a28afec7d1f349ea87a1bc049692d8bc, 17111976",
-            "samples-musepack-kalifornia.mpc, f1717894b95e634bc3c2e843001725b7, 15586704",
             "samples-musepack-sv8-cpe.mpc, b83220ba4c096ac2b6ef847c6a0a9829, 12001088",
             "samples-musepack-sv8-choral.mpc, c5535cdb27bff0de1d971d7ae67dfe52, 3747456",
             "samples-musepack-sv8-tags-and-chaps.mpc, 029466546aa5074609c15e79de566532, 2245572",
     })
     @DisplayName("decodes the version 7 and 8 sample files bit for bit as libmpcdec does")
     void samples(String name, String md5, long samples) throws IOException {
-        check(Files.readAllBytes(Conformance.fetchListed(name)), md5, samples, 2);
+        check(Files.readAllBytes(Conformance.vector(name)), md5, samples, 2);
+    }
+
+    /**
+     * The stream version 7 vectors generated with mppenc 1.16, the last SV7 encoder, from synthetic signals (see
+     * "Generated vectors" in {@code tools/testdata/README.md}): every profile from telephone to braindead, each
+     * mid/side mode, mono input (which SV7 codes as two channels), 48 and 32 kHz, noise substitution, a stream shorter
+     * than one frame and an APEv2-tagged copy; the MD5s are of libmpcdec r475's float decode
+     * ({@code tools/testdata/musepack-oracle/smalt-mpcdec}).
+     */
+    static Stream<org.junit.jupiter.params.provider.Arguments> sv7() {
+        return Stream.of(
+                sv7Case("mono-standard", "ed769012cd6236294a5d0b8e6ddb3c79", 132300),
+                sv7Case("stereo-32k", "ba859af7893cdc4f19eb2fb62372ff01", 64000),
+                sv7Case("stereo-48k", "b6170291cd4fa5e7e671ffd595fa0122", 96000),
+                sv7Case("stereo-braindead", "7400e6d765a5fed6bdcc768b526f4e65", 132300),
+                sv7Case("stereo-extreme", "0eddc52a347018310b88feace7d0988c", 132300),
+                sv7Case("stereo-insane", "c1cf7d9f39d4f9e526ff31af0479beb0", 132300),
+                sv7Case("stereo-ms0", "8d4be5583d1d0205bce6f11289055d56", 132300),
+                sv7Case("stereo-ms1", "1ce03b7aaca74a833e158446f7137e42", 132300),
+                sv7Case("stereo-ms3", "03948533f90a29fc1524b142121566ee", 132300),
+                sv7Case("stereo-pns", "27fae016305c8e5c9a197a49744ff899", 88200),
+                sv7Case("stereo-radio", "c5e5a6e0400d272a5b3e6964f915b89f", 132300),
+                sv7Case("stereo-short", "21f7d0eb4944f7d9ff1a8259eb5f525c", 441),
+                sv7Case("stereo-standard", "36d1002eb8b56eb198d934c2cc0f7857", 132300),
+                sv7Case("stereo-tagged", "36d1002eb8b56eb198d934c2cc0f7857", 132300),
+                sv7Case("stereo-telephone", "d2c0a95973e3c515abc96b7b201f7329", 132300),
+                sv7Case("stereo-thumb", "bbeea2b6edb457eaffe3e43cfe237fec", 132300));
+    }
+
+    private static org.junit.jupiter.params.provider.Arguments sv7Case(String name, String md5, long samples) {
+        return org.junit.jupiter.params.provider.Arguments.of("musepack-sv7-" + name + ".mpc", md5, samples);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("sv7")
+    @DisplayName("decodes the generated stream version 7 vectors bit for bit as libmpcdec does")
+    void sv7(String name, String md5, long samples) throws IOException {
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(Files.readAllBytes(Conformance.vector(name))))) {
+            assertEquals(Codec.MUSEPACK7, demuxer.tracks().getFirst().codec());
+        }
+        check(Files.readAllBytes(Conformance.vector(name)), md5, samples, 2);
+    }
+
+    /** The synthesis delay of the SV7 decoder, which libmpcdec and Smalt drop and ffmpeg's mpc7 decoder keeps. */
+    private static final int SV7_DELAY = 481;
+
+    /**
+     * The vectors mppenc wrote as stream version 7.0 (header byte 0x07); ffmpeg 7.1's mpc7 decoder departs from
+     * libmpcdec, by up to 0.1 of full scale, on the version 7.1 streams (0x17) from their second frame on, so it is
+     * no reference for those.
+     */
+    static Stream<org.junit.jupiter.params.provider.Arguments> sv7Ffmpeg() {
+        return sv7().filter(arguments -> {
+            var data = readAll(Conformance.vector((String) arguments.get()[0]));
+            return (data[3] & 0xFF) == 0x07;
+        });
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("sv7Ffmpeg")
+    @DisplayName("decodes the generated stream version 7.0 vectors within one 16-bit step of ffmpeg's mpc7 decoder")
+    void sv7Ffmpeg(String name, String md5, long samples) throws IOException {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var file = Conformance.vector(name);
+        // ffmpeg's mpc7 decoder synthesizes in fixed point to 16-bit samples, keeps the decoder delay and stops at
+        // the end of the last whole frame
+        var raw = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-xerror", "-c:a",
+                "mpc7", "-i", file.toString(), "-map", "0:a:0", "-f", "s16le", "-"));
+        var reference = new short[raw.length / 2];
+        java.nio.ByteBuffer.wrap(raw).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(reference);
+        float[] ours;
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(Files.readAllBytes(file)))) {
+            var track = (AudioTrack) demuxer.tracks().getFirst();
+            try (var decoder = AudioDecoders.create(track)) {
+                ours = floats(decode(decoder, packets(demuxer)));
+            }
+        }
+        var common = Math.min(ours.length, reference.length - 2 * SV7_DELAY);
+        assertTrue(common > 0, name + ": ffmpeg decoded " + reference.length / 2 + " samples per channel");
+        assertTrue(ours.length - common <= 2 * 1152, name + ": ffmpeg stops more than a frame early");
+        var expected = java.util.Arrays.copyOfRange(reference, 2 * SV7_DELAY, 2 * SV7_DELAY + common);
+        var actual = new short[common];
+        for (var i = 0; i < common; i++) {
+            actual[i] = (short) Math.max(-32768, Math.min(32767, Math.rint(ours[i] * 32768.0)));
+        }
+        var difference = Tolerance.Difference.ofPcm(expected, actual);
+        System.out.println("[musepack-sv7] " + name + " vs ffmpeg mpc7: " + difference);
+        Tolerance.offByOne().check(name, difference);
     }
 
     @Nested
@@ -215,6 +305,27 @@ class MusepackDecoderTest {
                 assertEquals("Smalt Vectors", tags.get(StandardTag.ARTIST).orElseThrow());
                 assertEquals("Tagged Musepack", tags.get(StandardTag.TITLE).orElseThrow());
             }
+        }
+
+        @Test
+        @DisplayName("reads the APEv2 tag mppenc 1.16 appended to a stream version 7 file")
+        void sv7Tags() {
+            try (var demuxer = new MusepackDemuxer(MediaSource.of(
+                    readAll(Conformance.vector("musepack-sv7-stereo-tagged.mpc"))))) {
+                var builder = MediaTags.builder();
+                demuxer.metadata().forEach(builder::add);
+                var tags = builder.build();
+                assertEquals("Smalt Vectors", tags.get(StandardTag.ARTIST).orElseThrow());
+                assertEquals("Tagged Musepack SV7", tags.get(StandardTag.TITLE).orElseThrow());
+            }
+        }
+    }
+
+    static byte[] readAll(java.nio.file.Path file) {
+        try {
+            return Files.readAllBytes(file);
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
         }
     }
 

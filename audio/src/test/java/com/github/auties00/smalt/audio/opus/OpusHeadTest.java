@@ -199,4 +199,72 @@ class OpusHeadTest {
             }
         }
     }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"mozilla-invalid-cmap-s0c0.opus", "mozilla-invalid-cmap-s0c2.opus",
+            "mozilla-invalid-cmap-s1c2.opus", "mozilla-invalid-cmap-short.opus", "mozilla-invalid-m0c0.opus",
+            "mozilla-invalid-m0c3.opus", "mozilla-invalid-m1c0.opus", "mozilla-invalid-m1c9.opus",
+            "mozilla-invalid-m2c0.opus", "mozilla-invalid-m2c1.opus", "xiph-opus-malformed-testcase.opus"})
+    @DisplayName("rejects the invalid channel mappings of real files with a MediaException")
+    void invalidFiles(String name) {
+        // Mozilla's invalid-* files break RFC 7845 section 5.1.1 (no streams, more coupled streams than streams, a
+        // short table, a channel count the family forbids); Xiph's testcase is family 0 with 64 channels
+        var head = OggOpusIO.read(com.github.auties00.smalt.testkit.Fixtures.read(
+                com.github.auties00.smalt.testkit.Conformance.vector(name))).head();
+        assertThrows(MediaException.class, () -> OpusHead.parse(head, MediaLimits.DEFAULT));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"xiph-opus-correctness_gain_loud_speech.opus", "xiph-opus-correctness_gain_silent_output.opus"})
+    @DisplayName("applies the output gain of real files: +50 dB and -70 dB, as libopus does")
+    void outputGain(String name) {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        var stream = OggOpusIO.read(com.github.auties00.smalt.testkit.Fixtures.read(file));
+        var head = OpusHead.parse(stream.head(), MediaLimits.DEFAULT);
+        assertNotEquals(0, head.outputGain());
+        // the gain scales every sample by 10^(gain / (20 * 256)) before any clipping (RFC 7845 section 5.1)
+        var withGain = rms(stream, null);
+        var withoutGain = rms(stream, 0);
+        var expected = Math.pow(10, head.outputGain() / 5120.0);
+        assertEquals(expected, withGain / withoutGain, expected * 0.01, name + ": applied gain");
+        OpusDecoderDifferentialTest.assertMatchesLibopus(file, 0);
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("trims a real file's 65535-sample pre-skip and its end as libopus does, hiding the beeps")
+    void trimming() {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("xiph-opus-correctness_trimming_nobeeps.opus");
+        var head = OpusHead.parse(OggOpusIO.read(com.github.auties00.smalt.testkit.Fixtures.read(file)).head(),
+                MediaLimits.DEFAULT);
+        assertEquals(65535, head.preSkip());
+        // equal length and samples to libopus' trimmed decode: the beeps sit in the trimmed parts
+        OpusDecoderDifferentialTest.assertMatchesLibopus(file, 0);
+    }
+
+    private static double rms(OggOpusIO.Stream stream, Integer gain) {
+        var track = com.github.auties00.smalt.track.AudioTrack.builder().id(1)
+                .codec(com.github.auties00.smalt.track.Codec.OPUS)
+                .timeBase(com.github.auties00.smalt.track.Rational.timeBaseOf(48000)).codecConfig(stream.head())
+                .sampleRate(48000).build();
+        var sum = new double[2];
+        try (var decoder = new OpusDecoder(track)) {
+            if (gain != null) {
+                decoder.setGain(gain);
+            }
+            for (var data : stream.packets()) {
+                decoder.decode(new com.github.auties00.smalt.track.Packet(1, data,
+                        com.github.auties00.smalt.track.Packet.NO_TIMESTAMP,
+                        com.github.auties00.smalt.track.Packet.NO_TIMESTAMP, 0, true), buffer -> {
+                    for (var c = 0; c < buffer.channels(); c++) {
+                        for (var i = 0; i < buffer.frames(); i++) {
+                            var v = buffer.plane(c)[i];
+                            sum[0] += (double) v * v;
+                            sum[1]++;
+                        }
+                    }
+                });
+            }
+        }
+        return Math.sqrt(sum[0] / sum[1]);
+    }
 }

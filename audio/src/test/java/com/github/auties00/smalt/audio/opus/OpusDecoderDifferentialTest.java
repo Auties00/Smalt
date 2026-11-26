@@ -52,6 +52,11 @@ class OpusDecoderDifferentialTest {
 
     /** Decodes an Ogg Opus file with the decoder under test, trimming to the end granule. */
     static Decoded decodeOurs(Path file, int outputRate) {
+        return decodeOurs(file, outputRate, Long.MAX_VALUE);
+    }
+
+    /** Decodes an Ogg Opus file with the decoder under test, trimming to the end granule, stopping past a length. */
+    static Decoded decodeOurs(Path file, int outputRate, long maxFrames) {
         var stream = OggOpusIO.read(Fixtures.read(file));
         var head = OpusHead.parse(stream.head(), MediaLimits.DEFAULT);
         var track = AudioTrack.builder().id(1).codec(Codec.OPUS).timeBase(Rational.timeBaseOf(48000))
@@ -63,6 +68,9 @@ class OpusDecoderDifferentialTest {
         try (var decoder = new OpusDecoder(track, OpusDecoderOptions.defaults().toBuilder().sampleRate(outputRate)
                 .build())) {
             for (var data : stream.packets()) {
+                if (samples.size() / channels > maxFrames) {
+                    break;
+                }
                 decoder.decode(new Packet(1, data, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, true), buffer -> append(samples, buffer));
             }
             decoder.flush(buffer -> append(samples, buffer));
@@ -91,6 +99,46 @@ class OpusDecoderDifferentialTest {
         var out = new float[raw.length / 4];
         ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(out);
         return out;
+    }
+
+    /**
+     * Compares the decode of a hosted Ogg Opus file with libopus' decode of it through ffmpeg, channel by channel, by
+     * {@link #TOLERANCE}, over the whole file or its first seconds.
+     *
+     * @param file the file
+     * @param seconds the length compared, or 0 for the whole file
+     * @return the lowest channel SNR
+     */
+    static double assertMatchesLibopus(Path file, int seconds) {
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var arguments = new ArrayList<>(List.of("-v", "error", "-request_sample_fmt", "flt", "-c:a", "libopus", "-i",
+                file.toString()));
+        if (seconds > 0) {
+            arguments.addAll(List.of("-t", Integer.toString(seconds)));
+        }
+        arguments.addAll(List.of("-f", "f32le", "-"));
+        var raw = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(10), arguments);
+        var reference = new float[raw.length / 4];
+        ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(reference);
+        var ours = decodeOurs(file, 48000, seconds > 0 ? seconds * 48000L : Long.MAX_VALUE);
+        var channels = ours.channels();
+        var compared = seconds > 0 ? Math.min(reference.length, seconds * 48000 * channels) : reference.length;
+        if (seconds > 0) {
+            assertTrue(ours.samples().length >= compared, file.getFileName() + ": decoded only "
+                    + ours.samples().length / channels + " samples per channel");
+        } else {
+            assertEquals(reference.length, ours.samples().length, file.getFileName() + ": decoded length");
+        }
+        var expected = java.util.Arrays.copyOf(reference, compared);
+        var actual = java.util.Arrays.copyOf(ours.samples(), compared);
+        var minimum = Double.POSITIVE_INFINITY;
+        for (var c = 0; c < channels; c++) {
+            minimum = Math.min(minimum, channelSnr(expected, actual, channels, c));
+            TOLERANCE.assertPcm(file.getFileName() + " channel " + c, channel(expected, channels, c),
+                    channel(actual, channels, c));
+        }
+        System.err.printf("[opus-decode-diff] %s: %d ch, min SNR %.1f dB%n", file.getFileName(), channels, minimum);
+        return minimum;
     }
 
     /** Returns one channel of interleaved samples. */

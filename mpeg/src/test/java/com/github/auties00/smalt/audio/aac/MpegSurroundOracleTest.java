@@ -7,7 +7,6 @@ import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsDecoder;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsUpmixer;
 import com.github.auties00.smalt.testkit.Conformance;
-import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -72,11 +71,11 @@ class MpegSurroundOracleTest {
 
     static Path directory() {
         return Path.of(System.getProperty("smalt.test.mpsOracle",
-                Conformance.directory().resolve("mps-oracle").toString()));
+                Conformance.cache("mps-oracle").toString()));
     }
 
     static byte[] read(Path file) {
-        Skip.unless(Files.isRegularFile(file), "data:mps-oracle", "no oracle file " + file
+        assertTrue(Files.isRegularFile(file), "no oracle file " + file
                 + " (tools/testdata/mps-oracle.py)");
         try {
             return Files.readAllBytes(file);

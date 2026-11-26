@@ -2,7 +2,6 @@ package com.github.auties00.smalt.audio.aac;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
-import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.Packet;
 import org.junit.jupiter.api.DisplayName;
@@ -182,7 +181,7 @@ class ScalableConformanceTest {
      * @return the tracks, in file order
      */
     private static List<AacTestSupport.Stream> tracks(String stream) {
-        return AacTestSupport.parseMp4Tracks(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + stream + ".mp4")));
+        return AacTestSupport.parseMp4Tracks(Fixtures.read(Mpeg4AudioVectors.file(stream + ".mp4")));
     }
 
     /**
@@ -192,7 +191,7 @@ class ScalableConformanceTest {
      * @return the planes
      */
     private static float[][] reference(String name) {
-        return AacTestSupport.readWav(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + name + ".wav")));
+        return AacTestSupport.readWav(Fixtures.read(Mpeg4AudioVectors.file(name + ".wav")));
     }
 
     /**

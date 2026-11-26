@@ -21,9 +21,10 @@ compares digests, so it needs only the sample, not the converter.
     python tools/testdata/srw-oracle.py          # writes the table, with Adobe DNG Converter 18.0
 
 Windows only, like raw-oracle.py, whose pinned converter this script fetches, unless SMALT_DNG_CONVERTER names an
-extracted copy. Each digest is kept in <conformance cache>/raw-oracle/srw-oracle.cache, by the SHA-256 of the file, so
-an interrupted run resumes. Nothing of the converter is redistributed. Downloaded samples are data: this script parses
-them and hands them to the converter, and runs nothing from them.
+extracted copy. The samples are read from the hosted test data (SMALT_TESTDATA, see tools/testdata/README.md). Each
+digest is kept in <cache>/raw-oracle/srw-oracle.cache (SMALT_CACHE, default ~/.smalt/cache), by the SHA-256 of the
+file, so an interrupted run resumes. Nothing of the converter is redistributed. The samples are data: this script
+parses them and hands them to the converter, and runs nothing from them.
 """
 import hashlib
 import importlib.util
@@ -35,6 +36,7 @@ import tempfile
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import oracles  # noqa: E402
 import testdata  # noqa: E402
 
 SPEC = importlib.util.spec_from_file_location('raw_oracle', os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -46,11 +48,9 @@ TABLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'ra
                      'github', 'auties00', 'smalt', 'image', 'raw', 'internal', 'srw-oracle.tsv')
 
 PREFIX = 'rawpixls-samsung-'
-SAMPLES = ['nx300-12bit-3-2', 'nx30-12bit-3-2', 'nx2000-12bit-3-2', 'ek-gn120-12bit-3-2', 'nx-mini-12bit-3-2',
-           'nx3000-12bit-3-2', 'nx3300-12bit-3-2', 'nx1-14bit-3-2', 'nx500-12bit-12bit-lossless-compression-3-2',
-           'nx500-12bit-12bit-normal-compression-3-2', 'nx500-14bit-14bit-lossless-compression-3-2',
-           'nx500-14bit-14bit-normal-compression-3-2']
-LOSSLESS = 'nx500-12bit-12bit-lossless-compression-3-2'
+SAMPLES = ['nx300-12bit-3-2', 'nx-mini-12bit-3-2', 'nx1-14bit-3-2', 'nx500-12bit-12bit-normal-compression-3-2',
+           'nx500-14bit-14bit-lossless-compression-3-2']
+LOSSLESS = 'nx500-14bit-14bit-lossless-compression-3-2'
 QUANTIZED = 'nx500-12bit-12bit-normal-compression-3-2'
 INTERLEAVED = 'nx300-12bit-3-2'
 PREFIXED = 'nx-mini-12bit-3-2'
@@ -380,15 +380,9 @@ def stored(path):
 def main():
     if os.name != 'nt':
         sys.exit('Adobe DNG Converter for Windows is needed; run this script on Windows')
-    directory = testdata.conformance_dir()
-    vectors = {row['name']: row for row in testdata.read_tsv(testdata.VECTORS, testdata.VECTOR_COLUMNS)}
-    for sample in SAMPLES:
-        row = vectors[PREFIX + sample + '.srw']
-        path = os.path.join(directory, row['name'])
-        if not testdata.valid(path, row['sha256']):
-            testdata.download(row['url'], path, row['sha256'])
-    cache_path = os.path.join(directory, 'raw-oracle', 'srw-oracle.cache')
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    # the directory of the hosted vectors, once each sample is known to be there
+    directory = os.path.dirname([testdata.vector(PREFIX + sample + '.srw') for sample in SAMPLES][0])
+    cache_path = os.path.join(testdata.cache_dir('raw-oracle'), 'srw-oracle.cache')
     cache = {}
     if os.path.isfile(cache_path):
         with open(cache_path) as stream:
@@ -396,10 +390,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='srw-oracle-') as work:
         converter = os.environ.get('SMALT_DNG_CONVERTER')
         if converter is None:
-            installer = os.path.join(work, 'converter.exe')
-            archive = os.path.join(work, 'innoextract.zip')
-            testdata.download(raw_oracle.CONVERTER_URL, installer, raw_oracle.CONVERTER_SHA256)
-            testdata.download(raw_oracle.INNOEXTRACT_URL, archive, raw_oracle.INNOEXTRACT_SHA256)
+            installer = oracles.download(raw_oracle.CONVERTER_URL, raw_oracle.CONVERTER_SHA256)
+            archive = oracles.download(raw_oracle.INNOEXTRACT_URL, raw_oracle.INNOEXTRACT_SHA256)
             with zipfile.ZipFile(archive) as source:
                 source.extract('innoextract.exe', work)
             subprocess.run([os.path.join(work, 'innoextract.exe'), '-s', '-e', '-I', 'app', '-d', work, installer],

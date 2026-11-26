@@ -497,4 +497,17 @@ class OpusMultistreamGoldenTest {
             throw new AssertionError(exception);
         }
     }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({"mozilla-test-3-LCR.opus, 0", "mozilla-test-4-quad.opus, 0",
+            "mozilla-test-5-5.0.opus, 0", "mozilla-test-7-6.1.opus, 0", "mozilla-test-8-7.1.opus, 0",
+            "xiph-opus-shinjuku.uncoupled.opus, 0", "xiph-opus-tron.6ch.tinypkts.opus, 0",
+            "xiph-sintel-master-51.opus, 120"})
+    @DisplayName("the multistream decoder decodes real opusenc family 1 files as libopus does")
+    void realFiles(String name, int seconds) {
+        // opusenc's surround files from 3.0 to 7.1, stereo coded as two uncoupled mono streams, 5.1 in 2.5 ms
+        // packets one per page, and the first two minutes of a film's 5.1 mix
+        OpusDecoderDifferentialTest.assertMatchesLibopus(com.github.auties00.smalt.testkit.Conformance.vector(name),
+                seconds);
+    }
 }

@@ -5,7 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.celp.internal.CelpObject;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.io.MediaSource;
-import com.github.auties00.smalt.testkit.Conformance;
+import com.github.auties00.smalt.audio.aac.Mpeg4AudioVectors;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -158,7 +158,7 @@ class CelpCoreLayerTest {
      * {@return the CELP core track of {@code er_ac211_ep0}}
      */
     private static Core coreFrames() {
-        var file = Fixtures.read(Conformance.fetchListed("mpeg4audio-er_ac211_ep0.mp4"));
+        var file = Fixtures.read(Mpeg4AudioVectors.file("er_ac211_ep0.mp4"));
         try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
             AudioTrack core = null;
             for (var track : demuxer.tracks()) {

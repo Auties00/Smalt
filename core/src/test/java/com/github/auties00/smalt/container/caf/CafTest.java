@@ -782,4 +782,60 @@ class CafTest {
         }
         throw new AssertionError("no " + type + " chunk");
     }
+
+    @Nested
+    @DisplayName("FATE samples")
+    class Fate {
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"fate-caf-opus-large-priming.caf",
+                "fate-caf-aac.caf"})
+        @DisplayName("match ffprobe packet by packet and skip the priming frames of the packet table: AAC, and Opus "
+                + "past the 16-bit pre-skip")
+        void matchesFfprobe(String name) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var ours = com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe(name,
+                    source -> new CafDemuxer(source));
+            // the packet table header (Apple CAF specification): valid frames, priming frames, remainder frames
+            byte[] bytes;
+            try {
+                bytes = java.nio.file.Files.readAllBytes(file);
+            } catch (java.io.IOException exception) {
+                throw new java.io.UncheckedIOException(exception);
+            }
+            var pakt = indexOf(bytes, "pakt".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            var table = java.nio.ByteBuffer.wrap(bytes, pakt + 12, 24);
+            table.getLong();
+            var valid = table.getLong();
+            var priming = table.getInt();
+            var audio = (AudioTrack) ours.tracks().getFirst();
+            var preSkip = audio.codec() == Codec.OPUS ? AudioConfigs.opusPreSkip(audio.codecConfig().orElseThrow()) : 0;
+            assertEquals(priming, preSkip + audio.skipSamples(), "priming of " + name);
+            assertEquals(valid, audio.duration(), "valid frames of " + name);
+        }
+
+        private static int indexOf(byte[] data, byte[] pattern) {
+            outer:
+            for (var index = 0; index + pattern.length <= data.length; index++) {
+                for (var at = 0; at < pattern.length; at++) {
+                    if (data[index + at] != pattern[at]) {
+                        continue outer;
+                    }
+                }
+                return index;
+            }
+            throw new AssertionError("no " + new String(pattern, java.nio.charset.StandardCharsets.US_ASCII));
+        }
+
+        @Test
+        @DisplayName("rejects USAC, which ffmpeg does not identify in CAF either, as unsupported")
+        void usac() {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-caf-usac.caf");
+            assertEquals("unknown", ContainerProbe.probe(file).streams().getFirst().codecName());
+            try (var source = MediaSource.of(file)) {
+                var error = org.junit.jupiter.api.Assertions.assertThrows(
+                        com.github.auties00.smalt.MediaException.Unsupported.class, () -> new CafDemuxer(source));
+                assertTrue(error.getMessage().contains("usac"), error.getMessage());
+            }
+        }
+    }
 }

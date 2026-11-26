@@ -72,7 +72,7 @@ public class Ac3Benchmark {
             Files.write(wav, wav(input));
             ac3 = code(directory, wav, "ac3", "448k", "ac3-448k.ac3");
             eac3 = code(directory, wav, "eac3", "384k", "eac3-384k.eac3");
-            var stream = Ac3TestSupport.read(Ac3TestSupport.SAMPLES.get(7).fetch());
+            var stream = Ac3TestSupport.read(Ac3TestSupport.SAMPLES.get(7).file());
             var units = Ac3TestSupport.units(stream);
             atmos = new ArrayList<>();
             for (var loop = 0; loop < 12; loop++) {

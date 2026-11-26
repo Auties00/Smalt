@@ -409,9 +409,7 @@ class GifColorProfileTest {
         }
 
         static byte[] displayP3() {
-            return Files.isRegularFile(Conformance.directory().resolve("compact-icc-DisplayP3-v4.icc"))
-                    ? read(Conformance.fetchListed("compact-icc-DisplayP3-v4.icc"))
-                    : ColorProfile.displayP3().toByteArray();
+            return read(Conformance.vector("compact-icc-DisplayP3-v4.icc"));
         }
 
         static byte[] read(Path file) {

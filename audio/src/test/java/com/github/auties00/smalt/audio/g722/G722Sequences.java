@@ -37,7 +37,7 @@ public final class G722Sequences {
 
     private static Map<String, int[]> load() {
         try {
-            var outer = Files.readAllBytes(Conformance.fetchListed("g722-appII.zip"));
+            var outer = Files.readAllBytes(Conformance.vector("g722-appII.zip"));
             var inner = entry(outer, "software/G722ap2/G722E/Software.zip");
             var map = new HashMap<String, int[]>();
             try (var zip = new ZipInputStream(new ByteArrayInputStream(inner))) {

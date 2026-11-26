@@ -6,7 +6,6 @@ import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.twinvq.internal.TwinVqObject;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.io.MediaSource;
-import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -79,6 +78,7 @@ class ScalableCoreConformanceTest {
             STREAMS.put(stream, 3);
         }
         STREAMS.put("ac04", 8);
+        STREAMS.put("ac05", 8);
         STREAMS.put("ac06", 6);
         STREAMS.put("ac12", 2);
         STREAMS.put("ac13", 2);
@@ -364,7 +364,7 @@ class ScalableCoreConformanceTest {
         var layers = layers(stream);
         var decoded = decode(layers, layer, layers.frames(), false);
         var name = (stream.contains("_ep") ? stream.substring(0, stream.indexOf("_ep")) : stream) + "_lay" + layer;
-        var expected = AacTestSupport.readWav(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + name + ".wav")));
+        var expected = AacTestSupport.readWav(Fixtures.read(Mpeg4AudioVectors.file(name + ".wav")));
         assertEquals(expected.length, decoded.length, name + " channels");
         var limited = name.equals("er_ac211_lay2");
         for (var c = 0; c < expected.length; c++) {
@@ -404,7 +404,7 @@ class ScalableCoreConformanceTest {
      * @return the tracks and their access units
      */
     static Layers layers(String stream) {
-        var file = Fixtures.read(Conformance.fetchListed("mpeg4audio-" + stream + ".mp4"));
+        var file = Fixtures.read(Mpeg4AudioVectors.file(stream + ".mp4"));
         var tracks = new LinkedHashMap<Integer, AudioTrack>();
         var units = new LinkedHashMap<Integer, List<Packet>>();
         try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {

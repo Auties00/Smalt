@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -52,50 +53,10 @@ class Mp2MultichannelConformanceTest {
     /** The ISO/IEC 13818-4 limited accuracy class. */
     private static final Tolerance LIMITED = Tolerance.iso11172(Tolerance.Iso11172Accuracy.LIMITED);
 
-    /** The sets, by number, with the SHA-256 of their archives. */
-    private static final Map<String, String> SETS = new LinkedHashMap<>();
-
-    static {
-        String[] rows = {
-                "01", "13ef1cc7df90e562fb9c1e1f3c7932b80e795d9de68f883fd85b840c17fd64e6",
-                "02", "7df96764f5e8dc015dd30084c5c22b0b1001d7dd581ea6119a89925ab7ad2f0f",
-                "03", "2c7315fe17cfa984addf35256cd89c84961e3b61de3a0530c16bdcd14c460777",
-                "04", "9d9b80e864687f53849e95646deda833912e532af022334b2c49fab04576f6dd",
-                "05", "ab0323dc3e1eaeb9ea788e96967d0f8472333b30ea574eb93adaa96ef0cafed1",
-                "06", "e707a2601af33d59a803a384de2859bdacbcd2546f1ecd8e977c50120cd3d388",
-                "07", "6a879cb462cb5fd080534e8a4f6c028f441176b8b425ca0cfee149b18b6de31a",
-                "08", "8dd875bcb1866aab1ab2301abc2619c89db472602d0611d531494bc30a54a76c",
-                "09", "dc73966b8fea11ca09659f6f5e4292c8f3700479ab617a4578cd8c78e85380c8",
-                "10", "04597282f7d2af252a03bcea05b43ae4e86216e9bebd141dd66e5a4ff8153a4b",
-                "11", "5c96fcfc483e8ef58063b4db7ae8c8eb3f1602842c9559bae3567f0f38bdbd19",
-                "12", "1dd8ca5a90ad830f2c358dd9ce03336852487358ce4443afcacc6d00b74f4c11",
-                "13", "4516550488e20b50f0097b9fc35755e1b7f1c2cac2bb5060853448703df24a71",
-                "14", "b3d324057bfcdf0fbf95ba4afe2541728db00c29177725a653b08f2a2b9d6fbe",
-                "15", "72624a9ea7f7a68d7c2afb778b6d3f40b74db39a55304adc8637237bb998fcf5",
-                "16", "a84714986041639f09746e7bbfb5cf3270d8600130ddebb781fd82473fc1b324",
-                "17", "0b3ba41db8df40847866968dc0eae72ed35990c685e18e9b91ae3a532425e0a6",
-                "18", "7e9d4516706f5a435481210138568d6dc2e5eb68ecee9b30869d609822df5a68",
-                "19", "acd3f3320e16a918374ff6d9a4adbc8796c64b5d4f1f34693bd744f3e4a26b56",
-                "20", "19453913ee6484775797f12441a9f58cf05a70841db2671ddcdf9d388019a44a",
-                "21", "64b29c3463d5e945c1421b3099a48b769920c177c1d071994b0d21b9bb29a4f8",
-                "22", "5ac95a62562ac59cd63208790e32c72702836bf98488d2a27df0e409ac53daa5",
-                "23", "5b04e95be8d5d5bdbe73d327d2e4ed218c6361236fc9da2f776fd2c8c38e30c1",
-                "24", "4694a9785bee5ddb94e34b185a6a535c6bb18d0a0de95603fd825593302c8b74",
-                "25", "6d9f855ab57644fabd18f323c1c4f9accbf96459420cc85a47edbc1cb8c84568",
-                "26", "b9890fbc53100a425da1f9c0772b850999d3fdb3f095cb45806b66edb00aeea6",
-                "27", "3a3b58a5be32dd6f0e1c6d8f8e8c645b2e3893824b109b0a5001205d2aa93b97",
-                "28", "bd72446fdef6fe86e060d6349896b6200dfe4e843521f40aa081bc3efed51ea2",
-                "29", "f92dfbc1c6937b78ef750426890a28014fb03a7abbfc11298862723df83e57ac",
-                "30", "046166e3303b9662776fa4fbc3bb3564aa216595884737997207b291903b7990",
-                "31", "21754aa7af53fccc90206df98262a73e79d88e2cc8d59f3b89f9e378ed8082eb",
-                "32", "e5b37653baa126efae6845190f2fd7454f977ad5907aee33242cf61138b24d0e",
-                "33", "3be5a8217c58005381c1badc9f27251558a8cac3a1b508cdd24e377c85f35a7a",
-                "34", "070df2efff3cd55ea030b8aa2cc1b37638a91e527ae01a31e01657e572f2ff94",
-                "35", "821b65353f31171da70c421d0d03bce152023fd54abc3a9b9e1838a9419ba6ab"};
-        for (var i = 0; i < rows.length; i += 2) {
-            SETS.put(rows[i], rows[i + 1]);
-        }
-    }
+    /** The sets, by number. */
+    private static final List<String> SETS = IntStream.rangeClosed(1, 35)
+            .mapToObj(number -> String.format("%02d", number))
+            .toList();
 
     /** The speaker of each reference channel file suffix. */
     private static final Map<String, Speaker> CHANNELS = new LinkedHashMap<>();
@@ -114,14 +75,12 @@ class Mp2MultichannelConformanceTest {
     }
 
     static Stream<Arguments> sets() {
-        return SETS.keySet().stream().map(Arguments::of);
+        return SETS.stream().map(Arguments::of);
     }
 
     /** Returns the files of a set, by name without directory. */
     static Map<String, byte[]> files(String set) {
-        var archive = Conformance.fetch("iso13818-4-audio-test" + set + ".tar.gz",
-                "https://web.archive.org/web/20210427id_/https://standards.iso.org/ittf/PubliclyAvailableStandards/"
-                        + "ISO_IEC_13818-4_2004_Conformance_Testing/Audio/test" + set + ".tar.gz", SETS.get(set));
+        var archive = Conformance.vector("iso13818-4-audio-test" + set + ".tar.gz");
         var files = new HashMap<String, byte[]>();
         for (var entry : RasterTesting.untarGz(archive).entrySet()) {
             var name = entry.getKey();

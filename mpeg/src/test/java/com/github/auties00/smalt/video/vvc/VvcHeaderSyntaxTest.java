@@ -144,7 +144,7 @@ class VvcHeaderSyntaxTest {
             "SCALING_A_1", "PHSH_B_1", "FIELD_A_4", "WRAP_A_4", "ENTMAINTIER_D_3"})
     @DisplayName("reads every first slice header of a conformance stream through its reference picture lists")
     void conformance(String name) throws IOException {
-        var pictures = pictures(VvcConformanceTest.bitstream(name, name + ".bit"));
+        var pictures = pictures(VvcConformanceTest.bitstream(name));
         assertTrue(pictures.size() > 1);
         assertReferencesDecoded(pictures, name);
         for (var picture : pictures) {

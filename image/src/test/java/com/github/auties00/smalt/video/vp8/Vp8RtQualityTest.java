@@ -22,7 +22,7 @@ import java.util.Locale;
 /**
  * Measures PSNR-Y against bitrate for this encoder and for libvpx (run through ffmpeg as a black
  * box at {@code -deadline realtime -cpu-used -6}, one-pass CBR with the same buffer, quantizer
- * window and no key frames after the first), on the cached Xiph clips, and reports the
+ * window and no key frames after the first), on the hosted Xiph clips, and reports the
  * Bjontegaard rate difference. It runs only with {@code -Dvp8rt.quality=true}, writing its table
  * to {@code vp8rt.quality.out}.
  */
@@ -204,9 +204,6 @@ class Vp8RtQualityTest {
                 continue;
             }
             var clip = RtTestVideo.clip(spec.name());
-            if (clip == null) {
-                continue;
-            }
             var available = (int) (Files.size(clip) / (spec.width() * spec.height() * 3L / 2));
             var n = Math.min(frames, available);
             var reference = new ArrayList<Point>();

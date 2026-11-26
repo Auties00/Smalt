@@ -38,36 +38,34 @@ import static org.junit.jupiter.api.Assertions.fail;
  * decoders. The suite ships bitstreams only, so the expected views are the MD5 of the planar 4:2:0
  * output of JM 19.1 ({@code ldecod -p DecodeAllLayers=1}) for the two-view streams and of JMVC 8.5
  * ({@code H264AVCDecoderLibTestStatic <stream> <out> <views>}) for the others; both decoders agree
- * on every view they decode. Each bitstream is pinned by its SHA-256 and cached by
- * {@link Conformance#fetch}.
+ * on every view they decode. Each bitstream is read from the hosted test data by
+ * {@link Conformance#vector}.
  */
 @DisplayName("H.264 MVC conformance bitstreams (ITU-T H.264.1)")
 class H264MvcConformanceTest {
-    private static final String BASE = "https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/MVC/";
-
     /**
-     * Name | size | SHA-256 | picture size | views, each {@code view_id:frames:md5} in view order of the
+     * Name | size | picture size | views, each {@code view_id:frames:md5} in view order of the
      * stream's sequence parameter set extension.
      */
     private static final String MANIFEST = """
-            MVCDS1|6888085|145b8c0f4b9c758bcaacdb214062cecc53bd8c652e276a15d61a99dce30d7d2a|640x480|0:290:4e93953a232fa6f4cd8b72339ce8a2f4 1:290:ee492e7c6b28fa8cee019ddca4f2c5a9
-            MVCDS2|2401933|44c5f766165e6fe0eadff13b9b9c1c36d9d8482d007de23becabf44915d64235|640x480|0:290:3d279d41cf52d70ca9af8ee7e950b504 1:290:db290c34b0fa061e595f35ea55840d40
-            MVCDS3|3744381|a86a3393f0260a6179dd1ceeedac074941695d032810a2b6f989d548f49f3c92|640x480|0:290:505cb8ad90da9a59e42d0a08569806e9 1:290:86c5b96ff60ecf09b80bdb42754478f2
-            MVCDS-4|57572|b131f20cf93055fc4880c0ad7774e5a38790cfcde79cf29ebdf969f3c1201660|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 2:9:10eb62af1d466c19193cd886b5ef4177
-            MVCDS-5|57071|b25b804d3bd16c7b020845e337dd30b303aa575c3b4226f0c53a9499f002f86f|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 2:9:e076cb77e0e944c93c49590abe163199
-            MVCDS-6|57204|5765aeb76ff03aa498c0dbc9f0f75867b0647ab7e889dc1b128d48497e7dfa43|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 2:9:26cbdf1d13c0c1aade8007fc3d3cdc93
-            MVCICT-1|1348764|53f4e2d298793359b04d18c025b819f1a747488e795ac649c0b42d354308cd5c|720x480|0:150:cfb27cf69ad9147bff1b6b528552fdb4 1:150:6f69a2819678202ce57336bd1f62e347
-            MVCICT-2|2281273|e7bbff59b2e0ca40a02920a32f92dd94021d0669fa9c56a8e908f64e6d001d75|720x480|0:150:140bb029c34692b67d15d4c5c957df7b 1:150:b11a91ee32705ca15ab52404ea3dcf18
-            MVCNV1|3187769|91589955e0b4f7b3ac254ee62ea0262e2c791b1c376162593f7c0c782df4e1cc|640x480|0:290:3d279d41cf52d70ca9af8ee7e950b504 1:290:adbba5e0825d77389d906c46becd6555 2:290:d27943f945109b0b495d5832c58dbdf9
-            MVCNV-2|182212|9ec767b457c3a5da6be6691848e072869cfc6bcaef654f2b4eaa8c584b436e65|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 1:9:c662647223762c4e61881200f93588ee 2:9:d9b7e827ec22e6494e0d1eadac6785a7 3:9:207c22445bee9339928d34bb0a3f02f7 4:9:9750e406f20525443a9c064a073b5faf 5:9:3af6f5c76731b3478d0aa7692c050890 6:9:6e2fca576cf2f7559c5997a44636b212 7:9:3f99300f35156d399845e758392eba7c
-            MVCNV-3|91815|fe0dce3898df8231b2ebda3324c1e19e6df79b037731488f96410651b8fea87e|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 1:9:2d5cb50b6f84a1cb631a7c6d77aa7a10 2:9:a348cd5779387dca8156ea1f64583963
-            MVCNV4|6727031|f843d1cff418d97f7d8196c3d1b68ed7fc3942559100a87baa1812fbdb941413|640x480|0:290:505cb8ad90da9a59e42d0a08569806e9 1:290:5931c52e82b9429530b8fb6c17398c1e 2:290:1e47385fea2c64b9f7c97355236beefc 3:290:eccb59448b034ded1289f2201fc1ce5c
-            MVCRP_1|1430967|5f084172d8c4f58134d9e0f082a58bdd52a81ad95b1d013811a2d585ddca1fc0|640x480|0:200:1312ce1b578bdd66dbfaed67d3b13678 1:200:111b96d6caf8678dcdc597e9e3e5608c
-            MVCRP_2|963624|60927c1e201a487af797ebd71914c4fbe69f159e8f38e6db0002ed13ea765d9d|640x480|0:250:b89fdf72007d76e4611237ca113a9e47 1:250:5dc61db7e682982679042ef554968245
-            MVCRP_3|880327|2ba384cdea1d37dab2d854e53377445c0e502e2c87af427261c65c5ec6211d33|640x480|0:250:b89fdf72007d76e4611237ca113a9e47 1:250:7d57344b40186e0a9253faade0f2aa4c
-            MVCRP_4|1488559|1992da5f749a79c94f5d1a1c4d98b512334058d5dbd90d749ea11e6e44b9eb53|640x480|0:250:198afdb2a23f707b36be0c3e6e1dde96 1:250:bbde66c44cec2854b4f5401ec03442c0
-            MVCSPS-1|81870|ef76663ef781ae5b57a8636de7af11e372f7d92784d1d16b9ceffca2303b3840|640x480|0:9:3db35ab5bd1b052b456f2e7ea7f3fb74 2:9:39f8caa97dfd72e858893a83f41091f7
-            MVCSPS-2|76489|ebd860decd017e3b14e84c4502e5718ba164be3a20f321616c4d8ce8781c2a53|640x480|0:9:3db35ab5bd1b052b456f2e7ea7f3fb74 1:9:850d60138ad2c757a7061e7df68d598b
+            MVCDS1|6888085|640x480|0:290:4e93953a232fa6f4cd8b72339ce8a2f4 1:290:ee492e7c6b28fa8cee019ddca4f2c5a9
+            MVCDS2|2401933|640x480|0:290:3d279d41cf52d70ca9af8ee7e950b504 1:290:db290c34b0fa061e595f35ea55840d40
+            MVCDS3|3744381|640x480|0:290:505cb8ad90da9a59e42d0a08569806e9 1:290:86c5b96ff60ecf09b80bdb42754478f2
+            MVCDS-4|57572|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 2:9:10eb62af1d466c19193cd886b5ef4177
+            MVCDS-5|57071|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 2:9:e076cb77e0e944c93c49590abe163199
+            MVCDS-6|57204|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 2:9:26cbdf1d13c0c1aade8007fc3d3cdc93
+            MVCICT-1|1348764|720x480|0:150:cfb27cf69ad9147bff1b6b528552fdb4 1:150:6f69a2819678202ce57336bd1f62e347
+            MVCICT-2|2281273|720x480|0:150:140bb029c34692b67d15d4c5c957df7b 1:150:b11a91ee32705ca15ab52404ea3dcf18
+            MVCNV1|3187769|640x480|0:290:3d279d41cf52d70ca9af8ee7e950b504 1:290:adbba5e0825d77389d906c46becd6555 2:290:d27943f945109b0b495d5832c58dbdf9
+            MVCNV-2|182212|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 1:9:c662647223762c4e61881200f93588ee 2:9:d9b7e827ec22e6494e0d1eadac6785a7 3:9:207c22445bee9339928d34bb0a3f02f7 4:9:9750e406f20525443a9c064a073b5faf 5:9:3af6f5c76731b3478d0aa7692c050890 6:9:6e2fca576cf2f7559c5997a44636b212 7:9:3f99300f35156d399845e758392eba7c
+            MVCNV-3|91815|640x480|0:9:4a15b286d65dc66099398e5ac008c06f 1:9:2d5cb50b6f84a1cb631a7c6d77aa7a10 2:9:a348cd5779387dca8156ea1f64583963
+            MVCNV4|6727031|640x480|0:290:505cb8ad90da9a59e42d0a08569806e9 1:290:5931c52e82b9429530b8fb6c17398c1e 2:290:1e47385fea2c64b9f7c97355236beefc 3:290:eccb59448b034ded1289f2201fc1ce5c
+            MVCRP_1|1430967|640x480|0:200:1312ce1b578bdd66dbfaed67d3b13678 1:200:111b96d6caf8678dcdc597e9e3e5608c
+            MVCRP_2|963624|640x480|0:250:b89fdf72007d76e4611237ca113a9e47 1:250:5dc61db7e682982679042ef554968245
+            MVCRP_3|880327|640x480|0:250:b89fdf72007d76e4611237ca113a9e47 1:250:7d57344b40186e0a9253faade0f2aa4c
+            MVCRP_4|1488559|640x480|0:250:198afdb2a23f707b36be0c3e6e1dde96 1:250:bbde66c44cec2854b4f5401ec03442c0
+            MVCSPS-1|81870|640x480|0:9:3db35ab5bd1b052b456f2e7ea7f3fb74 2:9:39f8caa97dfd72e858893a83f41091f7
+            MVCSPS-2|76489|640x480|0:9:3db35ab5bd1b052b456f2e7ea7f3fb74 1:9:850d60138ad2c757a7061e7df68d598b
             """;
 
     /**
@@ -76,7 +74,7 @@ class H264MvcConformanceTest {
     record View(int viewId, int frames, String md5) {
     }
 
-    record Vector(String name, int size, String sha256, int width, int height, List<View> views) {
+    record Vector(String name, int size, int width, int height, List<View> views) {
         @Override
         public String toString() {
             return name;
@@ -91,13 +89,13 @@ class H264MvcConformanceTest {
         var result = new ArrayList<Vector>();
         for (var line : MANIFEST.strip().split("\n")) {
             var parts = line.strip().split("\\|", -1);
-            var dimensions = parts[3].split("x");
+            var dimensions = parts[2].split("x");
             var views = new ArrayList<View>();
-            for (var entry : parts[4].split(" ")) {
+            for (var entry : parts[3].split(" ")) {
                 var fields = entry.split(":");
                 views.add(new View(Integer.parseInt(fields[0]), Integer.parseInt(fields[1]), fields[2]));
             }
-            result.add(new Vector(parts[0], Integer.parseInt(parts[1]), parts[2], Integer.parseInt(dimensions[0]),
+            result.add(new Vector(parts[0], Integer.parseInt(parts[1]), Integer.parseInt(dimensions[0]),
                     Integer.parseInt(dimensions[1]), List.copyOf(views)));
         }
         return result;
@@ -116,8 +114,7 @@ class H264MvcConformanceTest {
     }
 
     static byte[] bitstream(Vector vector) throws IOException {
-        var file = Conformance.fetch("h264-MVC-" + vector.name() + ".264", BASE + vector.name() + ".264",
-                vector.sha256());
+        var file = Conformance.vector("h264-MVC-" + vector.name() + ".264");
         return Files.readAllBytes(file);
     }
 

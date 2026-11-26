@@ -36,7 +36,7 @@ class GsmConformanceTest {
             return files;
         }
         try {
-            var outer = Files.readAllBytes(Conformance.fetchListed("gsm-en300961-v080101.zip"));
+            var outer = Files.readAllBytes(Conformance.vector("gsm-en300961-v080101.zip"));
             var map = new HashMap<String, byte[]>();
             try (var zip = new ZipInputStream(new ByteArrayInputStream(outer))) {
                 for (var disk = zip.getNextEntry(); disk != null; disk = zip.getNextEntry()) {
@@ -141,5 +141,68 @@ class GsmConformanceTest {
             GsmFrames.unpackMs(block, 0, true, back);
             TOLERANCE.assertWithin(sequence + " Microsoft block " + f + " second frame", second, back);
         }
+    }
+
+    /** Parses an operand or result of {@code add_test.dta}: {@code -} and {@code +} are the word limits. */
+    private static long stlValue(String token) {
+        return switch (token) {
+            case "-" -> Short.MIN_VALUE;
+            case "+" -> Short.MAX_VALUE;
+            case "--" -> Integer.MIN_VALUE;
+            case "++" -> Integer.MAX_VALUE;
+            default -> {
+                var negative = token.startsWith("-");
+                var digits = negative || token.startsWith("+") ? token.substring(1) : token;
+                var magnitude = digits.startsWith("0x") || digits.startsWith("0X")
+                        ? Long.parseLong(digits.substring(2), 16) : Long.parseLong(digits);
+                yield negative ? -magnitude : magnitude;
+            }
+        };
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("the basic arithmetic of the RPE-LTP filters meets the Software Tool Library's add_test.dta")
+    void basicArithmetic() throws IOException {
+        // add_test.dta of the ITU-T STL RPE-LTP (cbacae9, Degener and Bormann's libgsm), as add_test.c runs it: each
+        // line names an operation, its operands and the expected result, words truncated to 16 bits. The coder has
+        // no 32-bit multiply, subtract or shifts of its own (it writes them inline), so the L_mult, L_sub, L_<< and
+        // L_>> lines have no counterpart; GSM_MULT_R is the macro form, defined for operands not both MIN_WORD
+        var lines = Files.readAllLines(Conformance.vector("rpeltp-stl-add_test.dta"), java.nio.charset.StandardCharsets.US_ASCII);
+        var checked = 0;
+        for (var line : lines) {
+            if (line.isBlank() || line.startsWith(";") || line.startsWith("'") || line.startsWith("\"")
+                    || line.startsWith("#") || !line.contains("=")) {
+                continue;
+            }
+            var sides = line.split("=", 2);
+            var tokens = sides[0].trim().split("[\\s(),]+");
+            var operation = tokens[0];
+            var a = tokens.length > 1 ? stlValue(tokens[1]) : 0;
+            var b = tokens.length > 2 ? stlValue(tokens[2]) : 0;
+            var expected = stlValue(sides[1].trim().split("\\s+")[0]);
+            short wa = (short) a;
+            short wb = (short) b;
+            Long actual = switch (operation) {
+                case "add" -> (long) Gsm0610.add(wa, wb);
+                case "sub" -> (long) Gsm0610.sub(wa, wb);
+                case "mult" -> (long) Gsm0610.multGuarded(wa, wb);
+                case "mult_r" -> wa == Short.MIN_VALUE && wb == Short.MIN_VALUE ? null : (long) Gsm0610.multR(wa, wb);
+                case "abs" -> (long) Gsm0610.abs(wa);
+                case "div" -> (long) Gsm0610.div(wa, wb);
+                case "norm" -> (long) (short) Gsm0610.norm((int) a);
+                case "<<" -> (long) Gsm0610.asl(wa, wb);
+                case ">>" -> (long) Gsm0610.asr(wa, wb);
+                case "L_add" -> Gsm0610.lAdd((int) a, (int) b);
+                case "L_mult", "L_sub", "L_<<", "L_>>" -> null;
+                default -> throw new AssertionError("unknown operation in " + line);
+            };
+            if (actual == null) {
+                continue;
+            }
+            var want = operation.startsWith("L_") ? (long) (int) expected : (long) (short) expected;
+            assertEquals(want, actual, line.trim());
+            checked++;
+        }
+        assertEquals(188, checked, "lines checked");
     }
 }

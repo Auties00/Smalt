@@ -622,4 +622,61 @@ class TsDemuxerTest {
             assertFalse(demuxed.packetsOf(data).isEmpty());
         }
     }
+
+    @Nested
+    @DisplayName("third-party streams")
+    class ThirdParty {
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"tsduck-test-170.ts", "tsduck-test-065.m2ts", "tsduck-test-139.ts", "tsduck-test-209.ts",
+                "fate-mpegts-id3.ts", "fate-mpegts-pmtchange.ts", "fate-mpegts-loewe.ts",
+                "fate-mpegts-mpegts_sdt_data_stream.ts", "fate-s302m-s302_20bits_DolbyE_16bits.ts"})
+        @DisplayName("match ffprobe: ISDB 204-byte and Blu-ray 192-byte packets, DTS-HD MA, a PTS wrap, ID3, a "
+                + "program map change, tables after the streams, SDT data, SMPTE 302M")
+        void matchesFfprobe(String name) {
+            com.github.auties00.smalt.container.ThirdPartyDemux.assertTransportStream(name);
+        }
+
+        @Test
+        @DisplayName("unpacks SMPTE 302M to the PCM ffmpeg's decoder outputs")
+        void smpte302m() {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-s302m-s302_20bits_DolbyE_16bits.ts");
+            var ours = ContainerProbe.demux(file, Containers::openDemuxer);
+            var audio = (AudioTrack) ours.tracks().getFirst();
+            assertEquals(Codec.PCM_S24LE, audio.codec());
+            assertEquals(20, audio.bitsPerSample());
+            var pcm = new ByteArrayOutputStream();
+            for (var packet : ours.packetsOf(audio)) {
+                pcm.writeBytes(packet.data());
+            }
+            // ffmpeg's s302m decoder returns the 20-bit words in 32-bit samples; their top 24 bits are ours
+            var expected = com.github.auties00.smalt.testkit.Oracle.run(
+                    com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG, Duration.ofMinutes(1),
+                    List.of("-v", "error", "-i", file.toString(), "-map", "0:a", "-f", "s24le", "-"));
+            assertArrayEquals(expected, pcm.toByteArray());
+        }
+    }
+
+    @Test
+    @DisplayName("reads the EBU-TT-D documents of a DVB TTML stream (ETSI EN 303 560) as subtitle cues")
+    void dvbTtml() {
+        // IRT's DVB TTML test stream as TSDuck keeps it: HEVC, LATM 5.1 and a TTML PID
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("tsduck-test-211.ts");
+        var ours = com.github.auties00.smalt.container.ThirdPartyDemux.assertTransportStream("tsduck-test-211.ts");
+        var ttml = ours.tracks().stream().filter(track -> track.codec() == Codec.TTML).findFirst().orElseThrow();
+        var documents = ours.packetsOf(ttml);
+        assertFalse(documents.isEmpty(), "TTML documents");
+        for (var document : documents) {
+            var text = new String(document.data(), java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(text.contains("<tt") && text.contains("http://www.w3.org/ns/ttml"), "a TTML document");
+        }
+        var cues = new java.util.ArrayList<com.github.auties00.smalt.subtitle.SubtitleCue>();
+        var decoder = new com.github.auties00.smalt.subtitle.SubtitleDecoder(ttml);
+        for (var document : documents) {
+            cues.addAll(decoder.decodeAll(document));
+        }
+        cues.addAll(decoder.flush());
+        assertFalse(cues.isEmpty(), "subtitle cues");
+        assertTrue(cues.stream().allMatch(cue -> cue.endMicros() > cue.startMicros()));
+        assertTrue(java.nio.file.Files.exists(file));
+    }
 }

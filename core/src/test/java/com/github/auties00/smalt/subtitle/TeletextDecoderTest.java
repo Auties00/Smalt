@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Decodes teletext subtitle pages written by the test kit's {@link TeletextWriter} through {@link SubtitleDecoder}:
@@ -203,5 +204,88 @@ class TeletextDecoderTest {
         cues.addAll(decoder.flush());
         assertEquals(List.of("serial"), plain(cues));
         assertEquals(0, cues.getFirst().startMicros());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"tsduck-test-012.ts", "tsduck-test-013.ts",
+            "tsduck-test-150.ts"})
+    @DisplayName("decodes the subtitle page of a broadcast to the text TSDuck's teletext plugin extracts")
+    void broadcast(String name) throws Exception {
+        var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.TSP);
+        var srt = java.nio.file.Files.createTempFile("teletext", ".srt");
+        try {
+            // TSDuck decodes the first page it finds transmitted as a subtitle page, and names it
+            var log = com.github.auties00.smalt.testkit.Oracle.runMerged(
+                    com.github.auties00.smalt.testkit.Oracle.Tool.TSP, java.time.Duration.ofMinutes(2),
+                    List.of("--verbose", "-I", "file", file.toString(), "-P", "teletext", "--output-file",
+                            srt.toString(), "-O", "drop"));
+            var matcher = java.util.regex.Pattern.compile("using Teletext page ([0-9]+)").matcher(log);
+            assertTrue(matcher.find(), log);
+            var page = Integer.parseInt(matcher.group(1), 16);
+            var expected = new ArrayList<String>();
+            var starts = new ArrayList<Long>();
+            var ends = new ArrayList<Long>();
+            for (var block : java.nio.file.Files.readString(srt, java.nio.charset.StandardCharsets.UTF_8)
+                    .replace("\r", "").replace("\uFEFF", "").split("\n\n")) {
+                var lines = block.strip().split("\n");
+                if (lines.length >= 3 && lines[1].contains("-->")) {
+                    expected.add(String.join("\n", java.util.Arrays.copyOfRange(lines, 2, lines.length)));
+                    var times = lines[1].split("-->");
+                    starts.add(srtMicros(times[0]));
+                    ends.add(srtMicros(times[1]));
+                }
+            }
+            assertTrue(!expected.isEmpty(), "TSDuck extracts subtitles");
+            var demuxed = com.github.auties00.smalt.container.ContainerProbe.demux(file,
+                    com.github.auties00.smalt.container.Containers::openDemuxer);
+            var track = demuxed.tracks().stream().filter(candidate -> candidate.codec() == Codec.DVB_TELETEXT)
+                    .findFirst().orElseThrow();
+            var decoder = new SubtitleDecoder(track, CaptionService.teletext(page));
+            var cues = new ArrayList<SubtitleCue>();
+            for (var packet : demuxed.packetsOf(track)) {
+                cues.addAll(decoder.decodeAll(packet));
+            }
+            cues.addAll(decoder.flush());
+            var actual = plain(cues);
+            // TSDuck clears the page on every header; EN 300 706 9.3.1.3 keeps the rows of a page transmitted
+            // without the erase page flag (C4), so a cue of ours may show more rows than TSDuck's and span several
+            // of its cues, never other rows: in the middle of each of TSDuck's cues ours shows its rows. The two
+            // timelines start apart; the first cues align them
+            assertTrue(cues.size() <= expected.size(), cues.size() + " cues, TSDuck " + expected.size());
+            var offset = cues.getFirst().startMicros() - starts.getFirst();
+            for (var index = 0; index < expected.size(); index++) {
+                var middle = (starts.get(index) + ends.get(index)) / 2 + offset;
+                var lines = List.of(expected.get(index).split("\n"));
+                var shown = cues.stream().filter(cue -> cue.startMicros() <= middle && middle < cue.endMicros())
+                        .findFirst();
+                assertTrue(shown.isPresent(), "TSDuck's cue " + index + " " + lines + " at " + middle);
+                var rows = List.of(Subtitles.plainText(shown.get().text(), SubtitleMarkup.SUBRIP).split("\n"));
+                assertTrue(rows.containsAll(lines), "cue " + index + ": " + lines + " in " + rows);
+                if (expected.size() == cues.size()) {
+                    assertEquals(expected.get(index), actual.get(index), "cue " + index);
+                }
+            }
+        } finally {
+            java.nio.file.Files.deleteIfExists(srt);
+        }
+    }
+
+    private static long srtMicros(String time) {
+        var parts = time.strip().split("[:,]");
+        return ((Long.parseLong(parts[0]) * 60 + Long.parseLong(parts[1])) * 60 + Long.parseLong(parts[2])) * 1_000_000
+                + Long.parseLong(parts[3]) * 1000;
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("rejects only as malformed a damaged capture whose program map never parses")
+    void damagedCapture() {
+        // tsduck-test-143.ts: 19 transport errors and a PMT PID with discontinuities; TSDuck finds no stream of its
+        // service either, and ffmpeg lists the teletext PID only by probing unreferenced PIDs
+        try (var source = com.github.auties00.smalt.io.MediaSource.of(
+                com.github.auties00.smalt.testkit.Conformance.vector("tsduck-test-143.ts"))) {
+            org.junit.jupiter.api.Assertions.assertThrows(com.github.auties00.smalt.MediaException.Malformed.class,
+                    () -> com.github.auties00.smalt.container.Containers.openDemuxer(source));
+        }
     }
 }

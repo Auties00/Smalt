@@ -24,6 +24,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -44,21 +45,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * and, within one unit, the DCS520C's black levels,
  * the packed 12-bit photosites of the Sony DSLR-A900 sample, the photosites, levels, image area and orientation of
  * the Mamiya ZD sample and the white balance of copies of it with other maker note values,
- * the green-first Bayer pattern of a CC0 Minolta DiMAGE A2 file whose pattern byte is set to 4, the linearization
+ * the green-first Bayer pattern of a CC0 Minolta Dynax 7D file whose pattern byte is set to 4, the linearization
  * curves of the lossy Nikon NEF samples entry for entry, and the black and white levels and white balance of the Sony
  * ARW samples. The oracle files are the summaries {@code tools/testdata/raw-oracle.py} keeps of the converter's DNG
  * files: {@code <stem>.photosites} (the stored image's size, filter array, digest and first row) and
  * {@code <stem>.levels} (the camera, image area, crop, filter array, levels, as-shot neutral and linearization table),
- * in {@code <conformance cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides it) and, for the ARW samples,
- * which {@code raw-oracle.py --coverage} converts, in {@code <conformance cache>/raw-oracle-coverage}
+ * in {@code <test cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides it) and, for the ARW samples,
+ * which {@code raw-oracle.py --coverage} converts, in {@code <test cache>/raw-oracle-coverage}
  * ({@code -Dsmalt.test.rawCoverage}); the tests are skipped without them.
  */
 class VendorOracleTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     private static final Path COVERAGE = Path.of(System.getProperty("smalt.test.rawCoverage",
-            Conformance.directory().resolve("raw-oracle-coverage").toString()));
+            Conformance.cache("raw-oracle-coverage").toString()));
 
     private static final String NONE = "no oracle files";
 
@@ -212,7 +213,7 @@ class VendorOracleTest {
 
     private static byte[] bytes(RawSamples sample) {
         try {
-            return Files.readAllBytes(sample.fetch());
+            return Files.readAllBytes(sample.path());
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
@@ -271,18 +272,12 @@ class VendorOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"SRW_EX1", "SRW_WB2000", "SRW_NX5", "SRW_NX10", "SRW_NX11",
-            "SRW_NX20", "SRW_NX200", "SRW_NX210", "SRW_NX1000", "SRW_NX1100_4422", "SRW_NX1100_4423", "SRW_NX1100_4424",
-            "SRW_NX1", "SRW_NX30", "SRW_NX3000", "SRW_NX300", "SRW_NX500_12_NORMAL", "SRW_NX500_12_LOSSLESS",
-            "SRW_NX500_14_NORMAL", "SRW_NX500_14_LOSSLESS", "SRW_NX_MINI", "SRW_NX2000", "SRW_NX3300", "SRW_EK_GN120",
-            "ERF_R_D1", "ERF_R_D1S", "ERF_R_D1X", "RW2_DMC_FZ8_4_3", "RW2_DMC_FZ50_16_9", "RW2_DMC_LX1_16_9",
-            "RW2_DIGILUX_3_4_3", "DCR_EASYSHARE_Z981", "DCR_EASYSHARE_Z990_NAN", "DCR_P880_NAN",
-            "DCR_KODAK_P712_ZOOM_DIGITAL_CAMERA_NAN", "DCR_DCS520C_12BIT_3_2", "DCR_DCS760C_12BIT_3_2",
-            "DCR_DCS_PRO_14N_12BIT_3_2", "DCR_DCS_PRO_14NX_12BIT_3_2", "DCR_DCS_PRO_SLR_C_12BIT_3_2",
-            "DCR_DCS_PRO_SLR_N_12BIT_3_2", "ARW_A900_UNCOMPRESSED_12", "ARW_A450_CRAW_12", "ARW_A700_CRAW_8", "ARW_A200_COMPRESSED_12",
+    @EnumSource(value = RawSamples.class, names = {"SRW_NX1000", "SRW_NX1", "SRW_NX300", "SRW_NX500_12_NORMAL",
+            "SRW_NX500_14_LOSSLESS", "SRW_NX_MINI", "ERF_R_D1", "RW2_DMC_FZ8_4_3",
+            "RW2_DMC_FZ50_16_9", "RW2_DMC_LX1_16_9", "DCR_P880_NAN", "DCR_DCS520C_12BIT_3_2", "DCR_DCS760C_12BIT_3_2",
+            "ARW_A900_UNCOMPRESSED_12", "ARW_A450_CRAW_12", "ARW_A700_CRAW_8", "ARW_A200_COMPRESSED_12",
             "ARW_A100_DELTA_12", "ARW_A230_DELTA_12", "ARW_A290_DELTA_12", "ARW_A300_DELTA_12", "ARW_A330_DELTA_12",
-            "ARW_A350_DELTA_12", "ARW_A380_DELTA_12", "ARW_A390_DELTA_12",
-            "MEF_ZD"})
+            "ARW_A350_DELTA_12", "ARW_A380_DELTA_12", "ARW_A390_DELTA_12", "MEF_ZD"})
     @DisplayName("the photosites, filter array, levels and white balance equal the converter's, and the image area "
             + "is the converter's image size within a few photosites of its place")
     void decoding(RawSamples sample) {
@@ -303,12 +298,7 @@ class VendorOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"GPR_HERO5_BLACK_16BIT_4_3_936", "GPR_HERO5_BLACK_16BIT_4_3_1634",
-            "GPR_HERO6_BLACK_16BIT_4_3_2556", "GPR_HERO6_BLACK_16BIT_4_3_2557", "GPR_HERO6_BLACK_16BIT_4_3_2558",
-            "GPR_HERO7_BLACK_16BIT_4_3_2786", "GPR_HERO7_BLACK_16BIT_4_3_2846", "GPR_HERO7_BLACK_16BIT_4_3_2908",
-            "GPR_HERO7_BLACK_16BIT_4_3_5766", "GPR_HERO8_BLACK_16BIT_4_3_3949", "GPR_HERO8_BLACK_16BIT_4_3_5767",
-            "GPR_HERO9_BLACK_16BIT_4_3", "GPR_HERO10_BLACK_16BIT_4_3_4883", "GPR_HERO10_BLACK_16BIT_4_3_4894",
-            "GPR_HERO11_BLACK_16BIT_5_4", "GPR_FUSION_16BIT_1_1_7370", "GPR_FUSION_16BIT_1_1_7371"})
+    @EnumSource(value = RawSamples.class, names = {"GPR_HERO7_BLACK_16BIT_4_3_2908"})
     @DisplayName("a GoPro GPR file's VC-5 sensor data decodes to the converter's photosites, with its filter array "
             + "and levels")
     void gpr(RawSamples sample) {
@@ -343,8 +333,7 @@ class VendorOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"DCR_DCS760C_12BIT_3_2", "DCR_DCS_PRO_14N_12BIT_3_2",
-            "DCR_DCS_PRO_14NX_12BIT_3_2", "DCR_DCS_PRO_SLR_C_12BIT_3_2", "DCR_DCS_PRO_SLR_N_12BIT_3_2"})
+    @EnumSource(value = RawSamples.class, names = {"DCR_DCS760C_12BIT_3_2"})
     @DisplayName("a Kodak DCS file of compression 65000 has the converter's linearization table, or none where the "
             + "converter's file has none")
     void kodakLinearization(RawSamples sample) {
@@ -442,8 +431,7 @@ class VendorOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"FFF_H4D_40_16BIT_4_3", "FFF_CFV_50C_16BIT_4_3_7199",
-            "FFF_CFV_50C_16BIT_4_3_7218"})
+    @EnumSource(value = RawSamples.class, names = {"FFF_H4D_40_16BIT_4_3"})
     @DisplayName("a Hasselblad FFF file decodes to the converter's photosites, filter array, levels and white "
             + "balance, with the converter's crop")
     void fff(RawSamples sample) {
@@ -457,8 +445,7 @@ class VendorOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"FFF_CFV_50C_16BIT_4_3", "FFF_X1D_16BIT_4_3",
-            "FFF_X1D_II_50C_16BIT_4_3", "FFF_CFV_100C_16BIT_4_3"})
+    @EnumSource(value = RawSamples.class, names = {"FFF_CFV_50C_16BIT_4_3", "FFF_X1D_II_50C_16BIT_4_3"})
     @DisplayName("a CMOS camera's 3FR file decodes, calibrated, to the converter's photosites, with its levels, crop, "
             + "filter array and white balance")
     void calibratedThreeFr(RawSamples sample) {
@@ -481,7 +468,7 @@ class VendorOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"FFF_H3D_16BIT_4_3", "FFF_HASSELBLAD_H4D_16BIT_4_3"})
+    @EnumSource(value = RawSamples.class, names = {"FFF_H3D_16BIT_4_3"})
     @DisplayName("a CCD camera's 3FR file decodes, calibrated, to the converter's photosites, its defective columns "
             + "included (the H4D sample's first row, where its offset ramps are zero), with its levels, filter array "
             + "and white balance")
@@ -528,12 +515,12 @@ class VendorOracleTest {
     }
 
     @Test
-    @DisplayName("a DiMAGE A2 file whose Bayer pattern byte is 4 decodes to the converter's photosites, green-first "
+    @DisplayName("a Dynax 7D file whose Bayer pattern byte is 4 decodes to the converter's photosites, green-first "
             + "filter array, crop and white balance")
     void greenFirstMrw() throws IOException {
-        var levels = Levels.read(oracle(ORACLE, "patched-minolta-dimage-a2-gbrg", ".levels"));
-        var photosites = Photosites.read(oracle(ORACLE, "patched-minolta-dimage-a2-gbrg", ".photosites"));
-        var data = MrwSamples.greenFirst(Files.readAllBytes(RawSamples.MRW_DIMAGE_A2.fetch()));
+        var levels = Levels.read(oracle(ORACLE, "patched-minolta-dynax-7d-gbrg", ".levels"));
+        var photosites = Photosites.read(oracle(ORACLE, "patched-minolta-dynax-7d-gbrg", ".photosites"));
+        var data = MrwSamples.greenFirst(Files.readAllBytes(RawSamples.MRW_DYNAX_7D.path()));
         var file = parse(data);
         assertEquals("GBRG", file.sensor.cfa.toString());
         var origin = check(file, photosites, levels);
@@ -542,19 +529,14 @@ class VendorOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @EnumSource(value = RawSamples.class, names = {"NEF_D70S_LOSSY_12", "NEF_D7000_LOSSY_12", "NEF_D7000_LOSSY_14_SPLIT",
-            "NEF_D5600_LOSSY_12_SPLIT", "NEF_Z6II_LOSSY_12_SPLIT", "NEF_1_J1_LOSSY_12", "NEF_COOLPIX_A_LOSSY_14",
-            "NEF_D3_LOSSY_12", "NEF_D3_LOSSY_14", "NEF_D5_LOSSY_14", "NEF_D500_LOSSY_12", "NEF_D750_LOSSY_14",
-            "NEF_D810_LOSSY_12", "NEF_D850_LOSSY_14", "NEF_D90_LOSSY_12", "NEF_DF_LOSSY_14", "NEF_D6_LOSSY_12",
-            "NEF_D6_LOSSY_14", "NEF_D780_LOSSY_12", "NEF_D780_LOSSY_14", "NEF_Z5_LOSSY_12", "NEF_Z5_LOSSY_14",
-            "NEF_Z6II_LOSSY_14", "NEF_Z7II_LOSSY_12", "NEF_Z7II_LOSSY_14", "NEF_D300_LOSSY_12", "NEF_D700_LOSSY_12",
-            "NEF_D3S_LOSSY_12", "NEF_D300S_LOSSY_12", "NEF_D4_LOSSY_12", "NEF_D3100_LOSSY_12", "NEF_D5000_LOSSY_12"})
+    @EnumSource(value = RawSamples.class, names = {"NEF_D70S_LOSSY_12", "NEF_D7000_LOSSY_12",
+            "NEF_D7000_LOSSY_14_SPLIT", "NEF_D5600_LOSSY_12_SPLIT", "NEF_Z6II_LOSSY_12_SPLIT"})
     @DisplayName("the linearization curve equals the converter's linearization table entry for entry")
     void nefCurve(RawSamples sample) {
         var levels = Levels.read(oracle(ORACLE, stem(sample), ".levels"));
         var table = levels.linearization();
         assertNotNull(table, "the converter's file has a linearization table");
-        try (var source = MediaSource.of(sample.fetch())) {
+        try (var source = MediaSource.of(sample.path())) {
             var reader = TiffReader.open(source, 0, MediaLimits.DEFAULT);
             var tree = new TiffTree(reader);
             var model = tree.first.string(272);
@@ -570,6 +552,17 @@ class VendorOracleTest {
         }
     }
 
+    /**
+     * Returns the name of the ARW sample a levels file was read from, if the test data lists it.
+     */
+    private static Optional<String> arwSample(String levelsName) {
+        var stem = levelsName.substring(0, levelsName.length() - ".levels".length());
+        return Stream.of(".arw", ".sr2", ".srf")
+                .map(extension -> stem + extension)
+                .filter(Conformance::listed)
+                .findFirst();
+    }
+
     static Stream<String> arwLevels() throws IOException {
         if (!Files.isDirectory(COVERAGE)) {
             return Stream.of(NONE);
@@ -577,6 +570,7 @@ class VendorOracleTest {
         try (var files = Files.list(COVERAGE)) {
             var names = files.map(path -> path.getFileName().toString())
                     .filter(name -> name.startsWith("rawpixls-sony-") && name.endsWith(".levels"))
+                    .filter(name -> arwSample(name).isPresent())
                     .sorted()
                     .toList();
             return names.isEmpty() ? Stream.of(NONE) : names.stream();
@@ -590,14 +584,10 @@ class VendorOracleTest {
     void arw(String levelsName) {
         Skip.unless(!levelsName.equals(NONE), "data:raw-oracle-coverage", "no ARW levels files in " + COVERAGE
                 + "; run tools/testdata/raw-oracle.py --coverage");
-        var stem = levelsName.substring(0, levelsName.length() - ".levels".length());
-        var raw = Stream.of(".arw", ".sr2", ".srf")
-                .map(extension -> Conformance.directory().resolve(stem + extension))
-                .filter(Files::isRegularFile)
-                .findFirst();
-        Skip.unless(raw.isPresent(), "data:vector", "no sample of " + levelsName);
+        var raw = Conformance.vector(arwSample(levelsName)
+                .orElseThrow(() -> new AssertionError("no sample of " + levelsName)));
         var levels = Levels.read(COVERAGE.resolve(levelsName));
-        var file = parse(raw.get());
+        var file = parse(raw);
         if (levels.cfa() == null) {
             // the converter stores the YCbCr images of the smaller lossless sizes as linear raw data, which this
             // parser does not read

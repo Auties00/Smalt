@@ -107,25 +107,13 @@ public final class FuzzSeeds {
     }
 
     /**
-     * Returns a conformance vector listed in {@code tools/testdata/vectors.tsv}, fetched through
-     * {@link Conformance#fetch}; the calling test is skipped when it is not available.
+     * Returns a conformance vector listed in {@code tools/testdata/vectors.tsv}, through {@link Conformance#vector}.
      *
      * @param name the name of the vector in the manifest
-     * @return the cached file
-     * @throws IllegalArgumentException if the manifest has no such vector
+     * @return the file
      */
     public static Path vector(String name) {
-        var manifest = Path.of("..", "tools", "testdata", "vectors.tsv");
-        try (var lines = Files.lines(manifest)) {
-            var row = lines.filter(line -> !line.startsWith("#"))
-                    .map(line -> line.split("\t"))
-                    .filter(columns -> columns.length >= 5 && columns[1].equals(name))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException(name + " is not in " + manifest));
-            return Conformance.fetch(row[1], row[4], row[3]);
-        } catch (IOException exception) {
-            throw new UncheckedIOException(exception);
-        }
+        return Conformance.vector(name);
     }
 
     /**

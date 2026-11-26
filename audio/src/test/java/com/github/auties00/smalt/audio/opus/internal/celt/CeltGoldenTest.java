@@ -98,9 +98,7 @@ class CeltGoldenTest {
 
         private static synchronized byte[] vector(String number) throws IOException {
             if (VECTORS.isEmpty()) {
-                var archive = Conformance.fetch("opus_testvectors-rfc8251.tar.gz",
-                        "https://opus-codec.org/static/testvectors/opus_testvectors-rfc8251.tar.gz",
-                        "6b26a22f9ba87b2b836906a9bb7afec5f8e54d49553b1200382520ee6fedfa55");
+                var archive = Conformance.vector("opus_testvectors-rfc8251.tar.gz");
                 try (var in = new GZIPInputStream(Files.newInputStream(archive), 1 << 16)) {
                     readTar(in);
                 }

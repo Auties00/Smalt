@@ -64,7 +64,7 @@ class Jp2HtOracleTest {
         } else if (name.startsWith("hifi")) {
             data = Jp2HtConformanceTest.insert("files/codestreams_hifi/" + name + ".j2k");
         } else {
-            data = Jp2TestVectors.fetch("input/nonregression/htj2k/" + name);
+            data = Jp2TestVectors.vector("input/nonregression/htj2k/" + name);
         }
         return contiguousCodestream(data);
     }

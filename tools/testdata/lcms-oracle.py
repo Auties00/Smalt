@@ -2,7 +2,8 @@
 """Generates the Little CMS reference outputs of the color management tests.
 
 Reads core/src/test/resources/com/github/auties00/smalt/image/color/lcms/{profiles,cases}.tsv,
-downloads each profile into the conformance cache (verifying its SHA-256), runs every case through
+reads each profile from the hosted test data (SMALT_TESTDATA, see tools/testdata/README.md; checking its SHA-256),
+runs every case through
 Little CMS via Pillow's ImageCms (8-bit, Little CMS default flags plus black point compensation when
 asked), and writes one <case>.bin per case next to the manifests: the raw interleaved output samples
 for the deterministic input set the Java test regenerates (TestProfiles.inputs).
@@ -25,21 +26,16 @@ import hashlib
 import io
 import os
 import sys
-import urllib.request
 from pathlib import Path
 
 from PIL import Image, ImageCms
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testdata  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "core/src/test/resources/com/github/auties00/smalt/image/color/lcms"
 IMAGES = ROOT / "image/src/test/resources/com/github/auties00/smalt/image/icc/images.tsv"
-
-
-def cache_dir():
-    configured = os.environ.get("SMALT_CONFORMANCE_CACHE")
-    if configured:
-        return Path(configured)
-    return Path.home() / ".smalt/cache/conformance"
 
 
 def read_tsv(name):
@@ -50,13 +46,9 @@ def read_tsv(name):
     return rows
 
 
-def fetch(name, sha256, url):
-    target = cache_dir() / name
-    if not target.is_file():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(url) as response:
-            target.write_bytes(response.read())
-    data = target.read_bytes()
+def fetch(name, sha256, _url):
+    """Returns the bytes of a hosted vector, checked against the SHA-256 the manifest gives."""
+    data = Path(testdata.vector(name)).read_bytes()
     if hashlib.sha256(data).hexdigest() != sha256:
         sys.exit(f"checksum mismatch for {name}")
     return data

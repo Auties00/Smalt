@@ -44,7 +44,7 @@ import java.util.Optional;
  * Pixels are returned as stored, without color management unless
  * {@link ImageDecoderOptions#convertToSrgb()} asks for sRGB: {@link DecodedImage#colorProfile()}
  * describes them from the {@code cICP}, {@code iCCP}, {@code sRGB}, {@code gAMA} and {@code cHRM}
- * chunks, a high-dynamic-range {@code cICP} profile carrying the {@code mDCV} and {@code cLLI}
+ * chunks, a high-dynamic-range {@code cICP} or {@code iCCP} profile carrying the {@code mDCV} and {@code cLLI}
  * metadata in its {@link com.github.auties00.smalt.image.color.ColorProfile#colorInfo()}, and an
  * {@code iCCP} profile is also returned in {@link DecodedImage#iccProfile()}. An
  * {@code eXIf} chunk before the image data supplies {@link DecodedImage#exif()} and the

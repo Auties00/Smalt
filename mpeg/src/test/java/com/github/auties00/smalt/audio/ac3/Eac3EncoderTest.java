@@ -256,7 +256,7 @@ class Eac3EncoderTest {
      * Returns the program of a pinned FATE stream, decoded by Smalt, cut to a duration.
      */
     static AudioBuffer program(int sample, double seconds) {
-        var decoded = Ac3TestSupport.decode(Ac3TestSupport.read(Ac3TestSupport.SAMPLES.get(sample).fetch()),
+        var decoded = Ac3TestSupport.decode(Ac3TestSupport.read(Ac3TestSupport.SAMPLES.get(sample).file()),
                 Ac3DecoderOptions.fullRange());
         var frames = Math.min(decoded.frames(), (int) (48000 * seconds));
         var planes = new float[decoded.planes().size()][];

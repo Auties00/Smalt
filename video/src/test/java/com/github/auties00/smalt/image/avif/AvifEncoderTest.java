@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.image.avif;
 
-import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -152,8 +151,7 @@ class AvifEncoderTest {
                 raw.write(decoded.v(), y * decoded.uvStride(), 176);
             }
             assertArrayEquals(raw.toByteArray(), ffmpeg);
-            // the floors are calibrated on the foreman clip; synthetic content compresses worse
-            Skip.unless(StillTesting.hasForeman(), "data:clip", "foreman.yuv is not cached, so the PSNR floor does not apply");
+            // the floors are calibrated on the foreman clip
             assertTrue(psnr > minPsnr, "psnr " + psnr);
         }
 

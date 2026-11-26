@@ -70,9 +70,9 @@ class FuzzSeedWriter {
         write(AudioFuzzTest.class, "musepack8", "valid-stereo.bin", FuzzSeeds.packets(
                 resources.resolve("musepack/stereo-short.mpc"), Codec.MUSEPACK8, 0, 8));
         write(AudioFuzzTest.class, "musepack7", "valid-stereo.bin", FuzzSeeds.packets(
-                com.github.auties00.smalt.testkit.Conformance.fetchListed("fate-inside-mp7.mpc"), Codec.MUSEPACK7, 0, 6));
+                com.github.auties00.smalt.testkit.Conformance.vector("fate-inside-mp7.mpc"), Codec.MUSEPACK7, 0, 6));
         write(AudioFuzzTest.class, "dst", "valid-64fs-stereo.bin", FuzzSeeds.packets(
-                com.github.auties00.smalt.testkit.Conformance.fetchListed("fate-dst-64fs44-2ch.dff"), Codec.DST, 0, 2));
+                com.github.auties00.smalt.testkit.Conformance.vector("fate-dst-64fs44-2ch.dff"), Codec.DST, 0, 2));
     }
 
     @Test
@@ -107,7 +107,7 @@ class FuzzSeedWriter {
         // the codes of the ITU-T STL G.726 sequences, packed from the most significant bit
         var rates = new int[]{16, 24, 32, 40};
         for (var bits = 2; bits <= 5; bits++) {
-            var raw = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.fetchListed(
+            var raw = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
                     "g726-stl-rn" + rates[bits - 2] + "fa.i"));
             var packed = new java.io.ByteArrayOutputStream();
             var accumulator = 0;

@@ -3,7 +3,6 @@ package com.github.auties00.smalt.audio.aac;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.aac.internal.AudioSpecificConfig;
-import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.DynamicTest;
@@ -187,13 +186,24 @@ class BsacConformanceTest {
     }
 
     /**
+     * The ER BSAC streams the 2nd edition of ISO/IEC 14496-26 adds ({@code er_bs24} to {@code er_bs48} at 24, 44.1
+     * and 48 kHz), each against its reference at its top layer.
+     */
+    @TestFactory
+    @DisplayName("every stream of the 2nd edition matches its reference at its top layer")
+    Stream<DynamicTest> edition2() {
+        return AacErrorResilientConformanceTest.edition2("er_bs(2[4-9]|3\\d|4[0-8])_\\d\\d_ep0\\.mp4")
+                .map(stream -> DynamicTest.dynamicTest(stream, () -> check(stream, List.of("48"))));
+    }
+
+    /**
      * Decodes a stream at each layer and compares it with the references of that layer.
      *
      * @param stream the stream name, with its {@code _epN} suffix
      * @param layers the layers of its references, as their names spell them
      */
     private static void check(String stream, List<String> layers) {
-        var data = Fixtures.read(Conformance.fetchListed("mpeg4audio-" + stream + ".mp4"));
+        var data = Fixtures.read(Mpeg4AudioVectors.file(stream + ".mp4"));
         var tracks = AacTestSupport.parseMp4Tracks(data);
         var truncated = TRUNCATED.get(stream);
         assertEquals(truncated != null, tracks.size() < AacTestSupport.mp4AudioTrackCount(data),
@@ -215,8 +225,7 @@ class BsacConformanceTest {
                     AacDecoderOptions.builder().maxLayer(Math.min(value, 63)).build());
             var name = testCase + "_lay" + layer;
             if (speakers.isEmpty()) {
-                var reference = AacTestSupport.readWav(Fixtures.read(Conformance.fetchListed(
-                        "mpeg4audio-" + name + ".wav")));
+                var reference = AacTestSupport.readWav(Fixtures.read(Mpeg4AudioVectors.file(name + ".wav")));
                 assertEquals(reference.length, decoded.planes().length, name + " channels");
                 for (var c = 0; c < reference.length; c++) {
                     compare(name + " channel " + c, reference[c], decoded.planes()[c]);
@@ -224,8 +233,7 @@ class BsacConformanceTest {
             } else {
                 assertEquals(speakers.size(), decoded.planes().length, name + " channels");
                 for (var speaker : speakers) {
-                    var reference = AacTestSupport.readWav(Fixtures.read(Conformance.fetchListed(
-                            "mpeg4audio-" + name + "_" + speaker + ".wav")))[0];
+                    var reference = AacTestSupport.readWav(Fixtures.read(Mpeg4AudioVectors.file(name + "_" + speaker + ".wav")))[0];
                     var index = decoded.layout().indexOf(speakerOf(speaker));
                     assertTrue(index >= 0, name + " lacks " + speaker + " in " + decoded.layout());
                     compare(name + "_" + speaker, reference, decoded.planes()[index]);
@@ -302,7 +310,7 @@ class BsacConformanceTest {
      * @param stream the stream name
      */
     private static void checkSbr(String stream) {
-        var data = Fixtures.read(Conformance.fetchListed("mpeg4audio-" + stream + ".mp4"));
+        var data = Fixtures.read(Mpeg4AudioVectors.file(stream + ".mp4"));
         var tracks = AacTestSupport.parseMp4Tracks(data);
         var first = tracks.getFirst();
         AacTestSupport.Decoded decoded;

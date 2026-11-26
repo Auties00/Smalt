@@ -82,7 +82,7 @@ class RawMetadataEditTest {
             "rawpixls-pentax-k-5-14bit-3-2.pef"})
     @DisplayName("camera files keep their sensor data and rendering through an edit")
     void camera(String name) throws IOException {
-        var original = Files.readAllBytes(Conformance.fetchListed(name));
+        var original = Files.readAllBytes(Conformance.vector(name));
         var metadata = ImageMetadata.read(MediaSource.of(original));
         var edited = ImageMetadataEditor.apply(original, edit(metadata));
         var reread = ImageMetadata.read(MediaSource.of(edited));

@@ -84,7 +84,7 @@ class FlacConformanceTest {
     @MethodSource("valid")
     @DisplayName("subset and uncommon files decode to their STREAMINFO MD5, which the decoder's own check confirms")
     void md5(FlacConformanceCorpus.Vector vector) throws Exception {
-        var file = vector.fetch();
+        var file = vector.file();
         var result = decode(file, AudioDecoderOptions.builder().verifyIntegrity(true).build());
         var streamInfo = vector.number().equals("10") && vector.group().equals("uncommon")
                 || vector.number().equals("11") && vector.group().equals("uncommon")
@@ -105,10 +105,27 @@ class FlacConformanceTest {
     }
 
     @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({"xiph-sintel-master-51.flac, 6, 16", "opengoldberg-05-variatio4.flac, 2, 24"})
+    @DisplayName("real recordings decode to their STREAMINFO MD5: a 5.1 film master and a 24-bit 96 kHz piano recording")
+    void recordings(String name, int channels, int bitsPerSample) throws Exception {
+        // the CELLAR corpus is synthetic or short: these are the reference encoder's output on real multichannel and
+        // high-resolution material, checked against the MD5 the encoder stored
+        var result = decode(com.github.auties00.smalt.testkit.Conformance.vector(name),
+                AudioDecoderOptions.builder().verifyIntegrity(true).build());
+        var streamInfo = FlacStreamInfo.parse(result.track().codecConfig().orElseThrow(), 8);
+        assertEquals(channels, result.track().layout().orElseThrow().channels(), "channels");
+        assertEquals(bitsPerSample, result.track().bitsPerSample(), "bits per sample");
+        assertTrue(streamInfo.hasMd5(), "the encoder stored an MD5");
+        assertTrue(result.verified(), "signature checked");
+        assertEquals(streamInfo.totalSamples(), result.samples(), "sample count");
+        assertEquals(HexFormat.of().formatHex(streamInfo.md5()), HexFormat.of().formatHex(result.md5()), "MD5");
+    }
+
+    @ParameterizedTest(name = "{0}")
     @MethodSource("faulty")
     @DisplayName("faulty files are rejected as malformed")
     void faultyFiles(FlacConformanceCorpus.Vector vector) {
-        var file = vector.fetch();
+        var file = vector.file();
         assertThrows(MediaException.Malformed.class, () -> decode(file));
     }
 }

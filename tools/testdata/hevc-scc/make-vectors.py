@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Writes the HEVC screen content coding vectors of smalt-mpeg's HevcSccConformanceTest.
 
-The JCT-VC conformance streams of the screen content coding extensions are fetched, never committed (their licence is
-unstated), so the test also decodes short streams the HM-SCM reference encoder (TAppEncoder, BSD-3-Clause, used as a
+The JCT-VC conformance streams of the screen content coding extensions come only from the hosted test data, never the
+repository (their licence is unstated), so the test also decodes short streams the HM-SCM reference encoder (TAppEncoder, BSD-3-Clause, used as a
 black-box encoder) coded from ffmpeg's testsrc pattern, whose flat colors, digits and color bars select palette mode,
 intra block copy and the adaptive color transform. Each stream carries MD5 decoded picture hash SEI messages; the HM
 reference decoder (TAppDecoder) checks every hash while it decodes the stream, and the script fails unless it reports

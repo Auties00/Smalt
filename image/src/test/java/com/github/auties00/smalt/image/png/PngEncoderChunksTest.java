@@ -533,9 +533,7 @@ class PngEncoderChunksTest {
 
     private static synchronized Map<String, byte[]> suite() {
         if (suite == null) {
-            suite = RasterTesting.untarGz(Conformance.fetch("PngSuite-2017jul19.tgz",
-                    "http://www.schaik.com/pngsuite/PngSuite-2017jul19.tgz",
-                    "0294b244c95a8342c01b00010cf34abdcabc7c6a34fd0fe1bd963917537bfdc8"));
+            suite = RasterTesting.untarGz(Conformance.vector("PngSuite-2017jul19.tgz"));
         }
         return suite;
     }

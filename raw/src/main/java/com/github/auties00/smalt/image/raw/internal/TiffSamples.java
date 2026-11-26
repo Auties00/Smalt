@@ -764,7 +764,10 @@ final class TiffSamples {
     }
 
     /**
-     * Converts a DNG 24-bit float (1 sign bit, 7 exponent bits biased by 64, 16 mantissa bits).
+     * Converts a DNG 24-bit float (1 sign bit, 7 exponent bits, 16 mantissa bits): a normal value is
+     * {@code 1.m * 2^(e - 63)} and a subnormal one {@code 0.m * 2^-62}, as the DNG SDK's validator reads it. The
+     * specification's "bias of 64" counts the exponent of {@code 0.1m}: the 24-bit and 32-bit floating-point files of
+     * one capture (raw.pixls.us, Canon EOS 5D Mark III) hold the same values only under this reading.
      *
      * @param bits the 24 bits
      * @return the value
@@ -783,7 +786,7 @@ final class TiffSamples {
             var value = mantissa / 65536.0f * (float) StrictMath.pow(2, -62);
             return sign != 0 ? -value : value;
         }
-        return Float.intBitsToFloat((sign << 31) | ((exponent - 64 + 127) << 23) | (mantissa << 7));
+        return Float.intBitsToFloat((sign << 31) | ((exponent - 63 + 127) << 23) | (mantissa << 7));
     }
 
     /**

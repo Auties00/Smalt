@@ -29,8 +29,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class PngSuiteTest {
     private static final String ARCHIVE = "PngSuite-2017jul19.tgz";
-    private static final String URL = "http://www.schaik.com/pngsuite/PngSuite-2017jul19.tgz";
-    private static final String SHA256 = "0294b244c95a8342c01b00010cf34abdcabc7c6a34fd0fe1bd963917537bfdc8";
 
     private static final String NAMES = """
             PngSuite basi0g01 basi0g02 basi0g04 basi0g08 basi0g16 basi2c08 basi2c16 basi3p01 basi3p02 basi3p04 basi3p08
@@ -54,7 +52,7 @@ class PngSuiteTest {
 
     private static synchronized Map<String, byte[]> suite() {
         if (suite == null) {
-            suite = RasterTesting.untarGz(Conformance.fetch(ARCHIVE, URL, SHA256));
+            suite = RasterTesting.untarGz(Conformance.vector(ARCHIVE));
         }
         return suite;
     }
@@ -152,6 +150,25 @@ class PngSuiteTest {
     void rejectsCorrupt(String name) {
         var data = file(name);
         assertThrows(MediaException.Malformed.class, () -> PngDecoder.decode(MediaSource.of(data), ImageDecoderOptions.defaults()));
+    }
+
+    @Test
+    @DisplayName("masks the tRNS sample bits above the bit depth before matching the key")
+    void trnsHighBitsSet() throws java.io.IOException {
+        // the Web Platform Tests' png/trns-chunk.html: an 8-bit RGB image whose tRNS key is 0xFFFF, 0, 0; PNG
+        // requires decoders to mask the bits above the bit depth to zero, which makes the key the image's red
+        var data = java.nio.file.Files.readAllBytes(Conformance.vector("png-wpt-trns-high-bits-set.png"));
+        var ours = RasterTesting.tight(PngDecoder.decode(MediaSource.of(data), ImageDecoderOptions.defaults())
+                .picture());
+        for (var at = 0; at < ours.length; at += 4) {
+            var key = (ours[at] & 0xFF) == 0xFF && ours[at + 1] == 0 && ours[at + 2] == 0;
+            assertEquals(key ? 0 : 0xFF, ours[at + 3] & 0xFF, "alpha of pixel " + at / 4);
+        }
+        Oracle.assume(Oracle.Tool.FFMPEG);
+        var path = RasterTesting.write("trns-high-bits-set.png", data);
+        var theirs = Oracle.run(Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(1), java.util.List.of("-v", "error",
+                "-i", path.toString(), "-f", "rawvideo", "-pix_fmt", "rgba", "-"));
+        assertArrayEquals(theirs, ours);
     }
 
     @Test

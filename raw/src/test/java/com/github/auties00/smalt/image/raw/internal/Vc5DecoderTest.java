@@ -11,6 +11,8 @@ import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -28,8 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Checks the VC-5 decoder of GoPro's GPR files: a smoke-tier sample against the digest of the photosites Adobe DNG
- * Converter stores for it (every CC0 sample is compared with the converter by {@link VendorOracleTest}), and
+ * Checks the VC-5 decoder of GoPro's GPR files: the samples of every camera against the digest of the photosites Adobe
+ * DNG Converter stores for them (every CC0 sample is compared with the converter by {@link VendorOracleTest}), and
  * synthetic bitstreams of {@link Vc5Writer} in DNG files: both Bayer orders and output depths, the stream errors
  * it rejects, truncated and damaged files.
  */
@@ -70,10 +72,29 @@ class Vc5DecoderTest {
     @Test
     @DisplayName("a GoPro HERO7 Black file decodes to the photosites Adobe DNG Converter stores for it")
     void hero7() throws Exception {
-        var plane = decode(java.nio.file.Files.readAllBytes(RawSamples.GPR_HERO7_BLACK_16BIT_4_3_2908.fetch()));
+        var plane = decode(java.nio.file.Files.readAllBytes(RawSamples.GPR_HERO7_BLACK_16BIT_4_3_2908.path()));
         assertEquals(4000, plane.width);
         assertEquals(3000, plane.height);
         assertEquals(HERO7_DIGEST, digest(plane.integers));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            // the SHA-256 of the image Adobe DNG Converter 18.0 stores (-u) for each file: the two lenses of a FUSION
+            // (3104 x 3000) and the HERO5 to HERO9 Black
+            "GPR_FUSION_BACK, 3104, 3000, 44732fc1dbc2883b89f33be4f6a7b2cd1f93c401c75859e4d82ad96be7399527",
+            "GPR_FUSION_FRONT, 3104, 3000, 58382d65b40cdd82b33f3b91a47de1b5f329a6289bafc20a88d30a4543f97ed3",
+            "GPR_HERO5, 4000, 3000, fc4da317d5acd87ff502b5f692da8a2b5e8562297c7a30ab4d774ee3cd718166",
+            "GPR_HERO6, 4000, 3000, 7c0fa7faa996b89b68cbafd60b69a5d6b3d6338ec63b620944eb5749400dac43",
+            "GPR_HERO7, 4000, 3000, fab22db6b11e8ecb220e54e35a5b81d98500db26ff2cc741b84c472d09d0b220",
+            "GPR_HERO9, 5568, 4176, 6592240ad9710edba5190fd1fd17c951cdb9f2359cedd3d2ab6728efaafcf882"
+    })
+    @DisplayName("GPR files of every GoPro camera decode to the photosites Adobe DNG Converter stores for them")
+    void cameras(RawSamples sample, int width, int height, String sha256) throws Exception {
+        var plane = decode(java.nio.file.Files.readAllBytes(sample.path()));
+        assertEquals(width, plane.width);
+        assertEquals(height, plane.height);
+        assertEquals(sha256, digest(plane.integers));
     }
 
     @Test

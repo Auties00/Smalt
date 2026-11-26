@@ -267,4 +267,37 @@ class PcmDecoderTest {
             }
         }
     }
+
+    /** Reads a file of the ITU-T STL as its 16-bit little-endian words. */
+    static short[] stlWords(String vector) {
+        byte[] bytes;
+        try {
+            bytes = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(vector));
+        } catch (java.io.IOException exception) {
+            throw new java.io.UncheckedIOException(exception);
+        }
+        var words = new short[bytes.length / 2];
+        java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(words);
+        return words;
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource({"PCM_ALAW, g711-stl-sweep-r.a, g711-stl-sweep-r.a-a",
+            "PCM_MULAW, g711-stl-sweep-r.u, g711-stl-sweep-r.u-u"})
+    @DisplayName("decodes the ITU-T STL G.711 sweep to the reference decoder's output, sample for sample")
+    void stlReference(Codec codec, String coded, String reference) {
+        // the STL stores one code per 16-bit word and its decoded samples left-justified in 16 bits
+        var words = stlWords(coded);
+        var codes = new byte[words.length];
+        for (var index = 0; index < words.length; index++) {
+            assertTrue(words[index] >= 0 && words[index] < 256, "code " + index);
+            codes[index] = (byte) words[index];
+        }
+        var expected = stlWords(reference);
+        var decoded = decode(codec, ChannelLayout.MONO, codes)[0];
+        assertEquals(expected.length, decoded.length);
+        for (var index = 0; index < expected.length; index++) {
+            assertEquals(expected[index], Math.round(decoded[index] * 32768f), "sample " + index);
+        }
+    }
 }

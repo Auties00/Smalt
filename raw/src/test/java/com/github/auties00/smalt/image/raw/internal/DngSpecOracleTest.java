@@ -37,12 +37,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the staggered photosites of the Fujifilm SuperCCD (rendered like the converter's preview), and the four-color
  * Canon PowerShot G1 CRW and Nikon E5700 NEF files, whose cameras have no color matrices, decoded raw, rendered by
  * default with the fitted matrix and rendered with the converter's matrix. The oracle files are those {@code tools/testdata/raw-oracle.py} writes into
- * {@code <conformance cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory); the tests are
+ * {@code <test cache>/raw-oracle} ({@code -Dsmalt.test.rawOracle} overrides the directory); the tests are
  * skipped without them.
  */
 class DngSpecOracleTest {
     private static final Path ORACLE = Path.of(System.getProperty("smalt.test.rawOracle",
-            Conformance.directory().resolve("raw-oracle").toString()));
+            Conformance.cache("raw-oracle").toString()));
 
     private static final int GRID_WIDTH = 48;
 
@@ -216,7 +216,7 @@ class DngSpecOracleTest {
     void fourColorWithoutMatrices(RawSamples sample) {
         var name = sample.fileName();
         var dng = oracle(name.substring(0, name.lastIndexOf('.')));
-        try (var vendor = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
+        try (var vendor = MediaSource.of(sample.path()); var oracle = MediaSource.of(dng)) {
             var info = RawDecoder.info(vendor);
             assertTrue(info.unsupportedFeature().isEmpty(), info.unsupportedFeature().orElse(""));
             assertTrue(info.isColorCalibrated());
@@ -287,7 +287,7 @@ class DngSpecOracleTest {
     void fourColorChroma(RawSamples sample) {
         var name = sample.fileName();
         var dng = oracle(name.substring(0, name.lastIndexOf('.')));
-        try (var vendor = MediaSource.of(sample.fetch()); var oracle = MediaSource.of(dng)) {
+        try (var vendor = MediaSource.of(sample.path()); var oracle = MediaSource.of(dng)) {
             var preview = FourColorMatricesTest.grid(Images.decode(MediaSource.of(RawDecoder.extractPreview(vendor)
                     .orElseThrow())).picture());
             var color = RawParser.parse(oracle, MediaLimits.DEFAULT).color;
@@ -328,7 +328,7 @@ class DngSpecOracleTest {
     @Test
     @DisplayName("the ProfileGainTableMap of an iPhone 12 Pro ProRAW file brings the rendering closer to the camera's")
     void gainTableMap() {
-        try (var source = MediaSource.of(RawSamples.DNG_IPHONE_12_PRO.fetch())) {
+        try (var source = MediaSource.of(RawSamples.DNG_IPHONE_12_PRO.path())) {
             var file = RawParser.parse(source, MediaLimits.DEFAULT);
             var map = file.color.gainTableMap;
             assertTrue(map != null, "no gain table map");

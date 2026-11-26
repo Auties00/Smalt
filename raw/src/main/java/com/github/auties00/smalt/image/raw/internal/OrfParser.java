@@ -19,7 +19,8 @@ import java.util.Arrays;
  * 16-byte little-endian block (the high-resolution shots); or 16-bit words, which the oldest models
  * fill with 12-bit samples shifted left by four (or, on the E-10, 10-bit samples shifted left by
  * six). The maker note starts with {@code OLYMPUS\0} and a
- * byte order mark, its offsets relative to its start, or on the oldest models with
+ * byte order mark, or on the OM System models with {@code OM SYSTEM}, three zero bytes and a byte order mark
+ * (its first directory 16 bytes in), its offsets relative to its start, or on the oldest models with
  * {@code OLYMP\0} and a version, its offsets relative to the file's TIFF header. It points to the
  * image processing directory (tag {@code 0x2040}) with {@code WB_RBLevels} ({@code 0x0100}, red
  * and blue over 256), {@code ColorMatrix} ({@code 0x0200}, camera to sRGB over 256),
@@ -237,6 +238,17 @@ final class OrfParser {
     }
 
     /**
+     * The signature of the maker notes of the OM System cameras, followed by three zero bytes, the byte order and the
+     * version, before their first directory.
+     */
+    private static final byte[] OM_SYSTEM = "OM SYSTEM".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+    /**
+     * The size of the header of an OM System maker note, at whose end its first directory starts.
+     */
+    private static final int OM_SYSTEM_HEADER = 16;
+
+    /**
      * Finds a directory the maker note points to, such as the camera settings ({@code 0x2020}) or
      * the image processing ({@code 0x2040}) directory.
      *
@@ -253,18 +265,22 @@ final class OrfParser {
             return null;
         }
         var reader = tree.first.reader();
-        var head = new byte[12];
-        if (reader.readAvailable(position, head, 0, 12) < 12 || head[0] != 'O' || head[1] != 'L' || head[2] != 'Y'
-                || head[3] != 'M' || head[4] != 'P') {
+        var head = new byte[OM_SYSTEM_HEADER];
+        var read = reader.readAvailable(position, head, 0, head.length);
+        var omSystem = read == head.length && java.util.Arrays.equals(head, 0, OM_SYSTEM.length, OM_SYSTEM, 0,
+                OM_SYSTEM.length);
+        if (!omSystem && (read < 12 || head[0] != 'O' || head[1] != 'L' || head[2] != 'Y' || head[3] != 'M'
+                || head[4] != 'P')) {
             return null;
         }
-        var modern = head[5] == 'U' && head[6] == 'S';
+        var modern = omSystem || head[5] == 'U' && head[6] == 'S';
         if (!modern && head[5] != 0) {
             return null;
         }
         try {
-            var note = modern ? reader.with(position, head[8] == 'I') : reader;
-            var directory = note.directory(modern ? 12 : position + 8 - reader.base());
+            var note = omSystem ? reader.with(position, head[12] == 'I') : modern ? reader.with(position, head[8] == 'I')
+                    : reader;
+            var directory = note.directory(omSystem ? OM_SYSTEM_HEADER : modern ? 12 : position + 8 - reader.base());
             var type = directory.type(tag);
             if (type == 0) {
                 return null;

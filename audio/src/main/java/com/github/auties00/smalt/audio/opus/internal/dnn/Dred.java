@@ -344,6 +344,34 @@ public final class Dred {
     }
 
     /**
+     * Entropy decodes redundancy coded at one quantizer level for every latent, the form of the DRED decoding test
+     * vectors of draft-ietf-mlcodec-opus-dred ({@code fargan_demo -dred-decoding} of libopus): the initial state,
+     * then one latent for each pair of 20 ms chunks, newest first, all at the level {@code q0}.
+     *
+     * @param bytes the buffer holding the coded redundancy
+     * @param offset the index of its first byte
+     * @param numBytes its length
+     * @param q0 the quantizer level of the state and of every latent
+     * @param chunks the number of 20 ms chunks the redundancy covers
+     * @return the number of decoded latents
+     */
+    int ecDecodeFixed(byte[] bytes, int offset, int numBytes, int q0, int chunks) {
+        ec.init(bytes, offset, numBytes);
+        decodeLatents(state, 0, DredStats.DRED_STATE_QUANT_SCALES_Q8, DredStats.DRED_STATE_R_Q8,
+                DredStats.DRED_STATE_P0_Q8, q0 * STATE_DIM, STATE_DIM);
+        var count = 0;
+        for (var i = chunks - 1; i >= 0 && count < NUM_REDUNDANCY_FRAMES / 2; i -= 2) {
+            decodeLatents(latents, count * LATENT_DIM, DredStats.DRED_LATENT_QUANT_SCALES_Q8,
+                    DredStats.DRED_LATENT_R_Q8, DredStats.DRED_LATENT_P0_Q8, q0 * LATENT_DIM, LATENT_DIM);
+            count++;
+        }
+        dredOffset = 0;
+        processStage = 1;
+        nbLatents = count;
+        return count;
+    }
+
+    /**
      * Parses the DRED of a packet ({@code opus_dred_parse}) and, unless deferred, computes its features.
      *
      * @param decoder the network that computes the features

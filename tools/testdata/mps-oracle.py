@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Writes the oracle files of smalt-mpeg's MpegSurroundTest into <conformance cache>/mps-oracle.
+"""Writes the oracle files of smalt-mpeg's MpegSurroundTest into <cache>/mps-oracle (SMALT_CACHE,
+default ~/.smalt/cache).
 
 The MPEG Surround (ISO/IEC 23003-1) conformance streams are not public, so the oracle is the MPEG Surround decoder
 of the ISO/IEC 23003-3 reference software (mp4spatialdec, the full 23003-1 decoder: every tree, residual coding,
@@ -429,8 +430,7 @@ def main():
     work = os.path.abspath(sys.argv[1])
     os.makedirs(work, exist_ok=True)
     mpsref, tables = build(work)
-    directory = os.path.join(testdata.conformance_dir(), 'mps-oracle')
-    os.makedirs(directory, exist_ok=True)
+    directory = testdata.cache_dir('mps-oracle')
     subprocess.check_call([sys.executable, '-I', os.path.join(SOURCES, 'mpsgen.py'), tables, directory])
     cases = sorted(name[:-3] for name in os.listdir(directory) if name.endswith('.bs') and not name.startswith('enc'))
     source = os.path.join(work, 'surround.wav')

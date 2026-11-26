@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisplayName("j420 raw frames against the MPEG-4 Part 2 coding of the same sequence")
 class RawJ420CrossCheckTest {
     private static List<YuvPicture> decode(String name, Codec codec, int frames) throws IOException {
-        var data = Files.readAllBytes(Conformance.fetchListed(name));
+        var data = Files.readAllBytes(Conformance.vector(name));
         var pictures = new ArrayList<YuvPicture>();
         try (var demuxer = Containers.openDemuxer(MediaSource.of(data))) {
             var track = (VideoTrack) demuxer.tracks().stream().filter(t -> t.codec().kind() == TrackKind.VIDEO)

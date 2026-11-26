@@ -37,9 +37,8 @@ class QualityTest {
     private static final int FRAMES = 60;
     private static final int FPS = 30;
 
-    /** The Xiph "foreman" CIF clip (ITU-T/COST test sequence), pinned by hash. */
-    private static final String FOREMAN_URL = "https://media.xiph.org/video/derf/y4m/foreman_cif.y4m";
-    private static final String FOREMAN_SHA256 = "b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b";
+    /** The vector of the Xiph "foreman" CIF clip (ITU-T/COST test sequence). */
+    private static final String FOREMAN = "foreman_cif.y4m";
 
     private static Path source(String name) {
         var input = switch (name) {
@@ -47,7 +46,7 @@ class QualityTest {
             case "mandelbrot" -> List.of("-f", "lavfi", "-i", "mandelbrot=size=" + WIDTH + "x" + HEIGHT + ":rate=" + FPS);
             case "bars" -> List.of("-f", "lavfi", "-i", "smptehdbars=size=" + WIDTH + "x" + HEIGHT + ":rate=" + FPS
                     + ",noise=alls=12:allf=t");
-            case "foreman" -> List.of("-i", Conformance.fetch("foreman_cif.y4m", FOREMAN_URL, FOREMAN_SHA256).toString(),
+            case "foreman" -> List.of("-i", Conformance.vector(FOREMAN).toString(),
                     "-vf", "scale=" + WIDTH + ":" + HEIGHT);
             default -> throw new IllegalArgumentException(name);
         };

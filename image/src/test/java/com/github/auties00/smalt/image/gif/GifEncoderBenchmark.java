@@ -4,6 +4,7 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.ops.Dithering;
 import com.github.auties00.smalt.image.ops.QuantizeMethod;
 import com.github.auties00.smalt.image.png.ApngEncoder;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -24,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Measures single-threaded GIF and APNG encoding of natural video: 30 frames of the Xiph
- * {@code foreman} CIF sequence (352x288) when {@code ~/.smalt/cache/clips/foreman.yuv} exists,
+ * {@code foreman} CIF sequence (352x288) when {@code foreman.yuv} exists in {@code Conformance.clips()},
  * else of ffmpeg's {@code testsrc2}. The frames are also written to
  * {@code target/media-fixtures} as raw RGBA, so the ffmpeg comparison encodes the same pixels:
  * {@snippet :
@@ -52,8 +53,7 @@ public class GifEncoderBenchmark {
 
     /** Returns the raw RGBA frames, generating them with ffmpeg on first use. */
     public static Path rawFrames() {
-        var clip = Path.of(System.getProperty("smalt.test.clips", System.getProperty("user.home") + "/.smalt/cache/clips"),
-                "foreman.yuv");
+        var clip = Conformance.clips().resolve("foreman.yuv");
         var input = Files.isRegularFile(clip)
                 ? List.of("-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", WIDTH + "x" + HEIGHT, "-i", clip.toString())
                 : List.of("-f", "lavfi", "-i", "testsrc2=size=" + WIDTH + "x" + HEIGHT + ":rate=30");

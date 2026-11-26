@@ -301,7 +301,7 @@ class MrwParserTest {
     @Test
     @DisplayName("describes a DiMAGE 5 file: APEX shot values and the maker note preview")
     void dimage5() {
-        try (var source = MediaSource.of(RawSamples.MRW_DIMAGE_5.fetch())) {
+        try (var source = MediaSource.of(RawSamples.MRW_DIMAGE_5.path())) {
             var info = RawDecoder.info(source);
             assertEquals("Minolta Co., Ltd.", info.make().orElseThrow());
             assertEquals("2025:01:04 10:23:44", info.captureTimeText().orElseThrow());
@@ -319,7 +319,7 @@ class MrwParserTest {
     @Test
     @DisplayName("describes a Dynax 7D file: the EXIF shot and the letterboxed preview the maker note points to")
     void dynax7d() {
-        try (var source = MediaSource.of(RawSamples.MRW_DYNAX_7D.fetch())) {
+        try (var source = MediaSource.of(RawSamples.MRW_DYNAX_7D.path())) {
             var info = RawDecoder.info(source);
             assertEquals("KONICA MINOLTA", info.make().orElseThrow());
             assertEquals("2010:07:29 11:43:16", info.captureTimeText().orElseThrow());

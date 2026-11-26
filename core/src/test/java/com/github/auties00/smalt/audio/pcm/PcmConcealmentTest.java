@@ -148,4 +148,72 @@ class PcmConcealmentTest {
         assertTrue(first > 0 && first < 0x1p-15f, "a one-frame packet after a muted loss fades in from silence: "
                 + first);
     }
+
+    @ParameterizedTest(name = "{1}")
+    @CsvSource({"g711iplc-stl-fe10.g192, g711iplc-stl-f2_10.raw", "g711iplc-stl-fe10_2.g192, g711iplc-stl-f2_10_2.raw",
+            "g711iplc-stl-fe10.g192, g711iplc-stl-f2_10m.raw", "g711iplc-stl-fe10_2.g192, g711iplc-stl-f2_10_2m.raw"})
+    @DisplayName("conceals the ITU-T STL G.711 Appendix I speech, every sample outside the concealed windows the reference's")
+    void stlReference(String pattern, String reference) throws Exception {
+        // the STL's g711iplc conceals 10 ms frames of 16-bit speech at 8 kHz; the G.192 pattern (0x6B21 a frame
+        // received, 0x6B20 erased) repeats over the input
+        var input = PcmDecoderTest.stlWords("g711iplc-stl-f2.le");
+        var flags = PcmDecoderTest.stlWords(pattern);
+        var expected = PcmDecoderTest.stlWords(reference);
+        var frame = 80;
+        var track = com.github.auties00.smalt.track.AudioTrack.builder().id(0).codec(Codec.PCM_S16LE)
+                .timeBase(com.github.auties00.smalt.track.Rational.timeBaseOf(8000)).sampleRate(8000)
+                .layout(ChannelLayout.MONO).build();
+        var output = new java.util.ArrayList<Float>();
+        try (var decoder = new PcmDecoder(track)) {
+            for (var index = 0; index * frame < input.length; index++) {
+                java.util.function.Consumer<com.github.auties00.smalt.audio.AudioBuffer> sink = buffer -> {
+                    for (var at = 0; at < buffer.frames(); at++) {
+                        output.add(buffer.plane(0)[at]);
+                    }
+                };
+                if (flags[index % flags.length] == 0x6B20) {
+                    decoder.conceal(frame, sink);
+                } else {
+                    var bytes = new byte[frame * 2];
+                    for (var at = 0; at < frame; at++) {
+                        bytes[2 * at] = (byte) input[index * frame + at];
+                        bytes[2 * at + 1] = (byte) (input[index * frame + at] >> 8);
+                    }
+                    decoder.decode(new com.github.auties00.smalt.track.Packet(0, bytes, (long) index * frame,
+                            (long) index * frame, frame, true), sink);
+                }
+            }
+        }
+        assertEquals(expected.length, output.size());
+        // the reference delays its output by 3.75 ms and overlaps the last 3.75 ms before a loss and up to 10 ms
+        // after it with the synthesized signal; ours conceals without delay, so the samples outside those windows
+        // must be the reference's exactly, and the concealed frames must carry the speech's level
+        var excluded = new boolean[expected.length];
+        for (var index = 0; index * frame < expected.length; index++) {
+            if (flags[index % flags.length] == 0x6B20) {
+                var from = Math.max(0, index * frame - 30);
+                var to = Math.min(expected.length, (index + 2) * frame);
+                java.util.Arrays.fill(excluded, from, to, true);
+            }
+        }
+        var compared = 0;
+        for (var index = 0; index < expected.length; index++) {
+            if (!excluded[index]) {
+                assertEquals(expected[index], Math.round(output.get(index) * 32768f), "sample " + index);
+                compared++;
+            }
+        }
+        assertTrue(compared > expected.length * 3 / 4, compared + " samples compared");
+        for (var index = 0; index * frame < expected.length; index++) {
+            if (flags[index % flags.length] == 0x6B20) {
+                double ours = 0;
+                double theirs = 0;
+                for (var at = index * frame; at < Math.min(expected.length, (index + 1) * frame); at++) {
+                    ours += Math.abs(output.get(at));
+                    theirs += Math.abs(expected[at] / 32768.0);
+                }
+                assertTrue(theirs == 0 || ours > 0, "frame " + index + " is concealed with silence");
+            }
+        }
+    }
 }

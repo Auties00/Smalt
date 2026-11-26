@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 @DisplayName("VP9 conformance (libvpx test vectors)")
 class Vp9ConformanceTest {
     static Stream<String> vectors() {
-        return Vp9Vectors.SHA256.keySet().stream();
+        return Vp9Vectors.NAMES.stream();
     }
 
     // vp90-2-13-largescaling has a 31680x128 frame, wider than the default limits allow.

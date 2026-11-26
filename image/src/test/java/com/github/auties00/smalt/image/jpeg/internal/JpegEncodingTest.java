@@ -366,7 +366,7 @@ class JpegEncodingTest {
     @DisplayName("the ITU-T T.83 compliance stream P1")
     class Compliance {
         static byte[] entry(String name) {
-            var archive = Conformance.fetchListed("itu-t83-data-files.zip");
+            var archive = Conformance.vector("itu-t83-data-files.zip");
             try (var zip = new ZipFile(archive.toFile())) {
                 try (var input = zip.getInputStream(zip.getEntry(name))) {
                     return input.readAllBytes();

@@ -338,8 +338,9 @@ final class MetadataReader {
     /**
      * Decodes the value of a {@code data} atom.
      *
-     * <p>Type 0 is an integer in an iTunes item, whose atom implies its type, and binary data in keyed metadata;
-     * the fixed-width integer types 65 to 67 and 74 to 78 of keyed metadata are read too.
+     * <p>Type 0 is an integer in an iTunes item, whose atom implies its type, text in a freeform ({@code ----})
+     * item, whose values are strings (encoders such as qaac write the {@code iTunSMPB} gapless tag so), and binary
+     * data in keyed metadata; the fixed-width integer types 65 to 67 and 74 to 78 of keyed metadata are read too.
      *
      * @param itemType the type of the enclosing item
      * @param body the atom payload
@@ -352,6 +353,9 @@ final class MetadataReader {
         var length = body.remaining();
         if (keyed && type == 0) {
             return null;
+        }
+        if (type == 0 && itemType == BoxTypes.FREEFORM) {
+            return body.string(length);
         }
         if (type >= 65 && type <= 78) {
             var width = switch (type) {

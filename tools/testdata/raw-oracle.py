@@ -8,19 +8,16 @@ PEF variants, Canon mRAW and sRAW, Canon CRW, Canon CR3, interlaced Coolpix NEF,
 area and the rendering of the Sigma X3F samples it converts (DP1, SD14, SD15), re-derive the Olympus compression and
 Panasonic's raw format version 4 from witness samples, and compare the rendering of the
 converter's four-color DNG files with the previews it renders into them (Canon PowerShot G1, Nikon
-E5700, Sony DSC-F828), render the staggered photosites of two Fujifilm SuperCCD cameras (FinePix S2Pro and
-S6500fd) against the previews the converter renders into their DNG files, and check RafOracleTest's Fujifilm RAF
-decoding photosite for photosite: compressed files of X-Trans and GFX cameras, the bare sensor words of the FinePix
-S-series and compacts (SuperCCD, transposed or not, the F700's rows of two images in turn, and Bayer) and the 12-bit
-packings of the FinePix compacts with EXR and other CMOS sensors (F550EXR, F770EXR, X10, S1, SL1000, HS10, and the
-EXR HR and DR files of the F600EXR, F900EXR and HS20EXR, an S200EXR file in EXR HR mode and an X10 file in EXR SN
-mode). The F700, E550, E900, S5600, HS10, F600EXR, F900EXR and HS20EXR samples of raw.pixls.us and the S200EXR and
-X10 samples of rawsamples.ch and the Mamiya ZD sample of raw.pixls.us are licensed CC BY-NC-SA 4.0
-(tools/testdata/licences.tsv); like every sample they are only downloaded into the local cache for testing, never
-committed or redistributed. This script produces those values: it downloads Adobe DNG
+E5700, Sony DSC-F828), render the staggered photosites of a Fujifilm SuperCCD camera (FinePix S6500fd) against
+the preview the converter renders into its DNG file, and check RafOracleTest's Fujifilm RAF decoding photosite for
+photosite: compressed files of X-Trans and GFX cameras, the bare sensor words of the FinePix S-series (SuperCCD,
+transposed or not, and Bayer), the 12-bit packing of the FinePix S1 and an X10 file in EXR SN mode. The X10 sample
+of rawsamples.ch and the Mamiya ZD sample of raw.pixls.us are licensed CC BY-NC-SA 4.0
+(tools/testdata/licences.tsv); like every sample they are part of the project's hosted test data and
+never committed to the repository. This script produces those values: it downloads Adobe DNG
 Converter 18.0 for Windows and innoextract 1.9 (both pinned by SHA-256), extracts the converter
 without installing it, and runs it as a black box on each sample, writing an uncompressed DNG file
-(-u) per sample into <conformance cache>/raw-oracle, where the tests look by default
+(-u) per sample into <cache>/raw-oracle (SMALT_CACHE, default ~/.smalt/cache), where the tests look by default
 (-Dsmalt.test.rawOracle overrides it). For the samples of JXL_SAMPLES it also writes <stem>-jxl.dng, a DNG 1.7 file
 with the sensor data in lossless JPEG XL tiles stored as four interleaved subimages (RowInterleaveFactor and
 ColumnInterleaveFactor 2), JPEG XL previews and the reduced-resolution linear raw previews of fast load data
@@ -31,18 +28,14 @@ SHA-256 of its values over the whole image (little-endian 16-bit words, row by r
 which RafOracleTest uses to place the image in the decoded one. For the Fujifilm samples of two images per photosite
 (LINEAR_SAMPLES) it also converts each into a demosaiced linear DNG (-u -l) and keeps a <stem>.linear crop of its
 image instead, the window (1536 by 1024 pixels at most) holding the most pixels at or above the 99th percentile of
-the brightest channel, or, for the EXR HR files, the centered one: the magic "SMALTLIN", then as little-endian 32-bit integers the version 1, the width and height
+the brightest channel, or, for a sample marked center, the centered one: the magic "SMALTLIN", then as little-endian 32-bit integers the version 1, the width and height
 of the linear image and the left, top, width and height of the crop, then the crop's red, green and blue values as
-little-endian 16-bit words, pixel by pixel and row by row. RafOracleTest compares the merged and interleaved photosites
-with them. Of the FinePix F710 and F810 no file is published, so it converts copies of the F700 and E550 samples
-named after them (RENAMED_SAMPLES, <stem>.dng each), which RafOracleTest compares photosite for photosite as it does
-the samples, and checks that the converter refuses the swapped copies (REFUSED_SAMPLES, the E550's file named F710
-and the F700's named F810, a <stem>.refused file each): its entries of the two models read their siblings' layouts and
-no other. The sample files are fetched first when the cache lacks them.
+little-endian 16-bit words, pixel by pixel and row by row. RafOracleTest compares the merged photosites with them.
+The sample files are read from the hosted test data (SMALT_TESTDATA, see tools/testdata/README.md).
 
 With --coverage it instead converts every ORF sample of vectors.tsv and every RW2 or RWL sample of
 raw format version 4 (about 160 files; the DNG files take about 6 GB) into
-<conformance cache>/raw-oracle-coverage, which RawOracleCoverageTest checks photosite for
+<cache>/raw-oracle-coverage, which RawOracleCoverageTest checks photosite for
 photosite (-Dsmalt.test.rawCoverage overrides the directory), and every Sony ARW sample of vectors.tsv (one per
 camera model) into a <stem>.levels file there, whose black and white levels and white balance VendorOracleTest
 checks.
@@ -55,7 +48,7 @@ Panasonic models. The converter is free to download and use; nothing of it is re
 For the samples of VENDOR_SAMPLES (the Samsung SRW, Epson ERF, GoPro GPR, Hasselblad 3FR and FFF, Leaf MOS,
 Mamiya MEF and Kodak DCR, KDC and TIFF files, the packed DSLR-A900 ARW file, the DSLR-A450 and A700 cRAW files, the
 variable-length ARW files of the DSLR-A100 to A390, and the uncompressed Panasonic RAW files of the oldest models)
-and the copies of samples with bytes changed (PATCHED_SAMPLES: a Minolta DiMAGE A2 file whose
+and the copies of samples with bytes changed (PATCHED_SAMPLES: a Minolta Dynax 7D file whose
 Bayer pattern byte is set to 4, and Mamiya ZD files with other white balance values), it keeps instead of the DNG file a
 <stem>.photosites summary and a <stem>.levels file, and for the samples of CURVE_SAMPLES (the lossy Nikon NEF
 files and the 8-bit Kodak EOS DCS 3 file, whose photosites the summary cannot hold) only the
@@ -66,8 +59,8 @@ columns, rows and colors), the black levels (black, the repeat's rows and column
 levels (white), the as-shot neutral (neutral) and the linearization table (linearization, its length, then its
 entries); VendorOracleTest compares the decoder with them.
 
-The samples of GAP_SAMPLES (the sRAW and mRAW files of 16 Canon bodies, Pentax files and Panasonic files of raw
-format versions 6, 7 and 8) are kept as <stem>.photosites summaries, the Panasonic files with a <stem>.levels file too,
+The samples of GAP_SAMPLES (the mRAW file of a Canon body and Panasonic files of raw format versions 6, 7 and 8)
+are kept as <stem>.photosites summaries, the Panasonic files with a <stem>.levels file too,
 and so are the copies of PATCHED_SAMPLES that rename the Huffman table tag of Pentax files or change the version 8
 parameters of a Panasonic file, and the copies
 of CODE_COPIES, CRW files whose streams use every code of their table sets, which the script builds as the raw
@@ -80,9 +73,7 @@ of the four corners, the center and the first and last rows) and a <stem>.levels
 Naming sample files converts only those (for example the MRW samples of SAMPLES), leaving the other
 oracle files in place.
 
-A sample whose host cannot serve it is skipped, and the names of the skipped samples are written to UNAVAILABLE in
-the output directory (which a run of every sample removes when none is skipped), so CI does not cache an incomplete
-set of oracle files.
+A sample missing from the hosted test data stops the script.
 
     python tools/testdata/raw-oracle.py [--coverage] [sample ...]
 """
@@ -96,6 +87,7 @@ import tempfile
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import oracles  # noqa: E402
 import testdata  # noqa: E402
 
 CONVERTER_URL = 'https://download.adobe.com/pub/adobe/dng/win/AdobeDNGConverter_x64_18_0.exe'
@@ -106,8 +98,6 @@ INNOEXTRACT_SHA256 = '6989342c9b026a00a72a38f23b62a8e6a22cc5de69805cf47d68ac2fec
 SAMPLES = [
     'rawpixls-canon-eos-40d-sraw2-sraw-3-2.cr2',
     'rawpixls-canon-eos-5d-mark-iii-sraw2-sraw.cr2',
-    'rawpixls-canon-eos-7d-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-7d-sraw2-sraw-3-2.cr2',
     'rawpixls-canon-eos-10d-raw-3-2-3164.crw',
     'rawpixls-canon-eos-10d-raw-3-2-3165.crw',
     'rawpixls-canon-eos-10d-raw-3-2.crw',
@@ -119,21 +109,11 @@ SAMPLES = [
     'rawpixls-canon-powershot-g1-raw-4-3.crw',
     'rawpixls-canon-powershot-g5-raw-4-3.crw',
     'rawpixls-canon-powershot-g6-raw-4-3.crw',
-    'rawpixls-minolta-alpha-7-digital-3-2-3919.mrw',
-    'rawpixls-minolta-alpha-7-digital-3-2-7778.mrw',
-    'rawpixls-minolta-alpha-sweet-digital-3-2.mrw',
     'rawpixls-minolta-dimage-5-4-3.mrw',
-    'rawpixls-minolta-dimage-a2-4-3.mrw',
-    'rawpixls-minolta-dynax-5d-3-2.mrw',
     'rawpixls-minolta-dynax-7d-3-2.mrw',
-    'rawpixls-minolta-maxxum-7d-3-2.mrw',
-    'rawpixls-nikon-coolpix-e8800-12bit-12bit-uncompressed-4-3.nef',
     'rawpixls-nikon-e5700-12bit-12bit-uncompressed-4-3.nef',
     'rawpixls-nikon-e8400-12bit-12bit-uncompressed-4-3.nef',
-    'rawpixls-olympus-c5060wz-12bit-4-3.orf',
-    'rawpixls-olympus-e-1-16bit-4-3.orf',
     'rawpixls-olympus-e-10-16bit-4-3.orf',
-    'rawpixls-olympus-e-400-16bit-4-3.orf',
     'rawpixls-olympus-e-410-16bit-4-3.orf',
     'rawpixls-olympus-e-m1-16bit-4-3.orf',
     'rawpixls-olympus-e-m10-16bit-4-3.orf',
@@ -147,9 +127,7 @@ SAMPLES = [
     'rawpixls-pentax-ist-dl-12bit-3-2.pef',
     'rawpixls-pentax-k-3-mark-iii-monochrome-14bit-3-2.pef',
     'rawpixls-pentax-k-5-14bit-3-2.pef',
-    'rawpixls-pentax-k-s1-12bit-3-2.pef',
     'rawpixls-panasonic-dc-g9-4-3-2348.rw2',
-    'rawpixls-panasonic-dc-g9m2-4-3-6999.rw2',
     'rawpixls-panasonic-dc-gh5s-4-3-2603.rw2',
     'rawpixls-panasonic-dc-s1-3-2.rw2',
     'rawpixls-panasonic-dc-s5m2-14bit-3-2-7790.rw2',
@@ -157,161 +135,58 @@ SAMPLES = [
     'rawpixls-panasonic-dmc-gh1-1-1.rw2',
     'rawpixls-panasonic-dmc-lx3-1-1.rw2',
     'rawpixls-sony-dsc-f828-4-3.srf',
-    'rawpixls-fujifilm-finepix-s2pro-3-2.raf',
     'rawpixls-fujifilm-finepix-s6500fd-4-3.raf',
-    'rawpixls-fujifilm-finepix-s3pro-3-2.raf',
     'rawpixls-fujifilm-finepix-s5pro-3-2.raf',
     'rawpixls-fujifilm-finepix-s5000-4-3.raf',
-    'rawpixls-fujifilm-finepix-s5200-4-3.raf',
-    'rawpixls-fujifilm-finepix-s5500-4-3.raf',
-    'rawpixls-fujifilm-finepix-s6000fd-4-3.raf',
-    'rawpixls-fujifilm-finepix-s7000-4-3.raf',
-    'rawpixls-fujifilm-finepix-s9500-4-3.raf',
-    'rawpixls-fujifilm-finepix-s9600-4-3.raf',
     'rawpixls-fujifilm-finepix-s100fs-4-3.raf',
-    'rawpixls-fujifilm-finepix-s200exr-4-3.raf',
     'rawpixls-fujifilm-x-t2-14bit-14bit-compressed-3-2.raf',
     'rawpixls-fujifilm-x-t4-14bit-14bit-lossless-compressed-3-2.raf',
-    'rawpixls-fujifilm-x-e5-14bit-lossless-compressed-3-2.raf',
     'rawpixls-fujifilm-gfx50s-ii-14bit-14bit-compressed-lossless-4-3.raf',
     'rawpixls-fujifilm-gfx50s-ii-14bit-14bit-compressed-4-3.raf',
-    'rawpixls-fujifilm-x-t4-14bit-14bit-compressed-3-2.raf',
-    'rawpixls-fujifilm-x-e5-14bit-lossy-compressed-3-2.raf',
-    'rawpixls-fujifilm-finepix-f550exr-12bit-12bit-uncompressed-4-3.raf',
-    'rawpixls-fujifilm-finepix-f770exr-12bit-12bit-uncompressed-4-3.raf',
-    'rawpixls-fujifilm-finepix-x10-12bit-12bit-uncompressed-4-3.raf',
     'rawpixls-fujifilm-finepix-s1-12bit-12bit-uncompressed-4-3.raf',
-    'rawpixls-fujifilm-finepix-sl1000-12bit-12bit-uncompressed-4-3.raf',
-    'rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf',
-    'rawpixls-fujifilm-gfx100s-16bit-16bit-lossless-compressed-4-3.raf',
-    'rawpixls-fujifilm-gfx100-ii-16bit-16bit-compressed-4-3.raf',
-    'rawpixls-fujifilm-finepix-f700-double-width-16-bit-unpacked-little-endian-4-3.raf',
-    'rawpixls-fujifilm-finepix-e550-4-3.raf',
-    'rawpixls-fujifilm-finepix-e900-4-3.raf',
-    'rawpixls-fujifilm-finepix-s5600-4-3.raf',
-    'rawpixls-fujifilm-finepix-hs10-hs11-12bit-12bit-uncompressed-4-3.raf',
-    'rawpixls-fujifilm-finepix-f600exr-12bit-12bit-uncompressed-4-3.raf',
-    'rawpixls-fujifilm-finepix-f900exr-12bit-12bit-uncompressed-4-3.raf',
-    'rawpixls-fujifilm-finepix-hs20exr-12bit-12bit-uncompressed-4-3.raf',
-    'rawsamples-fujifilm-finepix-s200exr-hr.raf',
     'rawsamples-fujifilm-x10-sn.raf',
     'rawpixls-sigma-dp1-3-2-1116.x3f',
     'rawpixls-sigma-sigma-sd14-3-2-4462.x3f',
     'rawpixls-sigma-sigma-sd15-3-2-1863.x3f',
-    'rawpixls-canon-eos-1d-x-mark-iii-3-2.cr3',
-    'rawpixls-canon-eos-200d-mark-ii-3-2.cr3',
     'rawpixls-canon-eos-250d-c-raw-3-2.cr3',
     'rawpixls-canon-eos-250d-raw-3-2.cr3',
-    'rawpixls-canon-eos-850d-3-2.cr3',
     'rawpixls-canon-eos-90d-3-2.cr3',
-    'rawpixls-canon-eos-kiss-m-3-2.cr3',
-    'rawpixls-canon-eos-m200-craw-3-2.cr3',
-    'rawpixls-canon-eos-m200-raw-3-2.cr3',
-    'rawpixls-canon-eos-m50-3-2.cr3',
     'rawpixls-canon-eos-m50-craw-3-2.cr3',
-    'rawpixls-canon-eos-m50-mark-ii-3-2.cr3',
-    'rawpixls-canon-eos-m6-mark-ii-c-raw-3-2.cr3',
-    'rawpixls-canon-eos-m6-mark-ii-raw-3-2.cr3',
     'rawpixls-canon-eos-r-3-2.cr3',
-    'rawpixls-canon-eos-r10-3-2.cr3',
-    'rawpixls-canon-eos-r100-craw-3-2.cr3',
-    'rawpixls-canon-eos-r100-raw-3-2.cr3',
-    'rawpixls-canon-eos-r3-3-2.cr3',
     'rawpixls-canon-eos-r5-3-2.cr3',
-    'rawpixls-canon-eos-r5-mark-ii-craw-3-2.cr3',
-    'rawpixls-canon-eos-r5-mark-ii-raw-3-2.cr3',
     'rawpixls-canon-eos-r5-raw-1.6-crop-dual-pixel-3-2.cr3',
-    'rawpixls-canon-eos-r50-craw-3-2.cr3',
-    'rawpixls-canon-eos-r50-raw-3-2.cr3',
-    'rawpixls-canon-eos-r50-v-raw-3-2.cr3',
     'rawpixls-canon-eos-r6-3-2.cr3',
-    'rawpixls-canon-eos-r6-mark-ii-3-2.cr3',
-    'rawpixls-canon-eos-r6-mark-iii-craw-3-2.cr3',
     'rawpixls-canon-eos-r6-mark-iii-raw-3-2.cr3',
-    'rawpixls-canon-eos-r7-3-2.cr3',
-    'rawpixls-canon-eos-r8-3-2.cr3',
-    'rawpixls-canon-eos-rebel-sl3-3-2.cr3',
     'rawpixls-canon-eos-rp-3-2.cr3',
-    'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-1-1.cr3',
     'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-3-2.cr3',
     'rawpixls-canon-powershot-g5-x-mark-ii-raw-3-2.cr3',
     'rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3',
     'rawpixls-canon-powershot-sx70-hs-c-raw-3-2-3-2.cr3',
     'rawpixls-canon-powershot-sx70-hs-raw-3-2-3-2.cr3',
-    'rawpixls-canon-powershot-v1-craw-3-2.cr3',
 ]
 
 
 # kept as <stem>.photosites and <stem>.levels summaries instead of DNG files
 VENDOR_SAMPLES = [
-    'rawpixls-leica-digilux-3-4-3.raw',
     'rawpixls-panasonic-dmc-fz50-16-9.raw',
     'rawpixls-panasonic-dmc-fz8-4-3.raw',
     'rawpixls-panasonic-dmc-lx1-16-9.raw',
     'rawpixls-samsung-nx1-14bit-3-2.srw',
-    'rawpixls-samsung-nx200-12bit-3-2.srw',
-    'rawpixls-samsung-nx30-12bit-3-2.srw',
-    'rawpixls-samsung-nx3000-12bit-3-2.srw',
-    'rawpixls-samsung-ex1-14bit-4-3.srw',
-    'rawpixls-samsung-nx210-12bit-3-2.srw',
     'rawpixls-samsung-nx300-12bit-3-2.srw',
     'rawpixls-samsung-nx1000-12bit-3-2.srw',
     'rawpixls-samsung-nx500-12bit-12bit-normal-compression-3-2.srw',
-    'rawpixls-samsung-nx500-12bit-12bit-lossless-compression-3-2.srw',
-    'rawpixls-samsung-nx500-14bit-14bit-normal-compression-3-2.srw',
     'rawpixls-samsung-nx500-14bit-14bit-lossless-compression-3-2.srw',
     'rawpixls-samsung-nx-mini-12bit-3-2.srw',
-    'rawpixls-samsung-wb2000-14bit-4-3.srw',
-    'rawpixls-samsung-nx1100-12bit-3-2-4422.srw',
-    'rawpixls-samsung-nx1100-12bit-3-2-4423.srw',
-    'rawpixls-samsung-nx1100-12bit-3-2-4424.srw',
-    'rawpixls-samsung-nx2000-12bit-3-2.srw',
-    'rawpixls-samsung-nx20-12bit-3-2.srw',
-    'rawpixls-samsung-nx5-12bit-3-2.srw',
-    'rawpixls-samsung-nx10-12bit-3-2.srw',
-    'rawpixls-samsung-nx11-12bit-3-2.srw',
-    'rawpixls-samsung-nx3300-12bit-3-2.srw',
-    'rawpixls-samsung-ek-gn120-12bit-3-2.srw',
     'rawpixls-epson-r-d1-12bit-3-2.erf',
-    'rawpixls-epson-r-d1s-12bit-3-2.erf',
-    'rawpixls-epson-r-d1x-12bit-3-2.erf',
-    'rawpixls-gopro-hero5-black-16bit-4-3-936.gpr',
-    'rawpixls-gopro-hero5-black-16bit-4-3-1634.gpr',
-    'rawpixls-gopro-hero6-black-16bit-4-3-2556.gpr',
-    'rawpixls-gopro-hero6-black-16bit-4-3-2557.gpr',
-    'rawpixls-gopro-hero6-black-16bit-4-3-2558.gpr',
-    'rawpixls-gopro-hero7-black-16bit-4-3-2786.gpr',
-    'rawpixls-gopro-hero7-black-16bit-4-3-2846.gpr',
     'rawpixls-gopro-hero7-black-16bit-4-3-2908.gpr',
-    'rawpixls-gopro-hero8-black-16bit-4-3-3949.gpr',
-    'rawpixls-gopro-hero9-black-16bit-4-3.gpr',
-    'rawpixls-gopro-hero10-black-16bit-4-3-4883.gpr',
-    'rawpixls-gopro-hero10-black-16bit-4-3-4894.gpr',
-    'rawpixls-gopro-hero7-black-16bit-4-3-5766.gpr',
-    'rawpixls-gopro-hero8-black-16bit-4-3-5767.gpr',
-    'rawpixls-gopro-hero11-black-16bit-5-4.gpr',
-    'rawpixls-gopro-fusion-16bit-1-1-7370.gpr',
-    'rawpixls-gopro-fusion-16bit-1-1-7371.gpr',
     'rawpixls-hasselblad-h3d-16bit-4-3.3fr',
-    'rawpixls-hasselblad-hasselblad-h4d-16bit-4-3.3fr',
     'rawpixls-hasselblad-cfv-50c-16bit-4-3.3fr',
-    'rawpixls-hasselblad-x1d-16bit-4-3.3fr',
     'rawpixls-hasselblad-x1d-ii-50c-16bit-4-3.3fr',
-    'rawpixls-hasselblad-cfv-100c-16bit-4-3.3fr',
     'rawpixls-hasselblad-h4d-40-16bit-4-3.fff',
-    'rawpixls-hasselblad-cfv-50c-16bit-4-3-7199.fff',
-    'rawpixls-hasselblad-cfv-50c-16bit-4-3-7218.fff',
     'rawpixls-leaf-aptus-22-16bit-4-3-3197.mos',
-    'rawpixls-kodak-easyshare-z981.kdc',
-    'rawpixls-kodak-easyshare-z990-nan.kdc',
     'rawpixls-kodak-p880-nan.kdc',
-    'rawpixls-kodak-kodak-p712-zoom-digital-camera-nan.kdc',
     'rawpixls-kodak-dcs520c-12bit-3-2.tif',
     'rawpixls-kodak-dcs760c-12bit-3-2.dcr',
-    'rawpixls-kodak-dcs-pro-14n-12bit-3-2.dcr',
-    'rawpixls-kodak-dcs-pro-14nx-12bit-3-2.dcr',
-    'rawpixls-kodak-dcs-pro-slr-c-12bit-3-2.dcr',
-    'rawpixls-kodak-dcs-pro-slr-n-12bit-3-2.dcr',
     'rawpixls-sony-dslr-a900-12bit-12bit-compressed-3-2.arw',
     'rawpixls-sony-dslr-a450-12bit-12bit-compressed-3-2.arw',
     'rawpixls-sony-dslr-a700-8bit-8bit-compressed-3-2.arw',
@@ -330,56 +205,28 @@ VENDOR_SAMPLES = [
 # kept as <stem>.levels files instead of DNG files, for their linearization tables
 CURVE_SAMPLES = [
     'rawpixls-kodak-eos-dcs-3-8bit-4-3.tif',
-    'rawpixls-nikon-1-j1-12bit-12bit-compressed-lossy-type-2-3-2-1017.nef',
-    'rawpixls-nikon-coolpix-a-14bit-14bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d3-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d3-14bit-14bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d300-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d300s-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d3100-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d3s-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d4-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d5-14bit-14bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d500-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d5000-12bit-12bit-compressed-lossy-type-2-3-2-1341.nef',
     'rawpixls-nikon-d5600-12bit-12bit-compressed-lossy-type-2-3-2-2261.nef',
-    'rawpixls-nikon-d6-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d6-14bit-14bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d700-12bit-12bit-compressed-lossy-type-2-3-2.nef',
     'rawpixls-nikon-d7000-12bit-12bit-compressed-lossy-type-2-3-2.nef',
     'rawpixls-nikon-d7000-14bit-14bit-compressed-lossy-type-2-3-2-2578.nef',
     'rawpixls-nikon-d70s-12bit-12bit-compressed-lossy-type-1-3-2.nef',
-    'rawpixls-nikon-d750-14bit-14bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d780-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d780-14bit-14bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d810-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d850-14bit-14bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-d90-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-df-14bit-14bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-z-5-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-z-5-14bit-14bit-compressed-lossy-type-2-3-2.nef',
     'rawpixls-nikon-z-6-2-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-z-6-2-14bit-14bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-z-7-2-12bit-12bit-compressed-lossy-type-2-3-2.nef',
-    'rawpixls-nikon-z-7-2-14bit-14bit-compressed-lossy-type-2-3-2.nef',
 ]
 
-A2 = 'rawpixls-minolta-dimage-a2-4-3.mrw'
+DYNAX_7D = 'rawpixls-minolta-dynax-7d-3-2.mrw'
 
 # copies of samples with bytes changed, each the source sample and its (offset of a block name, offset within its
-# body, new byte) change: the DiMAGE A2 file with the Bayer pattern byte of its picture description (offset 23 of
+# body, new byte) change: the Dynax 7D file with the Bayer pattern byte of its picture description (offset 23 of
 # the PRD block's body) set to 4, the green-first pattern no CC0 file has; kept as summaries like VENDOR_SAMPLES
 PATCHED_SAMPLES = {
-    'patched-minolta-dimage-a2-gbrg.mrw': (A2, b'\0PRD', 23, 4),
+    'patched-minolta-dynax-7d-gbrg.mrw': (DYNAX_7D, b'\0PRD', 23, 4),
 }
 
 # copies of Pentax samples whose maker note tag 0x0220 (the Huffman table) is renamed 0x7FFF, at the offset of its
-# directory entry (in the maker note's byte order): files that embed the table the converter implies without one
-# (K10D), another table (K2000), and 14-bit data (K-70)
+# directory entry (in the maker note's byte order, big endian in both): a 12-bit file that embeds the table the
+# converter implies without one (K-x), and a 14-bit file of another table (K-5)
 for _name, _source, _offset, _value in (
-        ('k10d', 'rawpixls-pentax-k10d-12bit-12bit-compressed-3-2.pef', 1688, b'\x7f\xff'),
-        ('k2000', 'rawpixls-pentax-k2000-12bit-12bit-compressed-3-2.pef', 1796, b'\x7f\xff'),
-        ('k-70', 'rawpixls-pentax-k-70-14bit-3-2.pef', 1910, b'\xff\x7f')):
+        ('k-x', 'rawpixls-pentax-k-x-12bit-3-2.pef', 1700, b'\x7f\xff'),
+        ('k-5', 'rawpixls-pentax-k-5-14bit-3-2.pef', 1814, b'\x7f\xff')):
     PATCHED_SAMPLES[f'patched-pentax-{_name}-no-table.pef'] = (_source, None, _offset, _value)
 
 S5M2 = 'rawpixls-panasonic-dc-s5m2-14bit-3-2-7790.rw2'
@@ -433,44 +280,11 @@ JXL_SAMPLES = [
 
 JXL_FLAGS = ['-losslessJXL', '-jxl', '-p2', '-fl']
 
-# the sRAW and mRAW files of the other bodies, the Pentax files whose maker note table copies of PATCHED_SAMPLES
-# leave out, and Panasonic raw format versions 6 (12-bit data), 7 and 8 (a grid of tiles among them); kept as summaries
+# the mRAW file of a Canon body, and Panasonic raw format versions 6 (12-bit data), 7 and 8 (a grid of tiles among
+# them); kept as summaries
 GAP_SAMPLES = [
-    'rawpixls-canon-eos-1d-mark-iv-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-1d-mark-iv-sraw2-sraw-3-2.cr2',
-    'rawpixls-canon-eos-1d-x-mark-ii-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-1d-x-mark-ii-sraw2-sraw-3-2.cr2',
     'rawpixls-canon-eos-50d-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-50d-sraw2-sraw-3-2.cr2',
-    'rawpixls-canon-eos-5d-mark-ii-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-5d-mark-ii-sraw2-sraw-3-2.cr2',
-    'rawpixls-canon-eos-5d-mark-iii-sraw1-mraw.cr2',
-    'rawpixls-canon-eos-5d-mark-iv-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-5d-mark-iv-sraw2-sraw-3-2.cr2',
-    'rawpixls-canon-eos-5ds-r-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-5ds-r-sraw2-sraw-3-2.cr2',
-    'rawpixls-canon-eos-5ds-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-5ds-sraw2-sraw-3-2.cr2',
-    'rawpixls-canon-eos-60d-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-60d-sraw2-sraw-3-2.cr2',
-    'rawpixls-canon-eos-6d-mark-ii-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-6d-mark-ii-sraw2-sraw-3-2.cr2',
-    'rawpixls-canon-eos-6d-sraw1-mraw.cr2',
-    'rawpixls-canon-eos-6d-sraw2-sraw.cr2',
-    'rawpixls-canon-eos-70d-sraw1-mraw.cr2',
-    'rawpixls-canon-eos-70d-sraw2-sraw.cr2',
-    'rawpixls-canon-eos-7d-mark-ii-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-7d-mark-ii-sraw2-sraw-3-2.cr2',
-    'rawpixls-canon-eos-80d-sraw1-mraw-3-2.cr2',
-    'rawpixls-canon-eos-80d-sraw2-sraw-3-2.cr2',
-    'rawpixls-pentax-k-70-14bit-3-2.pef',
-    'rawpixls-pentax-k10d-12bit-12bit-compressed-3-2.pef',
-    'rawpixls-pentax-k2000-12bit-12bit-compressed-3-2.pef',
     'rawpixls-panasonic-dc-gh5m2-4-3-5082.rw2',
-    'rawpixls-panasonic-dc-gh7-4-3-8062.rw2',
-    'rawpixls-panasonic-dc-s1rm2-3-2-7723.rw2',
-    'rawpixls-panasonic-dc-s1rm2-3-2-7724.rw2',
-    'rawpixls-panasonic-dc-s5-3-2-4098.rw2',
     'rawpixls-panasonic-dc-s5-3-2-6339.rw2',
     'rawpixls-panasonic-dc-s9-3-2-7702.rw2',
 ]
@@ -480,10 +294,8 @@ SAMPLES += GAP_SAMPLES
 # Nikon HE and HE* files, whose DNG files the tests read only in part: each is kept as a <stem>.windows file (see
 # write_windows) and a <stem>.levels file
 WINDOW_SAMPLES = [
-    'rawpixls-iiq-p20-cf051544.iiq',
     'rawpixls-iiq-p20-cf051545.iiq',
     'rawpixls-iiq-p20-cf051552.tif',
-    'rawpixls-iiq-p20-cf051553.tif',
     'rawpixls-iiq-p25plus-cf028662.iiq',
     'rawpixls-iiq-p25plus-cf028663.iiq',
     'rawpixls-iiq-p25-cf082161.tif',
@@ -492,58 +304,29 @@ WINDOW_SAMPLES = [
     'rawpixls-iiq-h25-outdoor.iiq',
     'rawpixls-iiq-iq150-cf006803.iiq',
     'rawpixls-iiq-iq3-100mp-l.iiq',
-    'rawpixls-iiq-iq3-100mp-l16.iiq',
     'rawpixls-iiq-iq3-100mp-trichromatic.iiq',
     'rawpixls-iiq-iq4-150mp-l14.iiq',
-    'rawpixls-iiq-iq4-150mp-l16.iiq',
     'rawpixls-iiq-iq4-150mp-l16-ex.iiq',
-    'rawpixls-iiq-credo40-0001.iiq',
-    'rawpixls-iiq-credo40-0008.iiq',
     'rawpixls-iiq-credo40-cf003914.iiq',
     'rawpixls-iiq-p40plus-cf100602.iiq',
     'rawpixls-iiq-iq140-l.tif',
-    'rawpixls-iiq-iq180-9561.iiq',
     'rawpixls-iiq-iq180-9565.iiq',
     'rawpixls-iiq-p30-cf098736.tif',
     'rawpixls-iiq-p45plus-cf125838.iiq',
     'rawpixls-iiq-p45plus-cf125839.iiq',
     'rawpixls-iiq-p45-3809.tif',
     'rawpixls-iiq-p45-3810.tif',
-    'rawpixls-iiq-p65plus-cf027310.iiq',
-    'rawpixls-iiq-p65plus-cf027311.iiq',
     'rawpixls-iiq-p65plus-cf027312.iiq',
     'rawpixls-iiq-p65plus-cf027313.iiq',
-    'rawpixls-iiq-p65plus-cf028114.iiq',
     'rawpixls-iiq-p40plus-cf100585.iiq',
     'rawpixls-iiq-iq140-sensorplus-l.tif',
-    'rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5147.nef',
-    'rawpixls-nikon-z-9-8bit-8bit-compressed-3-2-5148.nef',
-    'rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6616.nef',
-    'rawpixls-nikon-z-8-8bit-8bit-compressed-3-2-6618.nef',
-    'rawpixls-nikon-z-f-8bit-8bit-lossy-compressed-3-2-6886.nef',
-    'rawpixls-nikon-z-f-8bit-8bit-lossy-compressed-3-2-6887.nef',
-    'rawpixls-nikon-z5-2-8bit-compressed-1-1-7735.nef',
-    'rawpixls-nikon-z5-2-8bit-compressed-16-9-7736.nef',
-    'rawpixls-nikon-z5-2-8bit-compressed-3-2-7737.nef',
-    'rawpixls-nikon-z5-2-8bit-compressed-3-2-7738.nef',
-    'rawpixls-nikon-z5-2-8bit-compressed-1-1-7740.nef',
-    'rawpixls-nikon-z5-2-8bit-compressed-16-9-7741.nef',
-    'rawpixls-nikon-z5-2-8bit-compressed-3-2-7742.nef',
-    'rawpixls-nikon-z5-2-8bit-compressed-3-2-7743.nef',
     'rawpixls-nikon-z50-2-8bit-compressed-3-2-7763.nef',
     'rawpixls-nikon-z50-2-8bit-compressed-3-2-7764.nef',
     'rawpixls-nikon-z50-2-8bit-compressed-1-1-7766.nef',
     'rawpixls-nikon-z50-2-8bit-compressed-1-1-7767.nef',
     'rawpixls-nikon-z50-2-8bit-compressed-16-9-7769.nef',
     'rawpixls-nikon-z50-2-8bit-compressed-16-9-7770.nef',
-    'rawpixls-nikon-z6-3-8bit-compressed-1-1-7808.nef',
-    'rawpixls-nikon-z6-3-8bit-compressed-16-9-7809.nef',
     'rawpixls-nikon-z6-3-8bit-compressed-3-2-7810.nef',
-    'rawpixls-nikon-z6-3-8bit-compressed-3-2-7811.nef',
-    'rawpixls-nikon-z6-3-8bit-compressed-1-1-7812.nef',
-    'rawpixls-nikon-z6-3-8bit-compressed-16-9-7813.nef',
-    'rawpixls-nikon-z6-3-8bit-compressed-3-2-7814.nef',
-    'rawpixls-nikon-z6-3-8bit-compressed-3-2-7815.nef',
 ]
 
 # the windows of a <stem>.windows file: the four corners of WINDOW_CORNER photosites square, the center of
@@ -555,46 +338,16 @@ WINDOW_BAND = 64
 
 # kept as <stem>.photosites summaries instead of DNG files, for their size
 SUMMARY_SAMPLES = GAP_SAMPLES + [
-    'rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf',
-    'rawpixls-fujifilm-gfx100s-16bit-16bit-lossless-compressed-4-3.raf',
-    'rawpixls-fujifilm-gfx100-ii-16bit-16bit-compressed-4-3.raf',
 ]
 
 # converted a second time into demosaiced linear DNG files, kept as <stem>.linear crops: of the brightest window, or
 # of the center for the EXR HR files, where the lens correction the converter applies to the demosaiced image of some
 # of them (its WarpRectilinear) moves the pixels least
 LINEAR_SAMPLES = {
-    'rawpixls-fujifilm-finepix-s3pro-3-2.raf': 'brightest',
     'rawpixls-fujifilm-finepix-s5pro-3-2.raf': 'brightest',
-    'rawpixls-fujifilm-finepix-f700-double-width-16-bit-unpacked-little-endian-4-3.raf': 'brightest',
-    'rawpixls-fujifilm-finepix-s200exr-4-3.raf': 'brightest',
-    'rawpixls-fujifilm-finepix-f600exr-12bit-12bit-uncompressed-4-3.raf': 'brightest',
-    'rawpixls-fujifilm-finepix-f550exr-12bit-12bit-uncompressed-4-3.raf': 'center',
-    'rawpixls-fujifilm-finepix-x10-12bit-12bit-uncompressed-4-3.raf': 'center',
-    'rawpixls-fujifilm-finepix-f900exr-12bit-12bit-uncompressed-4-3.raf': 'center',
-    'rawpixls-fujifilm-finepix-hs20exr-12bit-12bit-uncompressed-4-3.raf': 'center',
-    'rawsamples-fujifilm-finepix-s200exr-hr.raf': 'center',
 }
 
 LINEAR_CROP = (1536, 1024)
-
-F700 = 'rawpixls-fujifilm-finepix-f700-double-width-16-bit-unpacked-little-endian-4-3.raf'
-E550 = 'rawpixls-fujifilm-finepix-e550-4-3.raf'
-
-# copies of the samples of a camera under the model name of a sibling of which no file is published (every
-# occurrence of the model name replaced, in the RAF header and in the Exif data), each the source sample, its model
-# name and the sibling's: the converter's entry of the F710 must read the F700's file, and that of the F810 the E550's
-RENAMED_SAMPLES = {
-    'renamed-fujifilm-finepix-f710.raf': (F700, 'FinePix F700', 'FinePix F710'),
-    'renamed-fujifilm-finepix-f810.raf': (E550, 'FinePix E550', 'FinePix F810'),
-}
-
-# the swapped copies the converter must refuse, which shows that its entries expect the layout they read: for each it
-# writes a <stem>.refused file instead of a DNG file
-REFUSED_SAMPLES = {
-    'renamed-fujifilm-finepix-f700-as-f810.raf': (F700, 'FinePix F700', 'FinePix F810'),
-    'renamed-fujifilm-finepix-e550-as-f710.raf': (E550, 'FinePix E550', 'FinePix F710'),
-}
 
 TIFF_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8}
 TIFF_FORMATS = {1: 'B', 2: 'B', 3: 'H', 4: 'I', 6: 'b', 7: 'B', 8: 'h', 9: 'i', 13: 'I', 16: 'Q'}
@@ -1168,7 +921,6 @@ def crw_code_copy(data):
 def main():
     if os.name != 'nt':
         sys.exit('Adobe DNG Converter for Windows is needed; run this script on Windows')
-    directory = testdata.conformance_dir()
     vectors = {row['name']: row for row in testdata.read_tsv(testdata.VECTORS, testdata.VECTOR_COLUMNS)}
     coverage = '--coverage' in sys.argv[1:]
     named = [argument for argument in sys.argv[1:] if not argument.startswith('--')]
@@ -1183,41 +935,23 @@ def main():
         if unknown:
             sys.exit(f'not an oracle sample: {", ".join(unknown)}')
         samples = [name for name in named if name not in PATCHED_SAMPLES and name not in CODE_COPIES]
-    unavailable = []
-    for name in samples:
-        row = vectors[name]
-        path = os.path.join(directory, name)
-        if not testdata.valid(path, row['sha256']):
-            print(f'fetching {name}')
-            try:
-                testdata.download(row['url'], path, row['sha256'])
-            except (OSError, ValueError) as error:
-                # a host that stops serving a sample, or serves other bytes, leaves only its tests without oracle
-                # files, which skip
-                print(f'skipping {name}: {error}', file=sys.stderr)
-                unavailable.append(name)
-    samples = [name for name in samples if name not in unavailable]
+    paths = {name: testdata.vector(name) for name in samples}
     if coverage:
-        samples = [name for name in samples
-                   if name.endswith(('.orf', '.arw')) or rw2_version(os.path.join(directory, name)) == 4]
-    output = os.path.join(directory, 'raw-oracle-coverage' if coverage else 'raw-oracle')
-    os.makedirs(output, exist_ok=True)
+        samples = [name for name in samples if name.endswith(('.orf', '.arw')) or rw2_version(paths[name]) == 4]
+    output = testdata.cache_dir('raw-oracle-coverage' if coverage else 'raw-oracle')
     with tempfile.TemporaryDirectory(prefix='raw-oracle-') as work:
-        installer = os.path.join(work, 'AdobeDNGConverter_x64_18_0.exe')
-        archive = os.path.join(work, 'innoextract.zip')
         print('fetching Adobe DNG Converter 18.0')
-        testdata.download(CONVERTER_URL, installer, CONVERTER_SHA256)
+        installer = oracles.download(CONVERTER_URL, CONVERTER_SHA256)
         print('fetching innoextract 1.9')
-        testdata.download(INNOEXTRACT_URL, archive, INNOEXTRACT_SHA256)
+        archive = oracles.download(INNOEXTRACT_URL, INNOEXTRACT_SHA256)
         with zipfile.ZipFile(archive) as source:
             source.extract('innoextract.exe', work)
         subprocess.run([os.path.join(work, 'innoextract.exe'), '-s', '-e', '-I', 'app', '-d', work, installer], check=True)
-        os.remove(installer)
         converter = os.path.join(work, 'app', 'Adobe DNG Converter.exe')
         for name in samples:
             print(f'converting {name}')
             # the converter only accepts backslash-separated paths
-            subprocess.run([converter, '-u', '-d', windows(output), windows(os.path.join(directory, name))], check=True,
+            subprocess.run([converter, '-u', '-d', windows(output), windows(paths[name])], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             target = os.path.join(output, os.path.splitext(name)[0] + '.dng')
             if not os.path.isfile(target):
@@ -1241,7 +975,7 @@ def main():
             if not coverage and name in LINEAR_SAMPLES:
                 staging = os.path.join(work, 'linear')
                 os.makedirs(staging, exist_ok=True)
-                subprocess.run([converter, '-u', '-l', '-d', windows(staging), windows(os.path.join(directory, name))],
+                subprocess.run([converter, '-u', '-l', '-d', windows(staging), windows(paths[name])],
                                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 staged = os.path.join(staging, os.path.splitext(name)[0] + '.dng')
                 if not os.path.isfile(staged):
@@ -1252,7 +986,7 @@ def main():
             if not coverage and name in JXL_SAMPLES:
                 staging = os.path.join(work, 'jxl')
                 os.makedirs(staging, exist_ok=True)
-                subprocess.run([converter, *JXL_FLAGS, '-d', windows(staging), windows(os.path.join(directory, name))],
+                subprocess.run([converter, *JXL_FLAGS, '-d', windows(staging), windows(paths[name])],
                                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 staged = os.path.join(staging, os.path.splitext(name)[0] + '.dng')
                 if not os.path.isfile(staged):
@@ -1262,11 +996,7 @@ def main():
         for name, (source, digest) in CODE_COPIES.items():
             if coverage or (named and name not in named):
                 continue
-            row = vectors[source]
-            origin = os.path.join(directory, source)
-            if not testdata.valid(origin, row['sha256']):
-                print(f'fetching {source}')
-                testdata.download(row['url'], origin, row['sha256'])
+            origin = testdata.vector(source)
             print(f'converting {name}')
             with open(origin, 'rb') as stream:
                 copy = crw_code_copy(stream.read())
@@ -1287,11 +1017,7 @@ def main():
         for name, (source, block, offset, value) in PATCHED_SAMPLES.items():
             if coverage or (named and name not in named):
                 continue
-            row = vectors[source]
-            path = os.path.join(directory, source)
-            if not testdata.valid(path, row['sha256']):
-                print(f'fetching {source}')
-                testdata.download(row['url'], path, row['sha256'])
+            path = testdata.vector(source)
             print(f'converting {name}')
             with open(path, 'rb') as stream:
                 data = stream.read()
@@ -1308,36 +1034,7 @@ def main():
             write_levels(target, os.path.splitext(target)[0] + '.levels')
             os.remove(target)
             renamed += 1
-        for copies, accepted in ((RENAMED_SAMPLES, True), (REFUSED_SAMPLES, False)):
-            for name, (source, model, sibling) in copies.items():
-                if coverage or source not in samples:
-                    continue
-                print(f'converting {name}')
-                with open(os.path.join(directory, source), 'rb') as stream:
-                    data = stream.read()
-                copy = os.path.join(work, name)
-                with open(copy, 'wb') as stream:
-                    stream.write(data.replace(model.encode('ascii'), sibling.encode('ascii')))
-                stem = os.path.join(output, os.path.splitext(name)[0])
-                for stale in (stem + '.dng', stem + '.refused'):
-                    if os.path.isfile(stale):
-                        os.remove(stale)
-                subprocess.run([converter, '-u', '-d', windows(output), windows(copy)],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                os.remove(copy)
-                if os.path.isfile(stem + '.dng') != accepted:
-                    sys.exit(f'Adobe DNG Converter {"refused" if accepted else "converted"} {name}')
-                if not accepted:
-                    with open(stem + '.refused', 'w', encoding='ascii') as stream:
-                        stream.write(f'Adobe DNG Converter 18.0 writes no DNG file of {source} named {sibling}\n')
-                renamed += 1
     print(f'wrote {len(samples) + renamed} oracle files into {output}')
-    marker = os.path.join(output, 'UNAVAILABLE')
-    if unavailable:
-        with open(marker, 'w', encoding='ascii') as stream:
-            stream.write(''.join(f'{name}\n' for name in unavailable))
-    elif not named and os.path.isfile(marker):
-        os.remove(marker)
 
 
 if __name__ == '__main__':

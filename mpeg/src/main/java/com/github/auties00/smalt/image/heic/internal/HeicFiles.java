@@ -120,10 +120,16 @@ public final class HeicFiles {
      *
      * @param file the parsed file
      * @return the primary item
+     * @throws MediaException.Unsupported if the file is a low-overhead image file ({@code mini} box, brand
+     *                                     {@code mif3}), which keeps its items outside a {@code meta} box
      * @throws MediaException.Malformed if the file has no primary item
      */
     private static HeifItem primary(HeifFile file) {
         var primary = file.primaryItem();
+        if (primary == null && file.hasBrand("mif3")) {
+            throw new MediaException.Unsupported("heic", "low-overhead image files (the mini box, brand mif3) are not"
+                    + " supported");
+        }
         if (primary == null) {
             throw new MediaException.Malformed("heic: the file has neither a primary item nor an image sequence");
         }

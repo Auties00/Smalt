@@ -76,6 +76,48 @@ class JpegEncoderConformanceTest {
     }
 
     @Test
+    @DisplayName("encodes libjpeg-turbo 3.2.1's testorig.png, its cjpeg source, as cjpeg -dct int does")
+    void testorigPng() throws IOException {
+        // 3.2.1 replaced testorig.ppm with testorig.png (within one level of it); cjpeg reads its pixels from a PPM
+        var png = com.github.auties00.smalt.image.png.PngDecoder.decode(MediaSource.of(java.nio.file.Files.readAllBytes(
+                com.github.auties00.smalt.testkit.Conformance.vector("ljt-testorig.png"))), ImageDecoderOptions.defaults());
+        var width = png.picture().width();
+        var height = png.picture().height();
+        var rgba = com.github.auties00.smalt.testkit.image.RasterTesting.tight(png.picture());
+        var rgb = new byte[width * height * 3];
+        for (var pixel = 0; pixel < rgb.length / 3; pixel++) {
+            System.arraycopy(rgba, 4 * pixel, rgb, 3 * pixel, 3);
+        }
+        var jpeg = JpegEncoder.encode(rgba(width, height, rgb), standard(ChromaFormat.YUV420));
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.CJPEG);
+        var input = com.github.auties00.smalt.testkit.image.RasterTesting.write("testorig-png.ppm",
+                writePnm(width, height, 3, rgb));
+        var theirs = com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.CJPEG,
+                java.time.Duration.ofMinutes(1), java.util.List.of("-dct", "int", input.toString()));
+        assertArrayEquals(theirs, jpeg, "cjpeg -dct int");
+    }
+
+    @Test
+    @DisplayName("embeds libjpeg-turbo's 28 kB test3.icc in APP2 segments as cjpeg -icc does")
+    void largeIcc() throws IOException {
+        var icc = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector("ljt-test3.icc"));
+        var ppm = parsePnm(JpegTestVectors.testorigPpm());
+        var jpeg = JpegEncoder.encode(rgba(ppm.width(), ppm.height(), ppm.pixels()), JpegEncoderOptions.builder()
+                .quality(75).chromaFormat(ChromaFormat.YUV420).optimizeHuffman(false)
+                .colorProfile(com.github.auties00.smalt.image.color.ColorProfile.parse(icc)).build());
+        assertArrayEquals(icc, JpegDecoder.decode(MediaSource.of(jpeg)).iccProfile().orElseThrow(), "the profile");
+        com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.CJPEG);
+        var input = com.github.auties00.smalt.testkit.image.RasterTesting.write("testorig-icc.ppm",
+                JpegTestVectors.testorigPpm());
+        var profile = input.resolveSibling("test3.icc");
+        java.nio.file.Files.write(profile, icc);
+        var theirs = com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.CJPEG,
+                java.time.Duration.ofMinutes(1), java.util.List.of("-dct", "int", "-icc", profile.toString(),
+                        input.toString()));
+        assertArrayEquals(theirs, jpeg, "cjpeg -dct int -icc test3.icc");
+    }
+
+    @Test
     @DisplayName("IJG testimg.ppm at q75 4:2:0 equals IJG's testimg.jpg")
     void ijgTestimg() {
         var ppm = parsePnm(JpegTestVectors.ijgTestimgPpm());

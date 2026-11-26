@@ -166,6 +166,44 @@ class QoiCodecTest {
                 .picture()));
     }
 
+    @Test
+    @DisplayName("decodes the QOI reference images to the pixels of the PNG next to each, and re-encodes them losslessly")
+    void referenceImages() throws java.io.IOException {
+        // qoi_test_images.zip (qoiformat.org): dice, edgecase, kodim10, kodim23, qoi_logo, testcard, testcard_rgba and
+        // wikipedia_008, each as .qoi and .png
+        var entries = new java.util.TreeMap<String, byte[]>();
+        try (var zip = new java.util.zip.ZipInputStream(java.nio.file.Files.newInputStream(
+                com.github.auties00.smalt.testkit.Conformance.vector("qoi_test_images.zip")))) {
+            for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                if (!entry.isDirectory()) {
+                    entries.put(entry.getName(), zip.readAllBytes());
+                }
+            }
+        }
+        var compared = 0;
+        for (var entry : entries.entrySet()) {
+            if (!entry.getKey().endsWith(".qoi")) {
+                continue;
+            }
+            var name = entry.getKey();
+            var png = entries.get(name.substring(0, name.length() - 4) + ".png");
+            assertNotNull(png, name + " has its PNG");
+            var ours = QoiDecoder.decode(MediaSource.of(entry.getValue()));
+            var reference = com.github.auties00.smalt.image.png.PngDecoder.decode(MediaSource.of(png),
+                    ImageDecoderOptions.defaults());
+            var width = ours.picture().width();
+            assertEquals(reference.picture().width(), width, name);
+            assertEquals(reference.picture().height(), ours.picture().height(), name);
+            var expected = RasterTesting.tight(com.github.auties00.smalt.image.ops.ImageOps.toRgba(reference.picture()));
+            var actual = RasterTesting.tight(ours.picture());
+            RasterTesting.assertSameRgba(expected, actual, width, name);
+            var again = QoiDecoder.decode(MediaSource.of(QoiEncoder.encode((RgbaPicture) ours.picture())));
+            assertArrayEquals(actual, RasterTesting.tight(again.picture()), name + " round trip");
+            compared++;
+        }
+        assertEquals(8, compared, "reference images");
+    }
+
     @Nested
     @DisplayName("malformed input")
     class Malformed {

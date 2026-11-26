@@ -546,7 +546,7 @@ final class Mp4Track {
             }
             previousKey[index] = key;
         }
-        var out = new SampleTable(limits, Math.min(count, 1024));
+        var out = new SampleTable(limits, Math.min(count, 1024), source.framesBounded);
         var cuts = new HashMap<Integer, long[]>();
         var presented = new int[count];
         Arrays.fill(presented, -1);

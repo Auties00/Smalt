@@ -5,9 +5,9 @@ The test re-derives the Huffman tables of Nikon's NEF compression from CC0 sampl
 sensor values Adobe DNG Converter stores for them. This script produces those values: it downloads
 Adobe DNG Converter 14.0 for Windows and innoextract 1.9 (both pinned by SHA-256), extracts the
 converter without installing it, and runs it as a black box on each sample NEF file, writing an
-uncompressed DNG file (-u) per sample into <conformance cache>/nef-oracle, where the test looks
-by default (-Dsmalt.test.nefOracle overrides it). The sample NEF files are fetched first when the
-cache lacks them.
+uncompressed DNG file (-u) per sample into <cache>/nef-oracle (SMALT_CACHE, default ~/.smalt/cache),
+where the test looks by default (-Dsmalt.test.nefOracle overrides it). The sample NEF files are read
+from the hosted test data (SMALT_TESTDATA, see tools/testdata/README.md).
 
 Windows only: the converter is a Windows executable. Adobe DNG Converter 7.4 stores the same values
 for every sample it supports (checked on 22 files), so the version only matters for camera
@@ -22,6 +22,7 @@ import tempfile
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import oracles  # noqa: E402
 import testdata  # noqa: E402
 
 CONVERTER_URL = 'https://download.adobe.com/pub/adobe/dng/win/AdobeDNGConverter_x64_14_0.exe'
@@ -48,23 +49,13 @@ def windows(path):
 def main():
     if os.name != 'nt':
         sys.exit('Adobe DNG Converter for Windows is needed; run this script on Windows')
-    directory = testdata.conformance_dir()
-    vectors = {row['name']: row for row in testdata.read_tsv(testdata.VECTORS, testdata.VECTOR_COLUMNS)}
-    for name in SAMPLES:
-        row = vectors[name]
-        path = os.path.join(directory, name)
-        if not testdata.valid(path, row['sha256']):
-            print(f'fetching {name}')
-            testdata.download(row['url'], path, row['sha256'])
-    output = os.path.join(directory, 'nef-oracle')
-    os.makedirs(output, exist_ok=True)
+    samples = {name: testdata.vector(name) for name in SAMPLES}
+    output = testdata.cache_dir('nef-oracle')
     with tempfile.TemporaryDirectory(prefix='nef-oracle-') as work:
-        installer = os.path.join(work, 'AdobeDNGConverter_x64_14_0.exe')
-        archive = os.path.join(work, 'innoextract.zip')
         print('fetching Adobe DNG Converter 14.0')
-        testdata.download(CONVERTER_URL, installer, CONVERTER_SHA256)
+        installer = oracles.download(CONVERTER_URL, CONVERTER_SHA256)
         print('fetching innoextract 1.9')
-        testdata.download(INNOEXTRACT_URL, archive, INNOEXTRACT_SHA256)
+        archive = oracles.download(INNOEXTRACT_URL, INNOEXTRACT_SHA256)
         with zipfile.ZipFile(archive) as source:
             source.extract('innoextract.exe', work)
         subprocess.run([os.path.join(work, 'innoextract.exe'), '-s', '-e', '-I', 'app', '-d', work, installer], check=True)
@@ -72,7 +63,7 @@ def main():
         for name in SAMPLES:
             print(f'converting {name}')
             # the converter only accepts backslash-separated paths
-            subprocess.run([converter, '-u', '-d', windows(output), windows(os.path.join(directory, name))], check=True,
+            subprocess.run([converter, '-u', '-d', windows(output), windows(samples[name])], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             target = os.path.join(output, name[:-4] + '.dng')
             if not os.path.isfile(target):

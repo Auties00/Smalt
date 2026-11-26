@@ -30,6 +30,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import java.io.ByteArrayInputStream;
@@ -453,5 +454,240 @@ class SubtitleFormatsTest {
             muxer.finish();
         }
         assertEquals(List.of(SEQUENTIAL.getFirst()), read(mp4.toByteArray()));
+    }
+
+    @Nested
+    @DisplayName("third-party files")
+    class ThirdParty {
+        /** One cue: its times in milliseconds and its text without markup. */
+        record Cue(long start, long end, String text) {
+        }
+
+        /** Removes the markup ffmpeg's SubRip writer and ours leave in a cue, and normalizes the spaces. */
+        static String normalize(String text) {
+            // ffmpeg's SubRip writer escapes a brace after an empty override block and writes ASS hard spaces
+            var unescaped = text.replace("\\{{}", "{").replace("\\{", "{").replace("\\h", " ");
+            var plain = unescaped.replaceAll("<[^>]*>", "").replaceAll("\\{\\\\[^}]*}", "").replace(' ', ' ')
+                    .replaceAll("[ \\t]+", " ").replaceAll(" *\\n *", "\n").strip();
+            return java.text.Normalizer.normalize(plain, java.text.Normalizer.Form.NFC);
+        }
+
+        /** Removes every override block, for the formats whose braces are always override blocks. */
+        static String overrides(String text) {
+            return text.replaceAll("\\{[^}]*}", "").strip();
+        }
+
+        static List<Cue> ffmpeg(java.nio.file.Path file, String charset) {
+            var arguments = new ArrayList<String>(List.of("-v", "error"));
+            if (charset != null) {
+                arguments.addAll(List.of("-sub_charenc", charset));
+            }
+            arguments.addAll(List.of("-i", file.toString(), "-map", "0:s:0", "-f", "srt", "-"));
+            var srt = new String(com.github.auties00.smalt.testkit.Oracle.run(
+                    com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(1), arguments),
+                    StandardCharsets.UTF_8).replace("\r", "");
+            var cues = new ArrayList<Cue>();
+            for (var block : srt.split("\n\n")) {
+                var lines = block.strip().split("\n");
+                if (lines.length < 2 || !lines[1].contains("-->")) {
+                    continue;
+                }
+                var times = lines[1].split("-->");
+                var text = String.join("\n", java.util.Arrays.copyOfRange(lines, 2, lines.length));
+                var normalized = normalize(text);
+                if (!normalized.isEmpty()) {
+                    cues.add(new Cue(millis(times[0]), millis(times[1]), normalized));
+                }
+            }
+            return cues;
+        }
+
+        static long millis(String time) {
+            var parts = time.strip().split("[:,]");
+            return ((Long.parseLong(parts[0]) * 60 + Long.parseLong(parts[1])) * 60 + Long.parseLong(parts[2])) * 1000
+                    + Long.parseLong(parts[3]);
+        }
+
+        static List<Cue> ours(java.nio.file.Path file, java.nio.charset.Charset charset) {
+            var options = SubtitleReaderOptions.builder().markup(SubtitleMarkup.SUBRIP);
+            if (charset != null) {
+                options.charset(charset);
+            }
+            var cues = new ArrayList<Cue>();
+            for (var cue : Subtitles.read(MediaSource.of(file), options.build())) {
+                var text = normalize(Subtitles.plainText(cue.text(), SubtitleMarkup.SUBRIP));
+                if (!text.isEmpty()) {
+                    cues.add(new Cue(cue.startMicros() / 1000, cue.endMicros() / 1000, text));
+                }
+            }
+            return cues;
+        }
+
+        static void assertSameCues(List<Cue> expected, List<Cue> actual, long toleranceMillis, String name) {
+            assertTrue(!expected.isEmpty(), name + ": ffmpeg reads no cue");
+            assertEquals(expected.size(), actual.size(), name + ": " + actual);
+            var assSyntax = name.endsWith(".ass") || name.endsWith(".ssa");
+            for (var index = 0; index < expected.size(); index++) {
+                var want = expected.get(index);
+                var got = actual.get(index);
+                assertEquals(assSyntax ? overrides(want.text()) : want.text(),
+                        assSyntax ? overrides(got.text()) : got.text(), name + " cue " + index);
+                assertEquals(want.start(), got.start(), toleranceMillis, name + " cue " + index + " start");
+                if (want.end() > 1_000_000_000L || want.end() < want.start()) {
+                    // ffmpeg leaves the end of a last cue without one, or of one ending before its start, unbounded
+                    assertTrue(got.end() >= got.start(), name + " cue " + index + " end");
+                } else {
+                    assertEquals(want.end(), got.end(), toleranceMillis, name + " cue " + index + " end");
+                }
+            }
+        }
+
+        /**
+         * Returns the times of the cues of a SAMI file from its SYNC elements, as the format defines them (ffmpeg
+         * keeps the paragraphs of a SYNC element on screen with the next ones, so it is no oracle here): each SYNC
+         * with text in the first class the STYLE element declares a language for (or in any paragraph, without one)
+         * lasts until the next SYNC.
+         */
+        static List<long[]> samiTimes(java.nio.file.Path file) {
+            String text;
+            try {
+                text = java.nio.file.Files.readString(file, StandardCharsets.UTF_8);
+            } catch (java.io.IOException exception) {
+                throw new java.io.UncheckedIOException(exception);
+            }
+            var style = java.util.regex.Pattern.compile("(?is)<style.*?</style>").matcher(text);
+            String className = null;
+            if (style.find()) {
+                var declared = java.util.regex.Pattern.compile("\\.(\\w+)\\s*\\{[^}]*lang").matcher(style.group());
+                if (declared.find()) {
+                    className = declared.group(1);
+                }
+            }
+            var syncs = java.util.regex.Pattern.compile("(?i)<sync\\s+start\\s*=\\s*\"?(\\d+)\"?[^>]*>").matcher(text);
+            var starts = new ArrayList<Long>();
+            var bodies = new ArrayList<String>();
+            var last = -1;
+            while (syncs.find()) {
+                if (last >= 0) {
+                    bodies.add(text.substring(last, syncs.start()));
+                }
+                starts.add(Long.parseLong(syncs.group(1)));
+                last = syncs.end();
+            }
+            if (last >= 0) {
+                // the last SYNC has no end; -1 marks an end the reader chooses
+                bodies.add(text.substring(last).replaceAll("(?is)</body>.*", ""));
+                starts.add(-1L);
+            }
+            var times = new ArrayList<long[]>();
+            for (var index = 0; index < bodies.size(); index++) {
+                // each paragraph of the class is a cue of its own
+                var paragraphs = java.util.regex.Pattern.compile("(?is)<p([^>]*)>(.*?)(?=<p[\\s>]|$)")
+                        .matcher(bodies.get(index));
+                while (paragraphs.find()) {
+                    if (className != null && !paragraphs.group(1).matches("(?is).*class\\s*=\\s*\"?" + className
+                            + "\\b.*")) {
+                        continue;
+                    }
+                    var plain = paragraphs.group(2).replaceAll("<[^>]*>", "").replace("&nbsp;", " ").strip();
+                    if (!plain.isEmpty()) {
+                        times.add(new long[]{starts.get(index), starts.get(index + 1)});
+                    }
+                }
+            }
+            return times;
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"fate-sub-SAMI_capability_tester.smi",
+                "fate-sub-SAMI_multilang_tweak_tester.smi"})
+        @DisplayName("read FATE's SAMI testers to the cues their SYNC elements define")
+        void sami(String name) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var expected = samiTimes(file);
+            var actual = ours(file, null);
+            assertEquals(expected.size(), actual.size(), name + ": " + actual);
+            for (var index = 0; index < expected.size(); index++) {
+                assertEquals(expected.get(index)[0], actual.get(index).start(), name + " cue " + index + " start");
+                if (expected.get(index)[1] >= 0) {
+                    assertEquals(expected.get(index)[1], actual.get(index).end(), name + " cue " + index + " end");
+                } else {
+                    assertTrue(actual.get(index).end() > actual.get(index).start(), name + " last cue");
+                }
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"fate-sub-SubRip_capability_tester.srt, 0", "fate-sub-WebVTT_capability_tester.vtt, 0",
+                "fate-sub-WebVTT_extended_tester.vtt, 0", "fate-sub-WebVTT_timestamp_map.vtt, 0",
+                "fate-sub-MicroDVD_capability_tester.sub, 1", "fate-sub-a9-misc.ssa, 0", "fate-sub-1ededcbd7b.ass, 0"})
+        @DisplayName("read FATE's capability testers to the cues ffmpeg reads")
+        void fate(String name, long tolerance) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            assertSameCues(ffmpeg(file, null), ours(file, null), tolerance, name);
+        }
+
+        @Test
+        @DisplayName("reads FATE's LRC tester to the lines its time tags place, a negative time dropped")
+        void lrc() throws Exception {
+            // ffmpeg 7.1 shifts every line to the next one's time after the line of a negative time, so the
+            // expectation is the file's own tags: a line shows from each of its times until the next time of the file
+            var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-sub-test-lrc-ms.lrc");
+            var tag = java.util.regex.Pattern.compile("^\\[(\\d+):(\\d+)\\.(\\d+)]");
+            var timed = new java.util.TreeMap<Long, String>();
+            for (var line : java.nio.file.Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                var times = new ArrayList<Long>();
+                var rest = line;
+                for (var matcher = tag.matcher(rest); matcher.find(); matcher = tag.matcher(rest)) {
+                    var fraction = matcher.group(3);
+                    times.add((Long.parseLong(matcher.group(1)) * 60 + Long.parseLong(matcher.group(2))) * 1000
+                            + Long.parseLong((fraction + "00").substring(0, 3)));
+                    rest = rest.substring(matcher.end());
+                }
+                for (var time : times) {
+                    timed.put(time, normalize(rest));
+                }
+            }
+            var expected = new ArrayList<Cue>();
+            var entries = new ArrayList<>(timed.entrySet());
+            for (var index = 0; index < entries.size(); index++) {
+                var text = entries.get(index).getValue();
+                if (!text.isEmpty() && index + 1 < entries.size()) {
+                    expected.add(new Cue(entries.get(index).getKey(), entries.get(index + 1).getKey(), text));
+                }
+            }
+            var actual = ours(file, null);
+            assertEquals(expected.subList(0, Math.min(expected.size(), actual.size())),
+                    actual.subList(0, Math.min(expected.size(), actual.size())));
+            // the last line, with no time after it, ends where the reader chooses
+            assertTrue(actual.size() - expected.size() <= 1, actual.size() + " cues for " + expected.size());
+        }
+
+        @Test
+        @DisplayName("reads a cp1251 MicroDVD file in its charset")
+        void cp1251() {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector("fate-sub-cp1251-subtitles.sub");
+            assertSameCues(ffmpeg(file, "cp1251"), ours(file, java.nio.charset.Charset.forName("windows-1251")), 1,
+                    "cp1251");
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"blender-TOS-JP.srt, ''", "blender-TOS-ru.srt, ''", "blender-sintel_vi.srt, ''",
+                "blender-TOS-en.srt, ''", "blender-sintel_ml.srt, ''", "blender-TOS-HE.srt, ''",
+                "blender-sintel_ko.srt, ''", "blender-sintel_cn.srt, ''", "blender-sintel_fa.srt, ''",
+                "blender-sintel_swe.srt, windows-1252", "blender-sintel_ar.srt, windows-1256",
+                "blender-sintel_bg.srt, windows-1251", "blender-sintel_chs.srt, GBK", "blender-sintel_th.srt, x-windows-874",
+                "blender-sintel_hu.srt, windows-1250", "blender-sintel_he.srt, windows-1255",
+                "blender-sintel_lv.srt, windows-1257"})
+        @DisplayName("read the Blender films' SubRip files, UTF-8, UTF-16 and legacy code pages, as ffmpeg does")
+        void blender(String name, String charset) {
+            var file = com.github.auties00.smalt.testkit.Conformance.vector(name);
+            var decoded = charset.isEmpty() ? null : java.nio.charset.Charset.forName(charset);
+            var iconv = charset.isEmpty() ? null : switch (charset) {
+                case "x-windows-874" -> "CP874";
+                default -> charset.replace("windows-", "CP");
+            };
+            assertSameCues(ffmpeg(file, iconv), ours(file, decoded), 0, name);
+        }
     }
 }
