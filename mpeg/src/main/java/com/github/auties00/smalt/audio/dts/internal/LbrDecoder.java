@@ -511,7 +511,7 @@ final class LbrDecoder {
         flags = headerFlags;
         bitRate = original;
         scaledBitRate = scaled;
-        configure(speakers, fullBand);
+        configure(fullBand);
         initialized = true;
     }
 
@@ -543,9 +543,12 @@ final class LbrDecoder {
      * <p>A band limited stream is coded as a stream of the limited sample rate, the header's times the coded
      * fraction of the bandwidth: its frequency range, lines and subbands are those of that rate. The synthesis runs
      * at the header's rate on blocks of as many more lines, the lines above the coded ones left empty, so a frame
-     * lasts as long as at the limited rate, as ffmpeg's decoder does for the 1/2 and 1/4 limits (measured).
+     * lasts as long as at the limited rate, as ffmpeg's decoder does for the 1/2 and 1/4 limits (measured). The
+     * full band channels take their speakers in the coded order of {@link Speakers#lbrOrder(int)}.
+     *
+     * @param fullBand the number of full band channels
      */
-    private void configure(int speakers, int fullBand) {
+    private void configure(int fullBand) {
         var limit = bandLimit(flags & FLAG_BAND_LIMIT);
         var limitedRate = (int) ((long) sampleRate * 2 / limit);
         frequencyRange = limitedRate < 16000 ? 0 : limitedRate < 32000 ? 1 : 2;
@@ -565,15 +568,9 @@ final class LbrDecoder {
         } else {
             decoded = fullBand;
             var lfe = (flags & FLAG_LFE) != 0;
-            masks = new int[channels + (lfe ? 1 : 0)];
-            var index = 0;
-            for (var bit = 0; bit < 32; bit++) {
-                if ((speakers & 1 << bit) != 0) {
-                    masks[index++] = 1 << bit;
-                }
-            }
+            masks = Arrays.copyOf(Speakers.lbrOrder(speakerMask), channels + (lfe ? 1 : 0));
             if (lfe) {
-                masks[index] = Speakers.LFE1;
+                masks[channels] = Speakers.LFE1;
             }
         }
         window = window(lines);
@@ -882,7 +879,7 @@ final class LbrDecoder {
         };
         var position = 0;
         var frequency = 1;
-        var channelBits = channels > 1 ? LbrTables.BITS_FOR_CHANNELS[channels] - 1 : 0;
+        var channelBits = channels > 1 ? LbrTables.BITS_FOR_CHANNELS[channels - 1] : 0;
         var start = pendingCount;
         var positionStart = frameComponents;
         while (true) {
@@ -1386,6 +1383,21 @@ final class LbrDecoder {
          */
         void skip(int count) {
             position += count;
+        }
+
+        /**
+         * Checks that enough bits are left for what follows, as ffmpeg's {@code ensure_bits}: when fewer are left,
+         * the rest of the chunk is consumed, so every later check of the chunk fails too.
+         *
+         * @param count the number of bits needed
+         * @return whether at least {@code count} bits are left
+         */
+        boolean ensure(int count) {
+            if (end - position >= count) {
+                return true;
+            }
+            position = Math.max(position, end);
+            return false;
         }
 
         /**

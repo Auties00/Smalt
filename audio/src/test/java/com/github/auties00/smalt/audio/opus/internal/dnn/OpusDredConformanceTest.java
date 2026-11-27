@@ -27,9 +27,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code dred_compare -features}: a total RMS error of at most 0.5, a largest per-feature RMS error of at most 0.15 and
  * a mean pitch error of at most 0.02 over the voiced frames.
  *
- * <p>The decoder follows libopus 1.5.2, whose DRED (experimental version 10) has the models of that release; the
- * vectors are of the standardized DRED of libopus 1.6, whose RDOVAE decoder also takes the quantizer level as an
- * input, so they need its port.
+ * <p>The decoder ports the standardized DRED of libopus 1.6.1, whose RDOVAE decoder also takes the quantizer level of
+ * each latent as an input. The reference features come from the draft's floating-point model, so no decoder matches
+ * them exactly: libopus 1.6.1's own {@code fargan_demo -dred-decoding} misses them by a total RMS error of about 0.08.
  */
 @DisplayName("DRED decoding conformance vectors")
 class OpusDredConformanceTest {

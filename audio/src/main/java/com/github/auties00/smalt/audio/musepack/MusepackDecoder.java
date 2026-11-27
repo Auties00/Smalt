@@ -23,8 +23,10 @@ import java.util.function.Consumer;
  * <p>Packets and the configuration are as {@link Codec#MUSEPACK7} and {@link Codec#MUSEPACK8} describe. The output
  * floats are bit-identical to those of libmpcdec r475 in its floating-point build: the decoder drops the first 481
  * samples (the delay of the synthesis filter bank) and the leading silence of a version 8 stream, and ends the
- * output at the stream's length as that library does: a version 7 stream whose last frame's samples and the delay
- * exceed one frame ends with the first samples of one more frame of silent subbands, which {@link #flush} outputs. A
+ * output at the stream's length as that library does. When a version 7 stream's last frame's samples and the delay
+ * exceed one frame, the stream ends with the first samples of one more frame, which mppenc writes after the frames
+ * the header counts and libmpcdec decodes like any other; a stream that lacks it ends instead with the first samples
+ * of a frame of silent subbands, which {@link #flush} outputs. A
  * version 7 decode that starts after the first frame converges after a few frames; a version 8 decode starting at
  * any packet is exact after its first frame. A frame whose bitstream does not fill its declared length exactly, or
  * that codes invalid values, raises {@link MediaException.Malformed}.
@@ -353,8 +355,9 @@ public final class MusepackDecoder implements AudioDecoder {
 
     /**
      * Synthesizes, after the last frame of a version 7 stream, the samples its length still holds beyond the frames:
-     * when the last frame's samples and the filter bank's delay exceed one frame, libmpcdec decodes one more frame,
-     * of silent subbands, whose first samples end the stream. Sets {@link #stagedFrames}.
+     * when the last frame's samples and the filter bank's delay exceed one frame and no frame beyond the counted ones
+     * came (the encoder's flush frame, which libmpcdec decodes), a frame of silent subbands supplies them. Sets
+     * {@link #stagedFrames}.
      */
     private void flushSv7() {
         stagedFrames = 0;

@@ -33,13 +33,13 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Reads Ogg files (RFC 3533) carrying Opus, Vorbis, FLAC, Speex or Theora streams.
+ * Reads Ogg files (RFC 3533) carrying Opus, Vorbis, FLAC, Speex, Theora or VP8 streams.
  *
  * <p>Every logical stream becomes a track whose identifier is the stream's index in
- * beginning-of-stream order. Opus (RFC 7845), Vorbis, FLAC, Speex and Theora streams are fully
- * mapped: their header packets become the track's codec configuration (the {@code OpusHead}
+ * beginning-of-stream order. Opus (RFC 7845), Vorbis, FLAC, Speex, Theora and VP8 ({@code OVP80}) streams are
+ * fully mapped: their header packets become the track's codec configuration (the {@code OpusHead}
  * packet; the three Vorbis or Theora headers Xiph-laced; {@code fLaC} plus the FLAC metadata
- * blocks; the Speex header), their comment headers become {@link #metadata()} and
+ * blocks; the Speex header; none for VP8), their comment headers become {@link #metadata()} and
  * {@link #trackMetadata(int)}, and header packets are never returned by {@link #read()}. An Ogg
  * Skeleton stream (versions 3 and 4) becomes a {@link DataTrack} whose configuration is its
  * {@code fishead} packet; the message header fields of its {@code fisbone} packets (such as
@@ -57,7 +57,8 @@ import java.util.Set;
  * first packet of a stream starting at granule zero is stamped {@code -preSkip} and the decoder's
  * own pre-skip removal makes output start at zero; the first Vorbis packet, which decodes to no
  * output, is stamped to end at zero. Theora timestamps count frames from the granule position's
- * key frame number plus the frames since that key frame, and Speex timestamps count samples. A
+ * key frame number plus the frames since that key frame, VP8 timestamps count frames from the frame number of
+ * the granule position, and Speex timestamps count samples. A
  * track's {@code skipSamples} is non-zero only when a stream starts before granule zero, and its
  * {@code duration} is the exact number of samples (frames for Theora) a reader keeps after the
  * decoder's own priming removal and {@code skipSamples}.
@@ -106,7 +107,7 @@ import java.util.Set;
  * <p>A file of known size can seek, chained or not. {@link #seek(long)} picks the link that plays at
  * the target and, for every timestamped stream of that link, bisects the link on the stream's
  * granule positions to the last of its pages whose granule position is at or before the target (for
- * Theora, then to the last page before the key frame that page's granule position names), reads the
+ * Theora and VP8, then to the last page before the key frame that page's granule position names), reads the
  * link's headers again, continues reading at the earliest of those pages, and lets every track of
  * the link restart at its last packet at or before the target, as {@link SeekFilter} describes. The
  * packets of the first page read after a seek are stamped back from that page's granule position, so
@@ -1227,13 +1228,13 @@ public final class OggDemuxer implements Demuxer {
      * {@inheritDoc}
      *
      * <p>On a source that reads its input once, a target at or past the end of every packet read
-     * so far is reached by reading on. A Theora stream restarts at the key frame at or before the
-     * target, which may precede the packets read, so such a source with a Theora stream seeks only
+     * so far is reached by reading on. A Theora or VP8 stream restarts at the key frame at or before the
+     * target, which may precede the packets read, so such a source with a Theora or VP8 stream seeks only
      * before its first packet is read.
      *
      * @throws MediaException.Unsupported if no stream is timestamped, or the source reads its input
      *                                    once and the target precedes the end of the packets read or
-     *                                    a packet of a link with a Theora stream was read
+     *                                    a packet of a link with a Theora or VP8 stream was read
      */
     @Override
     public void seek(long micros) {
@@ -1291,9 +1292,9 @@ public final class OggDemuxer implements Demuxer {
      *                                    the end of the packets read
      */
     private void seekByReading(long micros) {
-        if (forwardOnly && producedMicros != Long.MIN_VALUE && hasTheora()) {
-            throw new MediaException.Unsupported("seek", "an Ogg stream with Theora video that is read once cannot"
-                    + " seek after a packet was read");
+        if (forwardOnly && producedMicros != Long.MIN_VALUE && hasKeyFrameVideo()) {
+            throw new MediaException.Unsupported("seek", "an Ogg stream with Theora or VP8 video that is read once"
+                    + " cannot seek after a packet was read");
         }
         if (micros < producedMicros) {
             if (forwardOnly) {
@@ -1320,14 +1321,14 @@ public final class OggDemuxer implements Demuxer {
     }
 
     /**
-     * Returns whether a link holds a Theora stream, whose decoding restarts at a key frame.
+     * Returns whether a link holds a Theora or VP8 stream, whose decoding restarts at a key frame.
      *
-     * @return {@code true} when a track of a link is Theora video
+     * @return {@code true} when a track of a link is Theora or VP8 video
      */
-    private boolean hasTheora() {
+    private boolean hasKeyFrameVideo() {
         for (var span : spans) {
             for (var track : span.tracks()) {
-                if (track.codec() == Codec.THEORA) {
+                if (track.codec() == Codec.THEORA || track.codec() == Codec.VP8) {
                     return true;
                 }
             }

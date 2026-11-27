@@ -28,6 +28,7 @@ decoder	libdav1d	AV1 reference decoding
 decoder	libvpx	VP8 reference decoding (libvpx)
 decoder	libvpx-vp9	VP9 reference decoding (libvpx)
 decoder	libopus	Opus reference decoding (libopus)
+decoder	libvorbis	Vorbis reference decoding (libvorbis)
 filter	zscale	zimg color conversion oracle
 filter	telecine	2:3 pulldown source of the inverse telecine test
 muxer	avif	AVIF fixtures

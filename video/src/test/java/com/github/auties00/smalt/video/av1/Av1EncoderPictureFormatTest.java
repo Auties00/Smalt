@@ -340,14 +340,20 @@ class Av1EncoderPictureFormatTest {
             read.writeBytes(raw(source));
         }
         assertArrayEquals(gray, read.toByteArray(), "y4m frames");
-        try (var encoder = new Av1Encoder(160, 90, natural(ChromaFormat.MONOCHROME))) {
+        // a y4m mono clip is full range, as ffmpeg reads gray; with the options' default limited range the encoder
+        // would rescale the samples, so the clip's color goes in the options, as the sequence header comes first
+        var color = ((YuvPicture) sources.getFirst()).color();
+        assertEquals(com.github.auties00.smalt.image.ColorRange.FULL, color.range(), "y4m Cmono");
+        try (var encoder = new Av1Encoder(160, 90, natural(ChromaFormat.MONOCHROME).toBuilder().color(color).build())) {
             var packets = encode(encoder, sources);
             var config = encoder.codecConfig().orElseThrow();
             assertEquals(1, (config[2] >> 4) & 1, "monochrome");
             var decoded = decode(encoder, packets);
             assertEquals(sources.size(), decoded.size());
             for (var i = 0; i < decoded.size(); i++) {
-                assertEquals(ChromaFormat.MONOCHROME, ((YuvPicture) decoded.get(i)).chromaFormat());
+                var picture = (YuvPicture) decoded.get(i);
+                assertEquals(ChromaFormat.MONOCHROME, picture.chromaFormat());
+                assertEquals(color.range(), picture.color().range());
                 var psnr = psnr(sources.get(i), decoded.get(i), 8);
                 assertTrue(psnr > 30, "frame " + i + " psnr " + psnr);
             }

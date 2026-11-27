@@ -40,7 +40,8 @@ class MatroskaTimelineMkvmergeTest {
                 "-f", "lavfi", "-i", "sine=frequency=" + frequency + ":sample_rate=8000:duration=" + seconds),
                 List.of("-c:v", "mjpeg", "-q:v", "6", "-pix_fmt", "yuvj420p", "-c:a", "pcm_s16le", "-ac", "1"));
         var copy = directory.resolve(name);
-        Files.copy(fixture, copy);
+        // a scratch directory outlives the run: a file of an earlier run is replaced
+        Files.copy(fixture, copy, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         return copy;
     }
 

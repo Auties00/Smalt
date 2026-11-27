@@ -469,6 +469,11 @@ final class BoxTypes {
     static final int MJPB = 0x6D6A7062;
 
     /**
+     * The Media 100 sample entry ({@code dtPA}), whose frames are rewritten as Motion JPEG format B frames.
+     */
+    static final int DTPA = 0x64745041;
+
+    /**
      * The sample description extension holding the default quantization tables of Motion-JPEG frames ({@code mjqt}).
      */
     static final int MJQT = 0x6D6A7174;

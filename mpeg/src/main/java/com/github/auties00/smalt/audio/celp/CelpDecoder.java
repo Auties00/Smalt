@@ -27,6 +27,12 @@ import java.util.function.Consumer;
  * {@link #decode(List, Consumer)} takes an access unit of each and decodes the layers present up to the first missing
  * one, while {@link #decode(Packet, Consumer)} decodes an object of a single stream.
  *
+ * <p>The configurations read in the syntax of ISO/IEC 14496-3 with its Corrigendum 1 or, when they are no valid
+ * configurations of it, in the syntax before it (the alternative format of the ISO/IEC 14496-26 streams
+ * {@code ceNNa}), where a stream's layer follows from its position in the object. A base layer of regular pulse
+ * excitation alone can read in both; the length of its first access unit then decides, and {@link #frameSize()} may
+ * change with it.
+ *
  * <p>Every frame decodes to one block of 10 to 40 milliseconds, scaled so that 16-bit full scale spans
  * {@code [-1, 1]}; a block can exceed that range. The decoder adds no delay. The post-processor runs unless the options
  * turn it off; without it the output is the decoded signal the standard defines.
@@ -37,7 +43,13 @@ public final class CelpDecoder implements AudioDecoder {
     /**
      * The object decoder.
      */
-    private final CelpObject object;
+    private CelpObject object;
+
+    /**
+     * The object decoder of the earlier configuration syntax while the first access unit has to choose between it
+     * and {@link #object}, else {@code null}.
+     */
+    private CelpObject alternative;
 
     /**
      * The options the decoder was created with.
@@ -127,9 +139,14 @@ public final class CelpDecoder implements AudioDecoder {
             configs.add(track.codecConfig().orElseThrow(
                     () -> new MediaException.Malformed("CELP track without an AudioSpecificConfig")));
         }
-        this.object = new CelpObject(configs, options.maxLayer().orElse(-1), options.postFilter(), options.limits());
-        this.buffer = new AudioBuffer(ChannelLayout.MONO, object.sampleRate(), object.frameSize());
-        this.samples = new float[object.frameSize() * object.framesPerUnit()];
+        var readings = CelpObject.readings(configs);
+        var maxLayer = options.maxLayer().orElse(-1);
+        this.object = new CelpObject(readings.getFirst(), maxLayer, options.postFilter(), options.limits());
+        this.alternative = readings.size() > 1
+                ? new CelpObject(readings.getLast(), maxLayer, options.postFilter(), options.limits()) : null;
+        var frameSize = Math.max(object.frameSize(), alternative == null ? 0 : alternative.frameSize());
+        this.buffer = new AudioBuffer(ChannelLayout.MONO, object.sampleRate(), frameSize);
+        this.samples = new float[frameSize * object.framesPerUnit()];
         this.units = new byte[object.streams()][];
         this.lengths = new int[object.streams()];
     }
@@ -228,6 +245,12 @@ public final class CelpDecoder implements AudioDecoder {
      * @param output receives one block per frame
      */
     private void emit(int count, Consumer<AudioBuffer> output) {
+        if (alternative != null && lengths[0] > 0) {
+            if (!object.holds(lengths[0]) && alternative.holds(lengths[0])) {
+                object = alternative;
+            }
+            alternative = null;
+        }
         var frames = object.decode(units, lengths, count, samples);
         var size = object.frameSize();
         var plane = buffer.plane(0);

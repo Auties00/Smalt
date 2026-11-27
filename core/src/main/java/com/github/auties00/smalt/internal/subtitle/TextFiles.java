@@ -83,16 +83,24 @@ public final class TextFiles {
      * become replacement characters
      */
     public static String decode(byte[] data, Charset charset) {
+        return normalizeLineBreaks(decodeVerbatim(data, charset));
+    }
+
+    /**
+     * Decodes a text file keeping its line breaks and NUL characters.
+     *
+     * @param data the file bytes
+     * @param charset the encoding of a file without a byte order mark, or {@code null} to detect it
+     * @return the text without a byte order mark; bytes the encoding cannot map become replacement characters
+     */
+    public static String decodeVerbatim(byte[] data, Charset charset) {
         var bom = byteOrderMark(data);
-        String text;
         if (bom != null) {
             var skip = bom == StandardCharsets.UTF_8 ? 3 : bom == StandardCharsets.UTF_16LE || bom == StandardCharsets.UTF_16BE ? 2 : 4;
-            text = new String(data, skip, data.length - skip, bom);
-        } else {
-            var chosen = charset != null ? charset : detect(data);
-            text = new String(data, 0, data.length, chosen);
+            return new String(data, skip, data.length - skip, bom);
         }
-        return normalizeLineBreaks(text);
+        var chosen = charset != null ? charset : detect(data);
+        return new String(data, 0, data.length, chosen);
     }
 
     /**

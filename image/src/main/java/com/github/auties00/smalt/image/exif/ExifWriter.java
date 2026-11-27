@@ -32,7 +32,9 @@ import java.util.TreeMap;
  * <p>{@link #rewrite(byte[], ExifData)} is the safe way to edit a camera's block. Maker notes
  * hold offsets relative to the start of the block that a relocation would break; the rewrite
  * leaves every unchanged out-of-line value, the maker note included, at its original offset,
- * reuses the space of each directory when the new one fits, and appends what changed. Every byte
+ * reuses the space of each directory when the new one fits, and appends what changed. A text
+ * value that reads the same keeps its stored bytes and count, padding or bytes after its first NUL
+ * included. Every byte
  * of a value, directory or thumbnail that the edit removes is zeroed, so removing the GPS
  * directory leaves no trace of the position in the block.
  *
@@ -127,7 +129,9 @@ public final class ExifWriter {
                     valueOffset += (value.length + 1) & ~1;
                 }
             }
-            writeDirectory(block, offsets[index], directory, placements, pointers, little);
+            var counts = new long[placements.length];
+            Arrays.fill(counts, -1);
+            writeDirectory(block, offsets[index], directory, placements, counts, pointers, little);
         }
         if (thumbnail != null) {
             System.arraycopy(thumbnail, 0, block, (int) thumbnailOffset, thumbnail.length);
@@ -186,29 +190,29 @@ public final class ExifWriter {
         var keep = new boolean[original.length];
         var length = new long[]{original.length};
         var placements = new ArrayList<long[]>();
+        var keptCounts = new ArrayList<long[]>();
         for (var directory : directories) {
             var previous = old.get(directory.kind());
             var places = new long[directory.entries().size()];
+            var counts = new long[places.length];
+            Arrays.fill(counts, -1);
             for (var i = 0; i < places.length; i++) {
                 var entry = directory.entries().get(i);
                 var bytes = entry.bytes();
-                if (bytes == null || bytes.length <= 4) {
+                if (bytes == null) {
                     continue;
                 }
                 var before = previous != null ? previous.entries().get(entry.tag()) : null;
-                // a value kept in place is written back there, so it must not overlap the new header
-                if (before != null && before.valueOffset() >= ExifReader.HEADER_SIZE
-                        && before.type() == entry.value().type()
-                        && before.count() == entry.count() && before.valueOffset() + bytes.length <= original.length
-                        && Arrays.equals(original, (int) before.valueOffset(), (int) before.valueOffset() + bytes.length,
-                        bytes, 0, bytes.length)) {
+                if (before != null && unchanged(original, before, entry.value(), bytes)) {
                     places[i] = before.valueOffset();
-                    mark(keep, before.valueOffset(), bytes.length);
-                } else {
+                    counts[i] = before.count();
+                    mark(keep, before.valueOffset(), before.count() * before.type().size());
+                } else if (bytes.length > 4) {
                     places[i] = append(length, bytes.length);
                 }
             }
             placements.add(places);
+            keptCounts.add(counts);
         }
         var offsets = new long[directories.size()];
         for (var index = 0; index < directories.size(); index++) {
@@ -248,12 +252,45 @@ public final class ExifWriter {
         writeHeader(block, little, offsets[0]);
         var pointers = pointers(directories, offsets, thumbnailOffset, thumbnail);
         for (var index = 0; index < directories.size(); index++) {
-            writeDirectory(block, offsets[index], directories.get(index), placements.get(index), pointers, little);
+            writeDirectory(block, offsets[index], directories.get(index), placements.get(index), keptCounts.get(index),
+                    pointers, little);
         }
         if (thumbnail != null) {
             System.arraycopy(thumbnail, 0, block, (int) thumbnailOffset, thumbnail.length);
         }
         return block;
+    }
+
+    /**
+     * Returns whether an out-of-line value of the existing block holds a value unchanged by the
+     * edit, so that it stays in place with its stored element count.
+     *
+     * <p>A text value is compared as read: an {@code ASCII} or {@code UTF-8} field ends at its first
+     * NUL, so a field stored with padding or with bytes after a NUL (a maker note of type
+     * {@code ASCII}) keeps its bytes. Any other value must have the same count and bytes.
+     *
+     * @param original the existing block
+     * @param before the existing entry
+     * @param value the value to store
+     * @param bytes the value encoded in the block's byte order
+     * @return {@code true} when the value stays where it is
+     */
+    private static boolean unchanged(byte[] original, Original before, ExifValue value, byte[] bytes) {
+        // a value kept in place is written back there, so it must not overlap the new header
+        if (before.valueOffset() < ExifReader.HEADER_SIZE || before.type() != value.type()) {
+            return false;
+        }
+        var stored = before.count() * before.type().size();
+        if (stored <= 4 || before.valueOffset() + stored > original.length) {
+            return false;
+        }
+        var offset = (int) before.valueOffset();
+        return switch (value) {
+            case ExifValue.Ascii ascii -> ExifValue.Ascii.decode(original, offset, (int) stored).equals(ascii);
+            case ExifValue.Utf8 utf8 -> ExifValue.Utf8.decode(original, offset, (int) stored).equals(utf8);
+            default -> stored == bytes.length && Arrays.equals(original, offset, offset + bytes.length,
+                    bytes, 0, bytes.length);
+        };
     }
 
     /**
@@ -365,11 +402,13 @@ public final class ExifWriter {
      * @param offset the offset of the directory
      * @param directory the laid-out directory to write
      * @param placements the offset of each entry's out-of-line value
+     * @param keptCounts the stored element count of each entry whose value stays in place in the
+     * block, whose bytes are left as they are, or {@code -1}
      * @param pointers the pointer and thumbnail values
      * @param little whether to write little endian
      */
     private static void writeDirectory(byte[] block, long offset, Directory directory, long[] placements,
-                                       Map<Long, Long> pointers, boolean little) {
+                                       long[] keptCounts, Map<Long, Long> pointers, boolean little) {
         var at = (int) offset;
         ExifReader.put16(block, at, directory.entries().size(), little);
         for (var index = 0; index < directory.entries().size(); index++) {
@@ -385,6 +424,11 @@ public final class ExifWriter {
             }
             var bytes = entry.bytes();
             ExifReader.put16(block, position + 2, entry.value().type().code(), little);
+            if (keptCounts[index] >= 0) {
+                ExifReader.put32(block, position + 4, keptCounts[index], little);
+                ExifReader.put32(block, position + 8, placements[index], little);
+                continue;
+            }
             ExifReader.put32(block, position + 4, entry.count(), little);
             ExifReader.put32(block, position + 8, 0, little);
             if (bytes.length <= 4) {

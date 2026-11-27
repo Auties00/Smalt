@@ -68,7 +68,8 @@ import java.util.TreeMap;
  * unit or, for a headerless AVC-Intra stream, of the parameter sets of its class and raster</td></tr>
  * <tr><td>MPEG-1, MPEG-2 and MPEG-4 Part 2 video (SMPTE ST 381-1)</td><td>{@link Codec#MPEG1_VIDEO},
  * {@link Codec#MPEG2_VIDEO}, {@link Codec#MPEG4_PART2}</td><td>one picture each; for MPEG-4 Part 2,
- * configuration the visual object sequence, visual object and video object layer headers of the first picture</td></tr>
+ * configuration the visual object sequence, visual object and video object layer headers of the first picture, and
+ * the elements of closed GOP wrapping split into their pictures, each stamped with its count in the stream</td></tr>
  * <tr><td>JPEG 2000 (SMPTE ST 422)</td><td>{@link Codec#JPEG2000}</td><td>one codestream each</td></tr>
  * <tr><td>DV-DIF (SMPTE ST 383)</td><td>{@link Codec#DV}</td><td>one DIF frame each</td></tr>
  * <tr><td>JPEG XS (SMPTE ST 2124)</td><td>{@link Codec#JPEG_XS}</td><td>one codestream each, two for an interlaced
@@ -76,6 +77,10 @@ import java.util.TreeMap;
  * <tr><td>Broadcast Wave and AES3 audio (SMPTE ST 382)</td><td>{@link Codec#PCM_S16LE}, {@link Codec#PCM_S24LE},
  * {@link Codec#PCM_S32LE}, {@link Codec#PCM_U8}, and the big-endian codecs for AIFF coded sound</td><td>the samples of
  * one edit unit (frame wrapped) or of at most 100 ms (clip wrapped)</td></tr>
+ * <tr><td>A-law audio (SMPTE ST 388)</td><td>{@link Codec#PCM_ALAW}</td><td>as Broadcast Wave audio</td></tr>
+ * <tr><td>D-10 AES3 audio (SMPTE ST 386, ST 331)</td><td>{@link Codec#PCM_S16LE}, {@link Codec#PCM_S24LE}</td><td>the
+ * samples of one edit unit, unpacked from the AES3 subframes of the element to the channels and bit depth of the
+ * descriptor</td></tr>
  * </tbody>
  * </table>
  * Other picture, sound and data essence becomes a track of {@link Codec#UNKNOWN_VIDEO},
@@ -123,6 +128,16 @@ public final class MxfDemuxer implements Demuxer {
      * The largest element read into one packet, in bytes.
      */
     private static final long MAX_ELEMENT = 1L << 30;
+
+    /**
+     * The most pictures a GOP-wrapped MPEG-4 Part 2 element is split into.
+     */
+    private static final int MAX_PICTURES = 1 << 12;
+
+    /**
+     * The channels of every D-10 AES3 sound element (SMPTE ST 331).
+     */
+    private static final int D10_CHANNELS = 8;
 
     /**
      * The bytes of the first element read to describe a picture track.
@@ -337,7 +352,7 @@ public final class MxfDemuxer implements Demuxer {
             }
             for (var stream : built) {
                 stream.track = buildTrack(stream, structure);
-                if (!stream.clipWrapped && holdsSeveralUnits(stream)) {
+                if (!stream.clipWrapped && !stream.d10Sound && holdsSeveralUnits(stream)) {
                     stream.clipWrapped = true;
                 }
             }
@@ -615,6 +630,7 @@ public final class MxfDemuxer implements Demuxer {
         }
         partition.walked = true;
         var at = partition.end;
+        var metadataEnd = metadataEnd(partition);
         var count = 0;
         while (count++ < MAX_PROBE_PACKETS && header(at)) {
             var next = valueStart + valueLength;
@@ -629,12 +645,25 @@ public final class MxfDemuxer implements Demuxer {
                 if (partition.index < 0) {
                     partition.index = at;
                 }
-            } else if (!MxfLabels.isFill(key) && !MxfLabels.isSet(key)) {
+            } else if (!MxfLabels.isFill(key) && !MxfLabels.isSet(key) && at >= metadataEnd) {
                 partition.essence = at;
                 return;
             }
             at = next;
         }
+    }
+
+    /**
+     * Returns the end of the header metadata a partition pack declares: the header byte count counts from the byte
+     * after the pack and covers every packet of the header metadata, dark sets of a private dictionary (as Avid
+     * writes) and fill included.
+     *
+     * @param partition the partition
+     * @return the file offset past the declared header metadata, or {@code -1} when the pack declares none
+     */
+    private static long metadataEnd(PartitionInfo partition) {
+        var count = partition.pack.headerByteCount();
+        return count > 0 ? partition.end + count : -1;
     }
 
     /**
@@ -649,10 +678,11 @@ public final class MxfDemuxer implements Demuxer {
             return null;
         }
         var end = partition.metadata;
+        var declared = metadataEnd(partition);
         var count = 0;
         while (count++ < MAX_SETS && header(end)) {
-            if (!MxfLabels.startsWith(key, MxfLabels.PRIMER) && !MxfLabels.isSet(key) && !MxfLabels.isFill(key)
-                    || MxfLabels.startsWith(key, MxfLabels.INDEX_SEGMENT)) {
+            if ((!MxfLabels.startsWith(key, MxfLabels.PRIMER) && !MxfLabels.isSet(key) && !MxfLabels.isFill(key)
+                    || MxfLabels.startsWith(key, MxfLabels.INDEX_SEGMENT)) && end >= declared) {
                 break;
             }
             end = valueStart + valueLength;
@@ -713,6 +743,14 @@ public final class MxfDemuxer implements Demuxer {
             case 's' -> soundCodec(stream, structure.soundKind.getOrDefault(stream, MxfLabels.SOUND_DESCRIPTOR));
             default -> Codec.DATA;
         };
+        if (stream.d10Sound) {
+            stream.codec = stream.bits > 16 ? Codec.PCM_S24LE : Codec.PCM_S16LE;
+            stream.channels = Math.clamp(stream.channels, 1, D10_CHANNELS);
+            stream.blockAlign = stream.channels * (stream.bits > 16 ? 3 : 2);
+        }
+        if (stream.codec == Codec.PCM_ALAW) {
+            stream.blockAlign = Math.max(stream.channels, 0);
+        }
         if (stream.kind == 's') {
             var bytes = stream.bits <= 0 ? 0 : (stream.bits + 7) / 8;
             if (stream.blockAlign <= 0 && stream.channels > 0 && bytes > 0) {
@@ -725,7 +763,9 @@ public final class MxfDemuxer implements Demuxer {
                             + stream.blockAlign + " bytes per sample and " + stream.sampleRate + " Hz");
                 }
                 LimitChecks.checkChannels(limits, stream.channels);
-                stream.codec = pcm(stream.blockAlign / stream.channels, stream.codec);
+                if (stream.codec != Codec.PCM_ALAW) {
+                    stream.codec = pcm(stream.blockAlign / stream.channels, stream.codec);
+                }
             }
         }
         var index = indexes.get(stream.bodySid);
@@ -828,6 +868,9 @@ public final class MxfDemuxer implements Demuxer {
         var coding = stream.coding;
         var family = stream.container != null && MxfLabels.startsWith(stream.container,
                 MxfLabels.bytes("060e2b34040101000d01030102")) ? stream.container[13] : -1;
+        if (family == 0x0A) {
+            return Codec.PCM_ALAW;
+        }
         if (coding != null && MxfLabels.startsWith(coding, MxfLabels.bytes("060e2b3404010100040202"))) {
             if (coding[11] == 0x01 && coding[12] == 0x7E) {
                 return Codec.PCM_S16BE;
@@ -905,7 +948,7 @@ public final class MxfDemuxer implements Demuxer {
      */
     private VideoTrack videoTrack(MxfStream stream, MxfSet descriptor, Rational editTime) {
         var builder = VideoTrack.builder().id(stream.id).codec(stream.codec).timeBase(editTime)
-                .duration(stream.duration).frameRate(stream.editRate);
+                .duration(stream.gopWrapped ? -1 : stream.duration).frameRate(stream.editRate);
         var width = stream.width;
         var height = stream.height;
         byte[] config = null;
@@ -1370,9 +1413,13 @@ public final class MxfDemuxer implements Demuxer {
         }
         reader.seek(valueStart);
         var data = reader.bytes(valueLength, MAX_ELEMENT);
+        if (stream.d10Sound) {
+            data = d10Samples(stream, data);
+        }
         currentElement = at;
         var packet = switch (stream.kind) {
-            case 'p' -> picture(stream, data, unit);
+            case 'p' -> stream.gopWrapped && stream.codec == Codec.MPEG4_PART2 ? pictures(stream, data)
+                    : picture(stream, data, unit);
             case 's' -> {
                 var samples = stream.blockAlign == 0 ? 0 : data.length / stream.blockAlign;
                 var start = stream.nextSample;
@@ -1384,6 +1431,83 @@ public final class MxfDemuxer implements Demuxer {
         stream.learn(at, packet.keyframe(), sample);
         stream.nextUnit++;
         return packet;
+    }
+
+    /**
+     * Splits an MPEG-4 Part 2 element of a closed GOP into one packet per picture, as ffmpeg's MPEG-4 video parser
+     * frames a stream: a picture runs from its first header to the start code (other than a slice or extension
+     * start code) that follows its video object plane, the last one to the end of the element, padding included. The
+     * packets after the first wait in the queue; pictures are stamped with their count in the stream, in edit units.
+     *
+     * @param stream the picture stream
+     * @param data the element value
+     * @return the first picture
+     */
+    private Packet pictures(MxfStream stream, byte[] data) {
+        var starts = new ArrayList<Integer>();
+        starts.add(0);
+        var plane = false;
+        for (var at = 0; at + 3 < data.length && starts.size() < MAX_PICTURES; at++) {
+            if (data[at] != 0 || data[at + 1] != 0 || data[at + 2] != 1) {
+                continue;
+            }
+            var code = data[at + 3] & 0xFF;
+            if (plane && code != 0xB7 && code != 0xB8) {
+                starts.add(at);
+                plane = false;
+            }
+            if (code == 0xB6) {
+                plane = true;
+            }
+            at += 3;
+        }
+        Packet first = null;
+        for (var index = 0; index < starts.size(); index++) {
+            var end = index + 1 < starts.size() ? starts.get(index + 1) : data.length;
+            var picture = Arrays.copyOfRange(data, starts.get(index), end);
+            var time = stream.nextSample++;
+            var packet = new Packet(stream.id, picture, time, time, 1, mpeg4Key(picture));
+            if (first == null) {
+                first = packet;
+            } else {
+                pending.add(packet);
+            }
+        }
+        return first;
+    }
+
+    /**
+     * Unpacks a D-10 AES3 sound element (SMPTE ST 331 clause 5.4) to little-endian PCM: after the 4-byte element
+     * header, each sample holds a 32-bit little-endian AES3 subframe for each of eight channels, whose bits 4 to 27
+     * are the audio sample; the channels the descriptor counts are kept, at its bit depth.
+     *
+     * @param stream the sound stream
+     * @param data the element value
+     * @return the samples
+     */
+    private static byte[] d10Samples(MxfStream stream, byte[] data) {
+        var wide = stream.bits > 16;
+        var count = Math.max(0, data.length - 4) / (4 * D10_CHANNELS);
+        var out = new byte[count * stream.blockAlign];
+        var at = 0;
+        for (var sample = 0; sample < count; sample++) {
+            var base = 4 + sample * 4 * D10_CHANNELS;
+            for (var channel = 0; channel < stream.channels; channel++) {
+                var offset = base + 4 * channel;
+                var word = (data[offset] & 0xFF) | (data[offset + 1] & 0xFF) << 8 | (data[offset + 2] & 0xFF) << 16
+                        | (data[offset + 3] & 0xFF) << 24;
+                var value = word >>> 4 & 0xFFFFFF;
+                if (wide) {
+                    out[at++] = (byte) value;
+                    out[at++] = (byte) (value >>> 8);
+                    out[at++] = (byte) (value >>> 16);
+                } else {
+                    out[at++] = (byte) (value >>> 8);
+                    out[at++] = (byte) (value >>> 16);
+                }
+            }
+        }
+        return out;
     }
 
     /**
@@ -1862,8 +1986,28 @@ public final class MxfDemuxer implements Demuxer {
                 continue;
             }
             stream.nextUnit = unitAtOrAfter(stream, position);
-            stream.nextSample = stream.kind == 's' ? sampleOfUnit(stream, stream.nextUnit) : 0;
+            stream.nextSample = stream.kind == 's' ? sampleOfUnit(stream, stream.nextUnit)
+                    : stream.gopWrapped ? pictureOfUnit(stream, stream.nextUnit) : 0;
         }
+    }
+
+    /**
+     * Returns the count of the first picture of an edit unit of a GOP-wrapped stream: the count read for a unit read
+     * before, else the average pictures of the units read before times the unit (the unit itself when none was read).
+     *
+     * @param stream the GOP-wrapped stream
+     * @param unit the edit unit
+     * @return the picture count
+     */
+    private static long pictureOfUnit(MxfStream stream, long unit) {
+        if (unit < stream.learnedCount) {
+            return stream.learnedSample[(int) unit];
+        }
+        if (stream.learnedCount < 2) {
+            return unit;
+        }
+        var last = stream.learnedCount - 1;
+        return unit * stream.learnedSample[last] / last;
     }
 
     /**

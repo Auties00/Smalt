@@ -14,22 +14,26 @@ import com.github.auties00.smalt.io.MediaSource;
  * index, the first image does not cover the canvas, an image is disposed to background, or an
  * image is truncated.
  *
+ * <p>A datastream with no image (the GIF89a grammar allows none, and an image descriptor or local
+ * color table cut short by the end of the input yields none) is blank: it renders, as browsers do,
+ * as one fully transparent frame of the logical screen.
+ *
  * @param width     the canvas width in pixels, positive
  * @param height    the canvas height in pixels, positive
- * @param frames    the number of images, positive
+ * @param frames    the number of frames, the number of images or 1 for a blank datastream
  * @param loopCount the stored loop count of the first looping application extension, or
  *                  {@code -1} when there is none
  * @param hasAlpha  whether the composited frames may contain transparent pixels
+ * @param blank     whether the datastream holds no image
  */
-record GifSummary(int width, int height, int frames, int loopCount, boolean hasAlpha) {
+record GifSummary(int width, int height, int frames, int loopCount, boolean hasAlpha, boolean blank) {
     /**
      * Scans a datastream.
      *
      * @param source the input
      * @param limits the limits applied to the scan
      * @return the summary
-     * @throws MediaException.Malformed if the header is invalid, the datastream holds no image, or
-     *                                  the canvas is empty
+     * @throws MediaException.Malformed if the header is invalid or the canvas is empty
      */
     static GifSummary scan(MediaSource source, MediaLimits limits) {
         var reader = new GifReader(source, limits);
@@ -48,13 +52,11 @@ record GifSummary(int width, int height, int frames, int loopCount, boolean hasA
             frames++;
             alpha |= frame.transparentIndex >= 0 || frame.disposal == GifFrame.DISPOSE_BACKGROUND || frame.truncated;
         }
-        if (frames == 0) {
-            throw new MediaException.Malformed("GIF datastream holds no image");
-        }
         if (width <= 0 || height <= 0) {
             throw new MediaException.Malformed("GIF canvas is empty");
         }
-        return new GifSummary(width, height, frames, reader.loopCount(), alpha);
+        var blank = frames == 0;
+        return new GifSummary(width, height, blank ? 1 : frames, reader.loopCount(), alpha || blank, blank);
     }
 
     /**

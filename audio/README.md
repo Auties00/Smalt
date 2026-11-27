@@ -348,7 +348,7 @@ Usual files: `.wav`, `.aif` and `.aifc`, `.mov`, `.caf` ([core formats](../core/
 - DRED encoding needs a mono or stereo single-stream encoder and a multiple of 10 ms, up to 1040 ms.
 - DRED networks load when the encoder is created and cost time on every frame.
 - The decoder's neural networks (about 3 MB in the jar) load on first use.
-- Only DRED version 10 of libopus 1.5.2 is read; other versions parse as no DRED.
+- DRED is the standardized one of libopus 1.6 (version 12); libopus 1.5's experimental version 10 parses as no DRED.
 - Neural output matches libopus only when libopus runs its generic C networks (no SSE, AVX or NEON).
 - Surround (3+ channels) is byte-identical to libopus only at an explicit bitrate with no bandwidth setting.
 - Per-packet `encode` fails while buffered input waits for a full packet.

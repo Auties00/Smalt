@@ -196,10 +196,10 @@ class GifDecoderTest {
     @DisplayName("LZW")
     class Lzw {
         @ParameterizedTest(name = "minimum code size {0}")
-        @ValueSource(ints = {1, 2, 3, 4, 5, 6, 7, 8})
-        @DisplayName("decodes every minimum code size, growing codes to 12 bits and clearing when full")
+        @ValueSource(ints = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})
+        @DisplayName("decodes every minimum code size browsers accept, growing codes to 12 bits and clearing when full")
         void codeSizes(int minimumCodeSize) {
-            var colors = 1 << minimumCodeSize;
+            var colors = 1 << Math.min(8, minimumCodeSize);
             var palette = new int[Math.max(2, colors)];
             for (var i = 0; i < palette.length; i++) {
                 palette[i] = i * 0x010101;
@@ -273,7 +273,7 @@ class GifDecoderTest {
         }
 
         @ParameterizedTest(name = "minimum code size {0}")
-        @ValueSource(ints = {0, 9, 12, 255})
+        @ValueSource(ints = {0, 12, 13, 255})
         @DisplayName("draws nothing for an image with an unusable minimum code size")
         void unusableCodeSize(int size) {
             var data = GifFiles.create(2, 2, PALETTE).imageData(0, 0, 2, 2, null, false, size, new byte[]{1, 2, 3})
@@ -282,6 +282,17 @@ class GifDecoderTest {
             assertEquals(2, frames.size());
             assertEquals(0, frames.getFirst().pixel(2, 0, 0));
             assertEquals(rgba(1), frames.get(1).pixel(2, 1, 1));
+        }
+
+        @Test
+        @DisplayName("keeps a literal code past 255 modulo 256, as browsers do")
+        void wideLiteral() {
+            // minimum code size 9: clear 512, end 513, 10-bit codes; literal 257 is index 1, 259 index 3
+            var lzw = new GifFiles.BitWriter().write(512, 10).write(257, 10).write(259, 10).write(513, 10).bytes();
+            var data = GifFiles.create(2, 1, PALETTE).imageData(0, 0, 2, 1, null, false, 9, lzw).trailer().bytes();
+            var frame = frames(data).getFirst();
+            assertEquals(rgba(1), frame.pixel(2, 0, 0));
+            assertEquals(rgba(3), frame.pixel(2, 1, 0));
         }
 
         @Test
@@ -535,28 +546,71 @@ class GifDecoderTest {
         }
 
         @Test
-        @DisplayName("rejects inputs without a valid header or without any image")
+        @DisplayName("rejects inputs without a valid header")
         void invalid() {
             assertThrows(MediaException.Malformed.class, () -> GifDecoder.decode(MediaSource.of(new byte[0]), OPTIONS));
             assertThrows(MediaException.Malformed.class, () -> GifDecoder.probe(MediaSource.of("GIF89".getBytes())));
             assertThrows(MediaException.Malformed.class, () -> GifDecoder.decode(MediaSource.of("GIF88a1234567".getBytes()), OPTIONS));
             var header = GifFiles.create(4, 4, PALETTE).trailer().bytes();
-            assertThrows(MediaException.Malformed.class, () -> GifDecoder.decode(MediaSource.of(header), OPTIONS));
-            assertThrows(MediaException.Malformed.class, () -> GifDecoder.openAnimation(MediaSource.of(header), OPTIONS));
             var truncatedTable = Arrays.copyOf(header, 20);
             assertThrows(MediaException.Malformed.class, () -> GifDecoder.probe(MediaSource.of(truncatedTable)));
+            var emptyScreen = GifFiles.create(0, 0, PALETTE).trailer().bytes();
+            assertThrows(MediaException.Malformed.class, () -> GifDecoder.decode(MediaSource.of(emptyScreen), OPTIONS));
+            assertThrows(MediaException.Malformed.class, () -> GifDecoder.openAnimation(MediaSource.of(emptyScreen), OPTIONS));
         }
 
         @Test
-        @DisplayName("rejects truncation before the first image's data and renders it after")
+        @DisplayName("renders a datastream without any image as one transparent frame of the logical screen")
+        void noImage() {
+            var header = GifFiles.create(4, 3, PALETTE).trailer().bytes();
+            assertBlank(header, 4, 3);
+            // the image descriptor ends inside its local color table: no image, as pygif's image-zero-size
+            var cut = GifFiles.create(5, 2, PALETTE).image(0, 0, 5, 2, PALETTE, false, pattern(5, 2, 8, 1), 3, false)
+                    .bytes();
+            assertBlank(Arrays.copyOf(cut, 37 + 10 + 6), 5, 2);
+        }
+
+        private static void assertBlank(byte[] data, int width, int height) {
+            var info = GifDecoder.probe(MediaSource.of(data));
+            assertEquals(width, info.width());
+            assertEquals(height, info.height());
+            assertEquals(1, info.frameCount());
+            assertFalse(info.animated());
+            assertTrue(info.hasAlpha());
+            var image = GifDecoder.decode(MediaSource.of(data), OPTIONS);
+            assertEquals(width, image.picture().width());
+            assertEquals(height, image.picture().height());
+            assertTrue(image.picture().hasAlpha());
+            assertTransparent(((RgbaPicture) image.picture()).pixels(), width * height);
+            try (var reader = GifDecoder.openAnimation(MediaSource.of(data), OPTIONS)) {
+                assertEquals(1, reader.frameCount());
+                var frame = reader.read();
+                assertNotNull(frame);
+                assertEquals(0, frame.durationMillis());
+                assertTransparent(((RgbaPicture) frame.picture()).pixels(), width * height);
+                assertNull(reader.read());
+            }
+        }
+
+        private static void assertTransparent(byte[] pixels, int count) {
+            for (var pixel = 0; pixel < count; pixel++) {
+                assertEquals(0, pixels[4 * pixel + 3], "alpha of pixel " + pixel);
+            }
+        }
+
+        @Test
+        @DisplayName("renders truncation before the first image's data as a transparent canvas, and the image after")
         void truncation() {
             var full = GifFiles.create(9, 7, PALETTE).loop("NETSCAPE2.0", 0).control(0, 3, 2)
                     .image(1, 1, 8, 6, null, true, pattern(8, 6, 8, 3), 3, false).trailer().bytes();
+            var headerEnd = 13 + 3 * PALETTE.length;
             var dataStart = full.length - GifFiles.lzw(GifFiles.interlace(pattern(8, 6, 8, 3), 8, 6), 3, false).length - 3;
             for (var length = 0; length <= full.length; length++) {
                 var prefix = Arrays.copyOf(full, length);
-                if (length < dataStart) {
+                if (length < headerEnd) {
                     assertThrows(MediaException.Malformed.class, () -> GifDecoder.decode(MediaSource.of(prefix), OPTIONS), "prefix " + length);
+                } else if (length < dataStart) {
+                    assertBlank(prefix, 9, 7);
                 } else {
                     GifDecoder.decode(MediaSource.of(prefix), OPTIONS);
                     assertEquals(1, frames(prefix).size(), "prefix " + length);

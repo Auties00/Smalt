@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.internal.caption;
 
+import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 
 import java.io.ByteArrayOutputStream;
@@ -7,7 +8,8 @@ import java.io.ByteArrayOutputStream;
 /**
  * Finds the ATSC A/53 {@code cc_data} constructs that video bitstreams carry: in H.264 and HEVC
  * {@code user_data_registered_itu_t_t35} SEI messages, in MPEG-1 and MPEG-2 video user data, and in AV1 ITU-T T.35
- * metadata OBUs, each as an ATSC {@code GA94} caption data structure.
+ * metadata OBUs, each as an ATSC {@code GA94} caption data structure, and the SCTE 20 caption data of MPEG-2 video
+ * user data.
  */
 public final class CcData {
     /**
@@ -29,6 +31,11 @@ public final class CcData {
      * The {@code user_data_type_code} of {@code cc_data}.
      */
     private static final int CC_DATA = 0x03;
+
+    /**
+     * The {@code user_data_type_code} of SCTE 20 caption data.
+     */
+    private static final int SCTE_20 = 0x03;
 
     private CcData() {
         throw new AssertionError();
@@ -125,21 +132,67 @@ public final class CcData {
     }
 
     /**
-     * Appends the {@code cc_data} constructs of the user data of an MPEG-1 or MPEG-2 video picture.
+     * Appends the {@code cc_data} constructs of the user data of an MPEG-1 or MPEG-2 video picture: ATSC
+     * {@code GA94} structures, and SCTE 20 caption data ({@code user_data_type_code} {@code 0x03}, ANSI/SCTE 20),
+     * whose field and line coded byte pairs become constructs as ffmpeg's MPEG-2 decoder makes them: each pair's
+     * bytes bit-reversed, its field number 1 or 2 the CEA-608 field (swapped when the picture coding extension
+     * clears {@code top_field_first}, as for a picture without one) and field number 0 an invalid construct.
      *
      * @param data the elementary stream bytes of the picture
      * @param out receives the three-byte constructs
      */
     public static void mpegVideo(byte[] data, ByteArrayOutputStream out) {
+        var topFieldFirst = false;
         var position = NalUnits.findStartCode(data, 0, data.length);
         while (position >= 0 && position + 3 < data.length) {
             var code = data[position + 3] & 0xFF;
             var next = NalUnits.findStartCode(data, position + 4, data.length);
             var end = next < 0 ? data.length : next;
-            if (code == 0xB2) {
-                ga94(data, position + 4, end, out);
+            if (code == 0xB5 && position + 7 < end && (data[position + 4] & 0xF0) == 0x80) {
+                topFieldFirst = (data[position + 7] & 0x80) != 0;
+            } else if (code == 0xB2) {
+                if (position + 6 <= end && data[position + 4] == SCTE_20 && (data[position + 5] & 0x7F) == 0x01) {
+                    scte20(data, position + 6, end, topFieldFirst, out);
+                } else {
+                    ga94(data, position + 4, end, out);
+                }
             }
             position = next;
+        }
+    }
+
+    /**
+     * Appends the caption pairs of SCTE 20 user data.
+     *
+     * @param data the bytes
+     * @param offset the index of the {@code cc_count} field
+     * @param end the index after the user data
+     * @param topFieldFirst the picture's {@code top_field_first}
+     * @param out receives the three-byte constructs
+     */
+    private static void scte20(byte[] data, int offset, int end, boolean topFieldFirst, ByteArrayOutputStream out) {
+        var reader = new MsbBitReader(data, offset, end - offset);
+        var count = reader.read(5);
+        for (var pair = 0; pair < count && reader.bitsLeft() >= 26; pair++) {
+            reader.read(2);
+            var field = reader.read(2);
+            reader.read(5);
+            var first = reader.read(8);
+            var second = reader.read(8);
+            reader.read(1);
+            if (field == 0) {
+                out.write(0);
+                out.write(0);
+                out.write(0);
+                continue;
+            }
+            var second608 = field == 2;
+            if (!topFieldFirst) {
+                second608 = !second608;
+            }
+            out.write(0xFC | (second608 ? 1 : 0));
+            out.write(Integer.reverse(first) >>> 24);
+            out.write(Integer.reverse(second) >>> 24);
         }
     }
 

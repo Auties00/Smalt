@@ -30,8 +30,9 @@ import static com.github.auties00.smalt.audio.opus.internal.OpusDefines.*;
  * one or two channels; each call encodes one frame of 2.5 to 120 ms into one packet.
  *
  * <p>With a DRED duration ({@link #setDredDuration}), the first non-DTX frame of every packet carries the Deep
- * REDundancy extension, and part of the bitrate goes to it, as libopus 1.5.2 built with DRED does; without one the
- * packets equal those of the build without DRED.
+ * REDundancy extension, and part of the bitrate goes to it, as libopus 1.5.2 built with DRED does, with the
+ * standardized DRED of libopus 1.6.1 (payload version 12); without one the packets equal those of the build without
+ * DRED.
  *
  * @implNote This implementation omits the OSCE-training and fixed-point code and holds the stack buffers of the
  * reference. As in the float build, the tonality analysis runs for complexity 7 and above. {@link #reset()} keeps the

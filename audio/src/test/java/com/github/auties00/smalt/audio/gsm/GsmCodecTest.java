@@ -210,10 +210,11 @@ class GsmCodecTest {
     }
 
     @Test
-    @DisplayName("codes the Software Tool Library's sine to frames that libgsm, through ffmpeg, decodes to this decoder's samples")
+    @DisplayName("codes the Software Tool Library's sine to frames that ffmpeg's GSM 06.10 decoder decodes to this decoder's samples")
     void stlSine(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws IOException {
         // sine.lin of the ITU-T STL RPE-LTP (cbacae9), 20 frames of 16-bit samples in the library's high-byte-first
-        // order; no reference coding ships with it, so libgsm, the coder the STL's RPE-LTP is, decodes ours
+        // order; no reference coding ships with it, so ffmpeg's native decoder, an independent bit-exact GSM 06.10
+        // implementation (the oracle builds no libgsm, the coder the STL's RPE-LTP is), decodes ours
         com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
         var bytes = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.vector(
                 "rpeltp-stl-sine.lin"));
@@ -228,7 +229,7 @@ class GsmCodecTest {
         var file = directory.resolve("sine.gsm");
         java.nio.file.Files.write(file, concat(packets));
         var raw = com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG,
-                java.time.Duration.ofMinutes(1), List.of("-v", "error", "-xerror", "-f", "gsm", "-c:a", "libgsm", "-i",
+                java.time.Duration.ofMinutes(1), List.of("-v", "error", "-xerror", "-f", "gsm", "-c:a", "gsm", "-i",
                         file.toString(), "-f", "s16le", "-"));
         var reference = new short[raw.length / 2];
         ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(reference);

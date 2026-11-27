@@ -155,6 +155,12 @@ public final class EncoderChannel {
     private int previousShape;
 
     /**
+     * Whether a frame was analyzed: the first takes the sine window shape, whose left half decoders agree on, as
+     * they take either the sine shape or the first frame's own one before it.
+     */
+    private boolean started;
+
+    /**
      * The number of window groups.
      */
     private int groupCount;
@@ -511,8 +517,9 @@ public final class EncoderChannel {
             return;
         }
         this.sequence = sequence;
-        this.shape = sequence == ChannelStream.EIGHT_SHORT_SEQUENCE || sequence == ChannelStream.LONG_START_SEQUENCE
-                ? Windows.SINE : Windows.KBD;
+        this.shape = !started || sequence == ChannelStream.EIGHT_SHORT_SEQUENCE
+                || sequence == ChannelStream.LONG_START_SEQUENCE ? Windows.SINE : Windows.KBD;
+        started = true;
         mdct.transform(input, offset, sequence, previousShape, shape, spectrum);
         previousShape = shape;
         tnsActive = false;

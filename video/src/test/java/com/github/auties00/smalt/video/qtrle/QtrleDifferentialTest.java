@@ -338,6 +338,34 @@ class QtrleDifferentialTest {
             assertEquals(0x000000, rgb(picture, 15, 0));
         }
 
+        @Test
+        @DisplayName("takes the depth and color table of a new codec configuration a packet carries")
+        void newCodecConfig() {
+            var decoder = VideoDecoders.create(track(4, table(0x102030, 0x405060), 8, 1),
+                    VideoDecoderOptions.defaults());
+            var four = frame(4, new byte[][]{{0x01, 0x10, 0x01, 0x10}});
+            var pictures = new ArrayList<RgbaPicture>();
+            decoder.decode(new Packet(1, four, 0, 0, 1, true), frame -> pictures.add((RgbaPicture) frame.picture()));
+            var second = com.github.auties00.smalt.track.PacketSideData.builder()
+                    .newCodecConfig(IntermediateFrames.qtrleConfig(4, table(0xA0B0C0, 0xD0E0F0))).build();
+            decoder.decode(new Packet(1, four, 1, 1, 1, false).withSideData(second),
+                    frame -> pictures.add((RgbaPicture) frame.picture()));
+            var eight = frame(4, new byte[][]{{0x00, 0x01, 0x00, 0x01}});
+            var third = com.github.auties00.smalt.track.PacketSideData.builder()
+                    .newCodecConfig(IntermediateFrames.qtrleConfig(8, table(0x111111, 0x222222))).build();
+            decoder.decode(new Packet(1, eight, 2, 2, 1, false).withSideData(third),
+                    frame -> pictures.add((RgbaPicture) frame.picture()));
+            assertEquals(0x102030, rgb(pictures.get(0), 0, 0));
+            assertEquals(0x405060, rgb(pictures.get(0), 1, 0));
+            assertEquals(0xA0B0C0, rgb(pictures.get(1), 0, 0));
+            assertEquals(0xD0E0F0, rgb(pictures.get(1), 1, 0));
+            // the 8-bit description codes four pixels per unit, a byte each
+            assertEquals(0x111111, rgb(pictures.get(2), 0, 0));
+            assertEquals(0x222222, rgb(pictures.get(2), 1, 0));
+            assertEquals(0x111111, rgb(pictures.get(2), 2, 0));
+            assertEquals(0x222222, rgb(pictures.get(2), 3, 0));
+        }
+
         @ParameterizedTest(name = "depth {0}")
         @ValueSource(ints = {1, 2, 4, 8})
         @DisplayName("carries the depth and color table through QuickTime and Matroska files, decoded alike by ffmpeg")

@@ -340,7 +340,7 @@ class TheoraDecoderTest {
     static Stream<org.junit.jupiter.params.provider.Arguments> hostedFiles() {
         return Stream.of(
                 "chromium-bear.ogv", "chromium-blackwhite_yuv420p.ogv", "chromium-blackwhite_yuv422p.ogv",
-                "chromium-blackwhite_yuv444p.ogv", "chromium-sync2.ogv", "theora-samples-queens-444.ogv",
+                "chromium-blackwhite_yuv444p.ogv", "theora-samples-queens-444.ogv",
                 "theora-samples-uncoded_fragments_4mv.ogg", "theora-testsuite-320x240.ogg",
                 "theora-testsuite-320x240.ogv", "theora-testsuite-322x242_not-divisible-by-sixteen-framesize.ogg",
                 "theora-testsuite-chained_streams.ogg", "theora-testsuite-ducks_take_off_444_720p25.ogg",
@@ -355,8 +355,9 @@ class TheoraDecoderTest {
     /**
      * Real-world Ogg files read from the hosted test data: the Xiph Theora test suite (which a decoder must play in
      * full: odd frame sizes, picture offsets, 4:2:2 and 4:4:4, pixel aspect ratios, variable frame rate, chained and
-     * multiplexed streams), Theora from third-party encoders and Wikimedia Commons, and the Chromium samples (one of
-     * them, {@code sync2.ogv}, carries VP8 in Ogg). Every picture must equal ffmpeg's decode, which is libtheora's.
+     * multiplexed streams), Theora from third-party encoders and Wikimedia Commons, and the Chromium samples (their
+     * {@code sync2.ogv} carries VP8 in Ogg, not Theora: the image module's {@code Vp8ConformanceTest} decodes it).
+     * Every picture must equal ffmpeg's decode, which is libtheora's.
      */
     @Nested
     @DisplayName("hosted files")

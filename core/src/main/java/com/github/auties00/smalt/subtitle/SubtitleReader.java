@@ -8,6 +8,7 @@ import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.internal.subtitle.CueMerger;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
 
@@ -245,12 +246,12 @@ public final class SubtitleReader implements AutoCloseable {
                 if (extractor != null) {
                     for (var captions : extractor.flush()) {
                         for (var cue : decoder.decodeAll(captions, markup)) {
-                            merger.offer(cue);
+                            merger.offer(cue, true);
                         }
                     }
                 }
                 for (var cue : decoder.flush(markup)) {
-                    merger.offer(cue);
+                    merger.offer(cue, true);
                 }
                 merger.finish();
                 break;
@@ -261,13 +262,14 @@ public final class SubtitleReader implements AutoCloseable {
             if (extractor != null) {
                 for (var captions : extractor.extract(packet)) {
                     for (var cue : decoder.decodeAll(captions, markup)) {
-                        merger.offer(cue);
+                        merger.offer(cue, true);
                     }
                 }
                 continue;
             }
+            var open = packet.duration() == Packet.UNKNOWN_DURATION;
             for (var cue : decoder.decodeAll(packet, markup)) {
-                merger.offer(cue);
+                merger.offer(cue, open);
             }
         }
         return ready.pollFirst();

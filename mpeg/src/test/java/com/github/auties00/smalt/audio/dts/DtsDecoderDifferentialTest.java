@@ -46,6 +46,35 @@ final class DtsDecoderDifferentialTest {
      */
     private static final Tolerance LOSSY = Tolerance.snr(90);
 
+    /**
+     * The LFE channel of a 96 kHz stream: this decoder interpolates it twice with the filter of ETSI TS 102 114
+     * Table 6-11, ffmpeg ({@code lfe_x96_float}) linearly, so the two agree to about 54 dB there.
+     */
+    private static final Tolerance X96_LFE = Tolerance.snr(50);
+
+    /**
+     * The index of the LFE channel in ffmpeg's channel order of the 5.1, 6.1 and 7.1 layouts.
+     */
+    private static final int LFE_INDEX = 3;
+
+
+    /**
+     * Asserts a decode of an X96 stream against ffmpeg's channel by channel: within float rounding but in the LFE
+     * channel ({@link #X96_LFE}).
+     */
+    private static void assertX96LikeFfmpeg(String name, float[] reference, DtsTestSupport.Decoded decoded) {
+        var channels = decoded.channels();
+        var frames = reference.length / channels;
+        for (var ch = 0; ch < channels; ch++) {
+            var expected = new float[frames];
+            var actual = new float[frames];
+            for (var i = 0; i < frames; i++) {
+                expected[i] = reference[i * channels + ch];
+                actual[i] = decoded.samples()[i * channels + ch];
+            }
+            (ch == LFE_INDEX ? X96_LFE : LOSSY).assertPcm(name + " channel " + ch, expected, actual);
+        }
+    }
 
     private static Path vector(String name) {
         return Conformance.vector("dts-" + name + ".dtshd");
@@ -68,13 +97,10 @@ final class DtsDecoderDifferentialTest {
             LOSSY.assertPcm(name, reference, decoded.samples());
         }
 
-        // X96 fills the subbands without bits with noise from a generator the specification leaves unstated, so the
-        // outputs agree only to the level of that noise; over XXCH the rear downmix is also undone at 96 kHz in the
-        // subband domain, which ffmpeg's decoder undoes on the PCM
         @ParameterizedTest(name = "{0}")
-        @CsvSource({"x96_51_24_96_1509, 50", "x96_xch_61_24_96_3840, 50", "x96_xxch_71_24_96_3840, 40"})
-        @DisplayName("96 kHz streams match ffmpeg to the level of the noise substitution")
-        void x96(String name, double snr) {
+        @ValueSource(strings = {"x96_51_24_96_1509", "x96_xch_61_24_96_3840", "x96_xxch_71_24_96_3840"})
+        @DisplayName("96 kHz streams match ffmpeg within float rounding but in the LFE channel")
+        void x96(String name) {
             Oracle.assume(Oracle.Tool.FFMPEG);
             var file = vector(name);
             var decoded = DtsTestSupport.decodeFile(file, DtsDecoderOptions.defaults());
@@ -82,7 +108,7 @@ final class DtsDecoderDifferentialTest {
             assertEquals(96000, decoded.sampleRate());
             assertEquals(reference.length, decoded.samples().length, "sample count");
             DtsTestSupport.report(name, reference, decoded.samples(), decoded.channels());
-            Tolerance.snr(snr).assertPcm(name, reference, decoded.samples());
+            assertX96LikeFfmpeg(name, reference, decoded);
         }
 
         @ParameterizedTest(name = "{0}")
@@ -401,11 +427,8 @@ final class DtsDecoderDifferentialTest {
                         oracle = Math.max(oracle, bestSnr(expected, channel, scale));
                     }
                     System.out.printf("DCADEC %s %s: ffmpeg float SNR %.2f dB%n", stream, speaker, oracle);
-                    // past 110 dB both are float rounding; over X96 the noise of the subbands without bits comes
-                    // from a generator the specification leaves unstated (see Fate#x96), which ffmpeg, derived from
-                    // dcadec, shares with it
-                    var margin = stream.startsWith("x96") ? 4 : 1;
-                    assertTrue(bestSnr >= Math.min(oracle - margin, 110), stream + " " + speaker + " against "
+                    // past 110 dB both are float rounding
+                    assertTrue(bestSnr >= Math.min(oracle - 1, 110), stream + " " + speaker + " against "
                             + reference + ": SNR " + bestSnr + ", ffmpeg's float decode " + oracle);
                 }
             }
@@ -429,9 +452,9 @@ final class DtsDecoderDifferentialTest {
     @DisplayName("real-world streams")
     final class RealWorld {
         @ParameterizedTest(name = "{0}")
-        @CsvSource({"dts-96-24.dts, 96000, 50", "dts-dts_es.dts, 48000, 90", "dts-hr-5.1-24bit.dts, 48000, 90"})
-        @DisplayName("match ffmpeg to the level of float rounding, or of the X96 noise substitution")
-        void lossy(String name, int rate, double snr) {
+        @CsvSource({"dts-96-24.dts, 96000", "dts-dts_es.dts, 48000", "dts-hr-5.1-24bit.dts, 48000"})
+        @DisplayName("match ffmpeg within float rounding, but in the LFE channel of X96")
+        void lossy(String name, int rate) {
             Oracle.assume(Oracle.Tool.FFMPEG);
             var file = Conformance.vector(name);
             var decoded = DtsTestSupport.decodeFile(file, DtsDecoderOptions.defaults());
@@ -439,7 +462,11 @@ final class DtsDecoderDifferentialTest {
             assertEquals(rate, decoded.sampleRate(), name + " rate");
             assertEquals(reference.length, decoded.samples().length, name + " sample count");
             DtsTestSupport.report(name, reference, decoded.samples(), decoded.channels());
-            Tolerance.snr(snr).assertPcm(name, reference, decoded.samples());
+            if (rate == 96000) {
+                assertX96LikeFfmpeg(name, reference, decoded);
+            } else {
+                LOSSY.assertPcm(name, reference, decoded.samples());
+            }
         }
 
         /**

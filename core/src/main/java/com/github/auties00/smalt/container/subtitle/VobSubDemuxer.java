@@ -31,6 +31,8 @@ import java.util.TreeMap;
  * becomes a {@link Codec#DVD_SUBTITLE} track whose identifier is its substream number plus one, in a 90 kHz time
  * base; each subpicture unit, reassembled from the PES packets that carry it, is one key packet stamped with the
  * presentation timestamp of the PES packet that started it and lasting until its first stop command when it has one.
+ * A PES packet that carries a timestamp of its own still continues an unfinished unit when it fits in the bytes the
+ * unit's size field declares.
  * Other streams, and a unit the file cuts short, are skipped.
  *
  * <p>With the index, the tracks get its header (the lines before its first stream, among them the frame size and
@@ -351,7 +353,7 @@ public final class VobSubDemuxer extends BitmapFileDemuxer {
          * @return the unit the payload completes, or {@code null}
          */
         Unit add(byte[] data, int start, int end, long time) {
-            if (time != Packet.NO_TIMESTAMP) {
+            if (time != Packet.NO_TIMESTAMP && !continues(end - start)) {
                 if (buffer.size() > 0) {
                     buffer.reset();
                 }
@@ -378,6 +380,24 @@ public final class VobSubDemuxer extends BitmapFileDemuxer {
             buffer.reset();
             pts = Packet.NO_TIMESTAMP;
             return unit;
+        }
+
+        /**
+         * Returns whether a PES packet that carries a timestamp continues the unit being reassembled: the unit is
+         * started and the payload fits in the bytes its size field still expects. Some authoring tools stamp every
+         * PES packet of a unit, the later ones with their own time.
+         *
+         * @param length the payload length
+         * @return {@code true} to append the payload to the unit
+         */
+        private boolean continues(int length) {
+            var held = buffer.size();
+            if (held < 2) {
+                return false;
+            }
+            var bytes = buffer.toByteArray();
+            var size = (bytes[0] & 0xFF) << 8 | (bytes[1] & 0xFF);
+            return held < size && held + length <= size;
         }
     }
 

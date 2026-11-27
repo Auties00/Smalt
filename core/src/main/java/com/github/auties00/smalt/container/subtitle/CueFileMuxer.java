@@ -107,7 +107,7 @@ abstract sealed class CueFileMuxer implements Muxer permits SubRipMuxer, WebVttM
         start();
         var cue = decoder.decode(packet);
         if (cue != null) {
-            merger.offer(cue);
+            merger.offer(cue, packet.duration() == Packet.UNKNOWN_DURATION);
         }
     }
 

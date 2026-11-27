@@ -1,9 +1,9 @@
-"""Regenerates the libopus 1.5.2 DNN models and tables that Smalt's Opus deep PLC, DRED and OSCE port use.
+"""Regenerates the libopus DNN models and tables that Smalt's Opus deep PLC, DRED and OSCE port use.
 
 Usage: python -I tools/codegen/opus-dnn/regen.py <work directory>
 
-Downloads opus-1.5.2.tar.gz (pinned by SHA-256) into <work directory>/download and unpacks it there, builds
-dump.c against it with gcc and runs it, then writes:
+Downloads opus-1.5.2.tar.gz and opus-1.6.1.tar.gz (pinned by SHA-256) into <work directory>/download and unpacks
+them there, builds dump.c against each with gcc and runs it, then writes:
 
 - audio/src/main/resources/com/github/auties00/smalt/audio/opus/internal/dnn/<model>.bin.gz: the weight blob
   of each model (pitchdnn, fargan, plc, rdovae-enc, rdovae-dec, lace, nolace), gzipped with mtime 0;
@@ -11,6 +11,10 @@ dump.c against it with gcc and runs it, then writes:
   RdovaeDecModel, LaceModel, NolaceModel): the constants of the model header and one field per layer,
   initialized from the blob as the model's init_* function does;
 - LpcnetTables.java (dnn/lpcnet_tables.c) and DredStats.java (dnn/dred_rdovae_stats_data.c).
+
+The DRED models and statistics (rdovae-enc, rdovae-dec, DredStats) come from libopus 1.6.1, whose DRED is the
+standardized one of draft-ietf-mlcodec-opus-dred (DRED_EXPERIMENTAL_VERSION 12); the other models and the tables come
+from libopus 1.5.2, which the rest of the port follows (1.6.1 ships the same weights for them).
 
 The outputs depend only on the tarball, so a rerun must leave the committed files unchanged.
 """
@@ -23,62 +27,70 @@ import sys
 import tarfile
 import urllib.request
 
-URL = "https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz"
-SHA256 = "65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1"
+# version: SHA-256 of opus-<version>.tar.gz
+RELEASES = {
+    "1.5.2": "65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1",
+    "1.6.1": "6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1",
+}
+DRED_VERSION = "1.6.1"
+BASE_VERSION = "1.5.2"
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 PACKAGE = "com.github.auties00.smalt.audio.opus.internal.dnn"
 JAVA = os.path.join(ROOT, "audio", "src", "main", "java", *PACKAGE.split("."))
 RESOURCES = os.path.join(ROOT, "audio", "src", "main", "resources", *PACKAGE.split("."))
 HEADER = ("/* Generated from tools/codegen/opus-dnn; edit the generator.\n"
-          "   Ports libopus 1.5.2 (%s).\n"
+          "   Ports libopus %s (%s).\n"
           "   Copyright Amazon, Mozilla and Xiph.Org Foundation; BSD 3-Clause License.\n"
           "   Modified for Smalt. */\n")
 
-# blob file, data file, init function, Java class, struct name, summary sentence
+# blob file, data file, init function, Java class, struct name, summary sentence, libopus version
 MODELS = [
     ("pitchdnn", "pitchdnn_data", "init_pitchdnn", "PitchDnnModel", "PitchDNN",
-     "The layers of the neural pitch estimator"),
+     "The layers of the neural pitch estimator", BASE_VERSION),
     ("fargan", "fargan_data", "init_fargan", "FarganModel", "FARGAN",
-     "The layers of the FARGAN vocoder"),
+     "The layers of the FARGAN vocoder", BASE_VERSION),
     ("plc", "plc_data", "init_plcmodel", "PlcModel", "PLCModel",
-     "The layers of the deep PLC feature predictor"),
+     "The layers of the deep PLC feature predictor", BASE_VERSION),
     ("rdovae-enc", "dred_rdovae_enc_data", "init_rdovaeenc", "RdovaeEncModel", "RDOVAEEnc",
-     "The layers of the DRED encoder"),
+     "The layers of the DRED encoder", DRED_VERSION),
     ("rdovae-dec", "dred_rdovae_dec_data", "init_rdovaedec", "RdovaeDecModel", "RDOVAEDec",
-     "The layers of the DRED decoder"),
+     "The layers of the DRED decoder", DRED_VERSION),
     ("lace", "lace_data", "init_lacelayers", "LaceModel", "LACELayers",
-     "The layers of the LACE speech enhancer"),
+     "The layers of the LACE speech enhancer", BASE_VERSION),
     ("nolace", "nolace_data", "init_nolacelayers", "NolaceModel", "NOLACELayers",
-     "The layers of the NoLACE speech enhancer"),
+     "The layers of the NoLACE speech enhancer", BASE_VERSION),
 ]
 
 
-def fetch(work):
+def fetch(work, version):
     download = os.path.join(work, "download")
     os.makedirs(download, exist_ok=True)
-    tarball = os.path.join(download, "opus-1.5.2.tar.gz")
+    name = "opus-" + version + ".tar.gz"
+    tarball = os.path.join(download, name)
     if not os.path.exists(tarball):
-        urllib.request.urlretrieve(URL, tarball)
+        urllib.request.urlretrieve("https://downloads.xiph.org/releases/opus/" + name, tarball)
     digest = hashlib.sha256(open(tarball, "rb").read()).hexdigest()
-    if digest != SHA256:
-        raise SystemExit("opus-1.5.2.tar.gz has SHA-256 " + digest + ", expected " + SHA256)
-    src = os.path.join(download, "opus-1.5.2")
+    if digest != RELEASES[version]:
+        raise SystemExit(name + " has SHA-256 " + digest + ", expected " + RELEASES[version])
+    src = os.path.join(download, "opus-" + version)
     if not os.path.isdir(src):
         with tarfile.open(tarball) as archive:
             archive.extractall(download, filter="data")
     return src
 
 
-def build_blobs(src, work):
+def build_blobs(sources, work):
     out = os.path.join(work, "blobs")
     os.makedirs(out, exist_ok=True)
-    exe = os.path.join(work, "dump.exe" if os.name == "nt" else "dump")
-    dnn = os.path.join(src, "dnn")
-    subprocess.check_call(["gcc", "-O1", "-w", "-DOPUS_BUILD", "-I" + dnn, "-I" + os.path.join(src, "include"),
-                           "-I" + os.path.join(src, "celt"), "-I" + src, os.path.join(HERE, "dump.c"),
-                           os.path.join(dnn, "parse_lpcnet_weights.c"), "-o", exe])
-    subprocess.check_call([exe, out])
+    for version, models in ((BASE_VERSION, "-DDUMP_BASE"), (DRED_VERSION, "-DDUMP_DRED")):
+        src = sources[version]
+        exe = os.path.join(work, "dump-" + version + (".exe" if os.name == "nt" else ""))
+        dnn = os.path.join(src, "dnn")
+        subprocess.check_call(["gcc", "-O1", "-w", "-DOPUS_BUILD", models, "-I" + dnn,
+                               "-I" + os.path.join(src, "include"), "-I" + os.path.join(src, "celt"), "-I" + src,
+                               os.path.join(HERE, "dump.c"), os.path.join(dnn, "parse_lpcnet_weights.c"), "-o", exe])
+        subprocess.check_call([exe, out])
     os.makedirs(RESOURCES, exist_ok=True)
     for blob, *_ in MODELS:
         data = open(os.path.join(out, blob + ".bin"), "rb").read()
@@ -135,10 +147,11 @@ def wrap(start, args, end):
     return "".join(out)
 
 
-def write_model(src, blob, data_name, init, cls, struct, summary):
+def write_model(sources, blob, data_name, init, cls, struct, summary, version):
+    src = sources[version]
     data = open(os.path.join(src, "dnn", data_name + ".c"), encoding="utf-8").read()
     header = open(os.path.join(src, "dnn", data_name + ".h"), encoding="utf-8").read()
-    lines = [HEADER % ("dnn/" + data_name + ".c, dnn/" + data_name + ".h"),
+    lines = [HEADER % (version, "dnn/" + data_name + ".c, dnn/" + data_name + ".h"),
              "package " + PACKAGE + ";\n", "\n",
              "/**\n", " * " + summary + " ({@code " + struct + "}), read from {@code " + blob + ".bin.gz}.\n",
              " *\n", " * <p>Instances are immutable and thread-safe.\n", " */\n",
@@ -182,12 +195,13 @@ def java_array(kind, name, values, doc):
     return "".join(lines)
 
 
-def write_tables(src):
+def write_tables(sources):
+    src = sources[BASE_VERSION]
     text = open(os.path.join(src, "dnn", "lpcnet_tables.c"), encoding="utf-8").read()
     kfft = re.search(r"const kiss_fft_state kfft = \{\n(\d+), /\* nfft \*/\n([-0-9.ef]+), /\* scale \*/\n"
                      r"(-?\d+), /\* shift \*/\n\{([^}]*)\}", text)
     factors = [f.strip() for f in kfft.group(4).split(",") if f.strip()]
-    lines = [HEADER % "dnn/lpcnet_tables.c", "package " + PACKAGE + ";\n", "\n",
+    lines = [HEADER % (BASE_VERSION, "dnn/lpcnet_tables.c"), "package " + PACKAGE + ";\n", "\n",
              "/**\n", " * The constant tables of the LPCNet feature analysis.\n", " */\n",
              "final class LpcnetTables {\n",
              "    /**\n     * The size of the analysis FFT.\n     */\n",
@@ -206,8 +220,8 @@ def write_tables(src):
                         "The DCT-II basis, indexed {@code [band * NB_BANDS + coefficient]}."),
              "    private LpcnetTables() {\n    }\n}\n"]
     write(os.path.join(JAVA, "LpcnetTables.java"), "".join(lines))
-    stats = open(os.path.join(src, "dnn", "dred_rdovae_stats_data.c"), encoding="utf-8").read()
-    lines = [HEADER % "dnn/dred_rdovae_stats_data.c", "package " + PACKAGE + ";\n", "\n",
+    stats = open(os.path.join(sources[DRED_VERSION], "dnn", "dred_rdovae_stats_data.c"), encoding="utf-8").read()
+    lines = [HEADER % (DRED_VERSION, "dnn/dred_rdovae_stats_data.c"), "package " + PACKAGE + ";\n", "\n",
              "/**\n", " * The quantization statistics of the DRED latents and initial state, indexed\n",
              " * {@code [quantizer * dimension + component]}; every value is an unsigned Q8 number.\n", " */\n",
              "final class DredStats {\n"]
@@ -232,11 +246,11 @@ def write(path, text):
 
 def main():
     work = os.path.abspath(sys.argv[1])
-    src = fetch(work)
-    build_blobs(src, work)
+    sources = {version: fetch(work, version) for version in RELEASES}
+    build_blobs(sources, work)
     for model in MODELS:
-        write_model(src, *model)
-    write_tables(src)
+        write_model(sources, *model)
+    write_tables(sources)
 
 
 if __name__ == "__main__":

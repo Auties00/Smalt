@@ -10,7 +10,8 @@ package com.github.auties00.smalt.subtitle;
 public enum SubtitleMarkup {
     /**
      * SubRip markup: {@code <b>}, {@code <i>}, {@code <u>} and {@code <font>} tags and {@code {\anN}} placements,
-     * no escaping.
+     * no escaping; MicroDVD control codes such as {@code {y:i}} carried over from MicroDVD files are hidden, and the
+     * ASS forced line break {@code \N} and hard space {@code \h} are honored.
      */
     SUBRIP,
 

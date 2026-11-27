@@ -611,6 +611,7 @@ class HeicConformanceTest {
                 "heic-pillow-tests-images-heif_special-transform_mismatch_thumbnail.heic",
                 "heic-pillow-tests-images-heif_other-nokia-bird_burst.heic",
                 "heif-libheif-clap_cropped.heic", "heif-libheif-conformance_window_padding.heic",
+                "heif-libheif-lightning_mini.heif",
                 "heif-libheif-rainbow-451x461.heic", "heif-libheif-with-alpha-512x512.heic",
                 "mei-heic-IMG_1034.heic", "mei-heic-IMG_2927.HEIC", "mei-heic-Issue_263_dotnet.heic",
                 "mei-heic-Issue_487.heic", "mei-heif-Sony_ILCE-7M4_A7M4.HIF"
@@ -639,11 +640,11 @@ class HeicConformanceTest {
         /**
          * A file the decoder does not support must be refused with {@link MediaException.Unsupported}, never decoded
          * into a wrong picture: the tiled items of {@code tbas} (whose {@code ipma} box also lists its items out of
-         * the increasing order ISO/IEC 14496-12 8.11.14.1 requires, which the decoder reports as malformed), the
-         * low-overhead {@code mini} format and a depth image the decoder does not reconstruct.
+         * the increasing order ISO/IEC 14496-12 8.11.14.1 requires, which the decoder reports as malformed) and a
+         * depth image the decoder does not reconstruct.
          */
         @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"heic-mpeg-iff_hevc_tile_multiple_items_tbas.heic", "heif-libheif-lightning_mini.heif",
+        @ValueSource(strings = {"heic-mpeg-iff_hevc_tile_multiple_items_tbas.heic",
                 "heic-pillow-tests-images-heif_special-unsupported_depth_image.heic"})
         @DisplayName("files with unsupported features decode their primary image or are refused as unsupported")
         void unsupported(String name) {

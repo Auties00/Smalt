@@ -13,7 +13,8 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
  *
  * <p>Each frame's duration is its graphic control delay times 10 milliseconds, as stored: a zero
  * delay stays zero. The animation ends at the trailer, at the end of the input, after a truncated
- * image, or at bytes that introduce no known block. A failure while reading or decompressing an
+ * image, or at bytes that introduce no known block; a datastream with no image yields one transparent frame of
+ * duration zero. A failure while reading or decompressing an
  * image is reported by the call that reaches that image, after the images before it, as reading
  * them one at a time would. Instances are not thread-safe.
  *
@@ -197,6 +198,11 @@ final class GifAnimationReader implements AnimationReader {
         try (var _ = ParallelBands.operation(operation)) {
             if (ended) {
                 return false;
+            }
+            if (summary.blank()) {
+                ended = true;
+                duration = 0;
+                return true;
             }
             try {
                 if (slots.length == 1) {

@@ -22,7 +22,9 @@ import java.util.function.Consumer;
  *
  * <p>Samples are scaled so that a full-scale 16-bit decoder output spans {@code [-1, 1]}; output channels follow
  * the WAVE order of {@link ChannelLayout}. The access units of an {@code AudioPreRoll()} at the start of the stream
- * are decoded before the first access unit and their output is discarded. A stream with MPEG-D DRC metadata (a
+ * are decoded before the first access unit and their output is discarded; an {@code AudioPreRoll()} that carries
+ * another configuration later in the stream, at a bitstream switch, calls for a new decoder
+ * ({@link #reconfigure(byte[], int, int)}). A stream with MPEG-D DRC metadata (a
  * {@code uniDrc} extension element or a {@code loudnessInfoSet()} configuration extension) is processed by the
  * MPEG-D DRC decoder of ISO/IEC 23003-4 after the core decoder, whose delay is absorbed: the first block is shorter
  * by it and {@link #flush(Consumer)} returns the rest. Instances are not thread-safe.
@@ -51,7 +53,17 @@ public final class UsacDecoder {
         public static final DrcRequest DEFAULT = new DrcRequest(Float.NaN, 0, 1.0f, 1.0f);
     }
 
+    /**
+     * Holds an {@code AudioPreRoll()}.
+     *
+     * @param config the {@code Config()} it carries, a {@code UsacConfig()} padded to whole bytes
+     * @param units its access units
+     */
+    private record PreRoll(byte[] config, byte[][] units) {
+    }
+
     private final UsacConfig config;
+    private final MediaLimits limits;
     private final int coreLength;
     private final int outputLength;
     private final CoreDecoder core;
@@ -167,6 +179,7 @@ public final class UsacDecoder {
      */
     public UsacDecoder(UsacConfig config, MediaLimits limits, DrcRequest request) {
         this.config = config;
+        this.limits = limits;
         this.coreLength = config.coreFrameLength();
         this.outputLength = config.outputFrameLength();
         var channelsOut = config.outputChannels();
@@ -293,7 +306,7 @@ public final class UsacDecoder {
     public void decode(byte[] data, int offset, int length, Consumer<AudioBuffer> sink) {
         if (!started) {
             started = true;
-            byte[][] preRoll;
+            PreRoll preRoll;
             try {
                 preRoll = readPreRoll(data, offset, length);
             } catch (MediaException.Malformed failure) {
@@ -301,12 +314,44 @@ public final class UsacDecoder {
                 return;
             }
             if (preRoll != null) {
-                for (var unit : preRoll) {
+                for (var unit : preRoll.units()) {
                     decodeUnit(unit, 0, unit.length, null);
                 }
             }
         }
         decodeUnit(data, offset, length, sink);
+    }
+
+    /**
+     * Returns the decoder of the configuration the {@code AudioPreRoll()} of an access unit carries when it differs
+     * from this decoder's, as at a switch between the representations of an adaptive stream: ISO/IEC 23003-3 has a
+     * decoder that meets an {@code AudioPreRoll()} with a new configuration start over with it, decoding the
+     * pre-roll's access units before the access unit that carries them. The new decoder, with the limits and the DRC
+     * request of this one, does that when it decodes the access unit; the samples this decoder still delays are
+     * left to {@link #flush(Consumer)}.
+     *
+     * @param data the input array
+     * @param offset the index of the access unit's first byte
+     * @param length the number of bytes
+     * @return the decoder of the new configuration, or {@code null} when the access unit carries no
+     * {@code AudioPreRoll()}, a corrupt one or one of this decoder's configuration
+     * @throws MediaException.Unsupported if the new configuration uses a tool this decoder lacks
+     * @throws MediaException.LimitExceeded if the new configuration declares more channels than the limits allow
+     */
+    public UsacDecoder reconfigure(byte[] data, int offset, int length) {
+        try {
+            var preRoll = readPreRoll(data, offset, length);
+            if (preRoll == null || preRoll.config().length == 0) {
+                return null;
+            }
+            var next = UsacConfig.parse(preRoll.config());
+            if (Arrays.equals(next.config(), config.config())) {
+                return null;
+            }
+            return new UsacDecoder(next, limits, drcRequest);
+        } catch (MediaException.Malformed failure) {
+            return null;
+        }
     }
 
     /**
@@ -462,9 +507,10 @@ public final class UsacDecoder {
      * Reads the access units of the {@code AudioPreRoll()} that opens an access unit, when the first element of the
      * configuration is an audio pre-roll extension element.
      *
-     * @return the access units, or {@code null} without a valid pre-roll
+     * @return the pre-roll, or {@code null} without a valid one
+     * @throws MediaException.Malformed if the pre-roll is truncated
      */
-    private byte[][] readPreRoll(byte[] data, int offset, int length) {
+    private PreRoll readPreRoll(byte[] data, int offset, int length) {
         var first = config.elements().getFirst();
         if (first.type() != UsacConfig.EXT || first.extensionType() != UsacConfig.EXT_AUDIO_PRE_ROLL) {
             return null;
@@ -484,7 +530,13 @@ public final class UsacDecoder {
             throw new MediaException.Malformed("USAC audio pre-roll is truncated");
         }
         var configLength = UsacConfig.escaped(reader, 4, 4, 8);
-        reader.skip(8L * configLength);
+        if (configLength * 8L > reader.bitsLeft()) {
+            throw new MediaException.Malformed("USAC audio pre-roll is truncated");
+        }
+        var preRollConfig = new byte[configLength];
+        for (var i = 0; i < configLength; i++) {
+            preRollConfig[i] = (byte) reader.read(8);
+        }
         reader.read(2);
         var count = UsacConfig.escaped(reader, 2, 4, 0);
         var units = new byte[count][];
@@ -499,7 +551,7 @@ public final class UsacDecoder {
             }
             units[i] = unit;
         }
-        return units;
+        return new PreRoll(preRollConfig, units);
     }
 
     /**

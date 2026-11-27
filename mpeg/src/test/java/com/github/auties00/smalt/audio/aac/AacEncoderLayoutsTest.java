@@ -606,8 +606,8 @@ class AacEncoderLayoutsTest {
         @CsvSource({"mono-48000-64000-cbr, 281ad6d4f2ebd81ab3b512acaa4c899d43597cb1657eb2f3cb54ab01f6eff185",
                 "stereo-44100-128000-cbr, ac2435eb2e2f2fc5d8fd575b5cb712b19a5c24f31516bc82053c13fcd36de777",
                 "stereo-48000-128000-vbr, 2e3a18ac9a582f4fd3e0c8874776e590fe9d7c85c0378aa661ad314b3a7ca1dc",
-                "5.1-48000-384000-cbr, b15201fe555134a89ecb8a34b0a430d5bf9509a8ae5388bbfc568c76b33b692d",
-                "5.1-32000-192000-vbr, a737c9c9fbef443ad93d8316b5f4e97776fcdd61ad9536af5ccde6a75cc66469"})
+                "5.1-48000-384000-cbr, 4656ed0bb0dd925374f996f84b61b17300a7b2365bd5afd7d0cda27432f32471",
+                "5.1-32000-192000-vbr, d159d68d5cc9fbebf3cff268434d5f1917735d115afb10faeaec5a4f917ec3c0"})
         @DisplayName("keeps its bitstream, pinned by SHA-256")
         void bitstream(String name, String expected) throws NoSuchAlgorithmException {
             var fields = name.split("-");

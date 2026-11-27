@@ -35,7 +35,9 @@ final class LbrTables {
             5, 5, 5, 5};
 
     /**
-     * The number of bits of a channel index plus one, by channel count ({@code BitsForChNum}, Table 9-17).
+     * The number of bits of a channel index, by channel count minus one ({@code BitsForChNum}, Table 9-17): the
+     * bits that hold the indices of that many channels, {@code ceil(log2(count))} from 2 channels on, as ffmpeg's
+     * decoder reads the main channel of a tonal component.
      */
     static final int[] BITS_FOR_CHANNELS = {1, 1, 2, 2, 3, 3, 3, 3, 4, 4};
 

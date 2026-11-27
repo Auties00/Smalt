@@ -374,7 +374,10 @@ final class MxfStructure {
         if (stream.container != null) {
             var wrapping = stream.container[14];
             var family = stream.container[13];
-            stream.clipWrapped = family == 0x06 ? wrapping == 0x02 || wrapping == 0x04
+            // a D-10 container (family 0x01) is always frame wrapped: its byte 14 names the template
+            stream.d10Sound = stream.kind == 's' && family == 0x01;
+            stream.gopWrapped = stream.kind == 'p' && family == 0x04 && stream.container[15] == 0x07;
+            stream.clipWrapped = family == 0x01 ? false : family == 0x06 ? wrapping == 0x02 || wrapping == 0x04
                     : family == 0x10 || family == 0x0F || family == 0x04 ? stream.container[15] == 0x02
                     : wrapping == 0x02;
         }

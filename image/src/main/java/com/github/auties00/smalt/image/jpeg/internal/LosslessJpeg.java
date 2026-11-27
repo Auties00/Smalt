@@ -31,7 +31,9 @@ import java.util.Arrays;
  * left, its first sample from {@code 2^(P - Pt - 1)}, and the first sample of every other line from
  * the sample above. T.81 requires restart intervals of whole rows of minimum coded units; an interval
  * that starts within a row is decoded with the samples of that row from the first sample of the
- * interval on, in each component, as its first line. Samples are shifted left by the point transform.
+ * interval on, in each component, as its first line. Samples are reconstructed modulo {@code 2^16}
+ * (H.1.2.1), as libjpeg and the DNG SDK do, so a sample of a stream whose differences leave the range of the
+ * precision keeps the bits above it; they are shifted left by the point transform.
  * Entropy-coded data never makes the decode fail: a stream that ends early or is corrupt decodes to
  * its end with zero bits (Huffman) or zero bytes (arithmetic) supplied in place of the missing data.
  * Damage to the headers of a scan after the first one ends the frame there, and the components no
@@ -828,7 +830,6 @@ public final class LosslessJpeg implements LosslessSamples {
         Arrays.fill(firstOfRow, 1 << (precision - 1));
         var last = new int[components];
         var reader = new BitReader(data, first.start(), end);
-        var mask = (1 << precision) - 1;
         for (var row = 0; row < rows; row++) {
             var index = 0;
             for (var unit = 0; unit < units; unit++) {
@@ -836,7 +837,7 @@ public final class LosslessJpeg implements LosslessSamples {
                     var component = slots[k];
                     var firstSample = unit == 0 && (k == 0 || slots[k - 1] != component);
                     var prediction = firstSample ? firstOfRow[k] : last[component];
-                    var value = (prediction + reader.difference(tablesOf[k])) & mask;
+                    var value = (prediction + reader.difference(tablesOf[k])) & 0xFFFF;
                     current[index++] = value;
                     last[component] = value;
                     if (unit == 0) {
@@ -944,7 +945,6 @@ public final class LosslessJpeg implements LosslessSamples {
             var transform = scan.pointTransform();
             var shifted = transform > 0 ? new int[unitsWide * hMax] : null;
             var initial = 1 << (precision - transform - 1);
-            var mask = differential ? 0xFFFF : (1 << precision) - 1;
             var predictor = scan.predictor();
             var interval = scan.restartInterval();
             BitReader reader = null;
@@ -1025,7 +1025,7 @@ public final class LosslessJpeg implements LosslessSamples {
                                 } else {
                                     difference = reader.difference(table);
                                 }
-                                current[x] = (prediction + difference) & mask;
+                                current[x] = (prediction + difference) & 0xFFFF;
                             }
                         }
                     }
@@ -1154,7 +1154,6 @@ public final class LosslessJpeg implements LosslessSamples {
             tables[k] = first.huffman()[k];
         }
         var initial = 1 << (precision - pointTransform - 1);
-        var mask = (1 << precision) - 1;
         var mcusLeft = restartInterval;
         var restartRow = true;
         for (var row = 0; row < height; row++) {
@@ -1165,7 +1164,7 @@ public final class LosslessJpeg implements LosslessSamples {
                     mcusLeft = restartInterval;
                     restartRow = true;
                     for (var k = 0; k < components; k++) {
-                        current[base + order[k]] = (initial + reader.difference(tables[k])) & mask;
+                        current[base + order[k]] = (initial + reader.difference(tables[k])) & 0xFFFF;
                     }
                     mcusLeft--;
                     continue;
@@ -1193,7 +1192,7 @@ public final class LosslessJpeg implements LosslessSamples {
                             default -> (a + b) >> 1;
                         };
                     }
-                    current[index] = (prediction + reader.difference(tables[k])) & mask;
+                    current[index] = (prediction + reader.difference(tables[k])) & 0xFFFF;
                 }
                 if (restartInterval > 0) {
                     mcusLeft--;

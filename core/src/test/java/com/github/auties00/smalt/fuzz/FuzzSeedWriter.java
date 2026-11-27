@@ -1181,6 +1181,8 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "mpeg4Video", "valid-mpeg4-studio.m4v", studio.resolve("studio-dpcm-options.m4v"));
         copy(DemuxerFuzzTest.class, "h263", "valid-h263.263", ffmpeg("h263", video(128, 96, 3), "-c:v", "h263",
                 "-q:v", "20"));
+        copy(DemuxerFuzzTest.class, "mpegVideo", "valid-mpeg2.m2v", ffmpeg("m2v", video(32, 32, 10), "-c:v",
+                "mpeg2video", "-bf", "2", "-g", "6", "-f", "mpeg2video"));
         // one 525/60 frame with its audio; both inputs end on their own, since the DV muxer writes nothing when
         // -frames:v ends the output while the audio input runs on
         var dv = ffmpeg("dv", List.of("-f", "lavfi", "-i", "testsrc2=size=720x480:rate=30000/1001:duration=0.02",

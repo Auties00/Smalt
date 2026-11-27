@@ -322,39 +322,38 @@ class UsacConformanceTest {
 
         /**
          * Switching representation at every segment boundary, after the first representation's initialization
-         * segment, must give each segment the samples of that representation's own decode once the AudioPreRoll of
-         * the segment has primed the decoder: the segments of the switched stream are compared with the same segments
-         * of the representation decoded alone, under the 14-bit criterion of the USAC tables.
+         * segment, must give the stream the length of a representation decoded alone and each segment the samples of
+         * its representation decoded from that segment on: the AudioPreRoll of the segment carries the new
+         * configuration, and ISO/IEC 23003-3 has the decoder start over with it, priming it with the pre-roll's
+         * access units, as a decoder that joins the representation at that segment does. (A decoder that ran through
+         * the earlier segments of the representation differs from it by its noise filling and SBR noise generators,
+         * whose states a new start resets.) The segments are compared under the 14-bit criterion of the USAC tables.
          */
         @org.junit.jupiter.api.Test
         @DisplayName("switching representation at every segment gives each segment the decode of its representation")
         void switching() {
-            var alone = new java.util.HashMap<String, float[][]>();
-            for (var rate : RATES) {
-                var names = new java.util.ArrayList<String>();
-                names.add(SET + "-eng-2-xheaac-" + rate + "kbps_init.mp4");
-                names.addAll(segments(rate, 0, SEGMENTS - 1));
-                alone.put(rate, decodeContainer(StreamingVectors.join(names), AacDecoderOptions.defaults()));
-            }
             var names = new java.util.ArrayList<String>();
             names.add(SET + "-eng-2-xheaac-16kbps_init.mp4");
             for (var n = 0; n < SEGMENTS; n++) {
                 names.addAll(segments(RATES[n % RATES.length], n, n));
             }
             var switched = decodeContainer(StreamingVectors.join(names), AacDecoderOptions.defaults());
-            assertEquals(alone.get("16")[0].length, switched[0].length, "length of the switched stream");
+            assertEquals(245760L * SEGMENTS, switched[0].length, "length of the switched stream");
             var segment = 245760;
             for (var n = 1; n < SEGMENTS; n++) {
-                var reference = alone.get(RATES[n % RATES.length]);
+                var rate = RATES[n % RATES.length];
+                var joined = new java.util.ArrayList<String>();
+                joined.add(SET + "-eng-2-xheaac-" + rate + "kbps_init.mp4");
+                joined.addAll(segments(rate, n, n));
+                var reference = decodeContainer(StreamingVectors.join(joined), AacDecoderOptions.defaults());
                 var start = n * segment;
-                var length = Math.min(segment, switched[0].length - start);
-                var expected = new float[2][length];
-                var actual = new float[2][length];
+                var expected = new float[2][segment];
+                var actual = new float[2][segment];
                 for (var c = 0; c < 2; c++) {
-                    System.arraycopy(reference[c], start, expected[c], 0, length);
-                    System.arraycopy(switched[c], start, actual[c], 0, length);
+                    System.arraycopy(reference[c], 0, expected[c], 0, segment);
+                    System.arraycopy(switched[c], start, actual[c], 0, segment);
                 }
-                assertRmsLsb("segment " + n + " at " + RATES[n % RATES.length] + " kbit/s", expected, actual, 0, 14);
+                assertRmsLsb("segment " + n + " at " + rate + " kbit/s", expected, actual, 0, 14);
             }
         }
     }

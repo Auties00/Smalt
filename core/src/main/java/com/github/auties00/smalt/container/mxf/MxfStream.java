@@ -40,6 +40,12 @@ final class MxfStream {
     Rational editRate;
 
     /**
+     * Whether each element holds a closed GOP (MPEG elementary stream wrapping 0x07 of SMPTE ST 381-1): its pictures
+     * are split, and {@link #nextSample} counts them.
+     */
+    boolean gopWrapped;
+
+    /**
      * The duration of the track in edit units, or {@code -1}.
      */
     long duration = -1;
@@ -58,6 +64,12 @@ final class MxfStream {
      * The essence container label, or {@code null}.
      */
     byte[] container;
+
+    /**
+     * Whether the sound is the AES3 element of a D-10 essence container (SMPTE ST 386): the 32-bit AES3 subframes of
+     * eight channels behind a 4-byte header (SMPTE ST 331), unpacked to little-endian PCM.
+     */
+    boolean d10Sound;
 
     /**
      * The picture or sound coding label, or {@code null}.

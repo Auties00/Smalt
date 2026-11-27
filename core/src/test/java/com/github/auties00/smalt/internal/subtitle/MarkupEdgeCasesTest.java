@@ -163,7 +163,8 @@ class MarkupEdgeCasesTest {
             for (var run : styled.runs()) {
                 assertEquals(0, run.style() & StyledText.STRIKEOUT, run.toString());
             }
-            assertTrue(styled.plain().endsWith("&<>\u00A0\u200E\u200F\"'ABC&#0;&#xZZ;&bogus;&;&verylongname;"),
+            // character references decode as in HTML text, the WebVTT cue text tokenizer's rule: &#0; is U+FFFD
+            assertTrue(styled.plain().endsWith("&<>\u00A0\u200E\u200F\"'ABC\uFFFD&#xZZ;&bogus;&;&verylongname;"),
                     styled.plain());
         }
     }

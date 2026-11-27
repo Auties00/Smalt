@@ -117,26 +117,24 @@ class RawRobustnessTest {
     @ParameterizedTest(name = "{0}")
     @CsvSource({
             // a NEF small raw image, whose samples are YCbCr rather than photosites (NEFCompression 8)
-            "NEF_D810_SMALL_RAW, true, small raw",
+            "NEF_D810_SMALL_RAW, small raw",
             // an ARW of Sony's lossless compression at a reduced size, of three samples per pixel
-            "ARW_A9M3, true, no raw image",
+            "ARW_A9M3, no raw image",
             // the new ARW coding of the ILCE-7M5 (TIFF compression 32766)
-            "ARW_A7M5, true, compression 32766",
+            "ARW_A7M5, compression 32766",
             // a Phase One IIQ Sv2 file (compression 6)
-            "IIQ_IQ140_SV2, true, compression 6",
+            "IIQ_IQ140_SV2, compression 6",
             // a CinemaDNG whose compression 7 tiles hold 12-bit DCT (SOF1) streams, which the DNG SDK's validator
             // rejects as an invalid file too
-            "DNG_BLACKMAGIC_MICRO_CINEMA, false, lossless JPEG"
+            "DNG_BLACKMAGIC_MICRO_CINEMA, DCT (SOF1)"
     })
     @DisplayName("real files of a coding the decoder does not support raise Unsupported naming it, and damaged copies "
             + "of them only MediaException")
-    void unsupported(RawSamples sample, boolean described, String feature) throws IOException {
+    void unsupported(RawSamples sample, String feature) throws IOException {
         var original = Files.readAllBytes(sample.path());
         var info = RawDecoder.info(MediaSource.of(original));
-        if (described) {
-            assertFalse(info.isDecodable());
-            assertTrue(info.unsupportedFeature().orElseThrow().contains(feature), info.unsupportedFeature().orElseThrow());
-        }
+        assertFalse(info.isDecodable());
+        assertTrue(info.unsupportedFeature().orElseThrow().contains(feature), info.unsupportedFeature().orElseThrow());
         var failure = assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decode(MediaSource.of(original)));
         assertTrue(failure.getMessage().contains(feature), failure.getMessage());
         assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decodeRaw(MediaSource.of(original)));

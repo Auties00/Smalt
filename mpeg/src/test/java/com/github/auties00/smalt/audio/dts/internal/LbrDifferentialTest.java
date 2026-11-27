@@ -571,12 +571,10 @@ final class LbrDifferentialTest {
     }
 
     /**
-     * A stream of several channel pairs.
-     *
-     * @param order the coded channel ffmpeg outputs first for each of Smalt's output channels, which follow the
-     *        speaker order
+     * A stream of several channel pairs: the pairs are coded first, then the single channel (for {@code 0x3} L, R
+     * and C), which both decoders output in the speaker order.
      */
-    record ChannelsCase(String name, int mask, int channels, int[] order, List<Frame> frames) {
+    record ChannelsCase(String name, int mask, int channels, List<Frame> frames) {
         @Override
         public String toString() {
             return name;
@@ -607,8 +605,8 @@ final class LbrDifferentialTest {
             frames.add(new Frame());
             frames.add(new Frame());
         }
-        cases.add(new ChannelsCase("a pair and a single channel", 0x3, 3, new int[]{1, 2, 0}, three));
-        cases.add(new ChannelsCase("two pairs", 0x6, 4, new int[]{0, 1, 2, 3}, four));
+        cases.add(new ChannelsCase("a pair and a single channel", 0x3, 3, three));
+        cases.add(new ChannelsCase("two pairs", 0x6, 4, four));
         return cases.stream();
     }
 
@@ -626,23 +624,9 @@ final class LbrDifferentialTest {
         var file = Scratch.directory("dts-lbr").resolve("channels-" + test.name().replace(' ', '-') + ".dts");
         Files.write(file, frames.toByteArray());
         var decoded = decode(file);
-        var reference = reorder(ffmpeg(file), test.order());
+        var reference = ffmpeg(file);
         assertEquals(reference.length, decoded.length, "sample count");
         RESIDUAL.assertPcm(test.name(), reference, decoded);
-    }
-
-    /**
-     * {@return interleaved samples with their channels moved: output channel {@code i} takes input channel
-     * {@code order[i]}}
-     */
-    private static float[] reorder(float[] samples, int[] order) {
-        var out = new float[samples.length];
-        for (var i = 0; i < samples.length; i += order.length) {
-            for (var ch = 0; ch < order.length; ch++) {
-                out[i + ch] = samples[i + order[ch]];
-            }
-        }
-        return out;
     }
 
     /**

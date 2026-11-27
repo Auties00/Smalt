@@ -48,9 +48,11 @@ final class CelpCore {
     private static final double[] RPE_ADAPTIVE_GAIN = new double[32];
 
     /**
-     * The first subframe fixed codebook gains of the RPE coder (Table 3.89).
+     * The first subframe fixed codebook gains of the RPE coder (Table 3.89), and gain 0 for index 31, which the
+     * table leaves out: the reference decoder reads it past its table as 0, and the alternative-format streams of
+     * ISO/IEC 14496-26 ({@code ce28a} to {@code ce35a}) open with it, their references silent in that frame.
      */
-    private static final double[] RPE_FIXED_GAIN = new double[31];
+    private static final double[] RPE_FIXED_GAIN = new double[32];
 
     /**
      * The fixed codebook gain ratios of the later RPE subframes (Table 3.90).
@@ -473,7 +475,7 @@ final class CelpCore {
         var ga = gainIndex > 31 ? -RPE_ADAPTIVE_GAIN[64 - gainIndex - 1] : RPE_ADAPTIVE_GAIN[gainIndex];
         double gf;
         if (s == 0) {
-            gf = RPE_FIXED_GAIN[Math.min(frame.fixedGain[s], RPE_FIXED_GAIN.length - 1)];
+            gf = RPE_FIXED_GAIN[frame.fixedGain[s]];
         } else {
             gf = RPE_FIXED_GAIN_RATIO[frame.fixedGain[s] & 7] * previousFixedGain;
         }

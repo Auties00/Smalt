@@ -314,18 +314,21 @@ class SubtitleTextTest {
         }
 
         @Test
-        @DisplayName("joins the pieces of split cues")
+        @DisplayName("joins the pieces of split cues and ends a cue of unknown duration at the next one")
         void merger() {
             var out = new ArrayList<SubtitleCue>();
             var merger = new CueMerger(out::add);
             merger.offer(SubtitleCue.of(0, 1000, "a"));
             merger.offer(SubtitleCue.of(1000, 2000, "a"));
             merger.offer(SubtitleCue.of(2000, 3000, "b"));
-            merger.offer(SubtitleCue.of(4000, 4000, "no duration"));
+            merger.offer(SubtitleCue.of(4000, 4000, "no duration"), true);
             merger.offer(SubtitleCue.of(6000, 7000, "c"));
+            merger.offer(SubtitleCue.of(8000, 8000, "zero duration"));
+            merger.offer(SubtitleCue.of(9000, 9500, "d"));
             merger.finish();
             assertEquals(List.of(SubtitleCue.of(0, 2000, "a"), SubtitleCue.of(2000, 3000, "b"), SubtitleCue.of(4000, 6000, "no duration"),
-                    SubtitleCue.of(6000, 7000, "c")), out);
+                    SubtitleCue.of(6000, 7000, "c"), SubtitleCue.of(8000, 8000, "zero duration"), SubtitleCue.of(9000, 9500, "d")),
+                    out);
         }
     }
 

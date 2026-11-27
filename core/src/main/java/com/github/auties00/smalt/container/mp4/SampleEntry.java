@@ -506,6 +506,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 config = vc1Config(dvc1);
             }
             case BoxTypes.S263, BoxTypes.H263 -> codec = Codec.H263;
+            case BoxTypes.DTPA -> codec = Codec.MJPEG;
             case BoxTypes.JPEG, BoxTypes.MJPA, BoxTypes.MJPB -> {
                 codec = Codec.MJPEG;
                 config = MotionJpegTables.toConfig(mjqt, mjht);

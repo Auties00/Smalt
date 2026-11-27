@@ -37,7 +37,11 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
  *
  * <p>In the shared mode the stream asks WASAPI for 32-bit float samples at the caller's rate and
  * channel count with {@code AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM}, so the audio engine converts and
- * the samples are copied as they are. When the caller's format is the engine's mix format and
+ * the samples are copied as they are. A capture or loopback stream asks for a buffer at least as
+ * long as the session's queue: the engine signals the event every engine period however long the
+ * buffer is, so the larger buffer adds no delay, while a stream thread that wakes late (the first
+ * wake of a cold JVM takes tens of milliseconds) still finds every packet instead of a
+ * discontinuity. When the caller's format is the engine's mix format and
  * the period is shorter than the engine's default, the stream asks
  * {@code IAudioClient3::InitializeSharedAudioStream} for a smaller engine period and falls back
  * to the default one when the driver refuses. In the exclusive mode the stream opens the device
@@ -416,6 +420,11 @@ final class WasapiStream implements DeviceEngine, Runnable {
             flags |= Wasapi.STREAMFLAGS_LOOPBACK;
         }
         var buffer = Math.max(plan.latencyNanos() / 100, period);
+        if (kind != Kind.PLAYBACK) {
+            // the engine signals every engine period whatever the buffer holds, so a capture buffer as long as the
+            // session's queue delays nothing and keeps a late wake of the stream thread from losing packets
+            buffer = Math.max(buffer, HNS_PER_SECOND * plan.bufferFrames() / plan.sampleRate());
+        }
         var format = Wasapi.waveFormat(arena, plan.sampleRate(), plan.channels(), AudioSampleFormat.FLOAT32, 32);
         Wasapi.check(Wasapi.initialize(client, Wasapi.SHAREMODE_SHARED, flags, buffer, 0, format), "IAudioClient::Initialize");
     }

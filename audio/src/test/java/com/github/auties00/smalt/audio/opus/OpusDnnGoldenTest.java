@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Checks the neural extensions of libopus 1.5.2 end to end against the build with {@code --enable-dred
- * --enable-osce} (generic C networks): the packets of encoders with Deep REDundancy must equal libopus's byte for
+ * --enable-osce} (generic C networks) whose DRED is the standardized one of libopus 1.6.1: the packets of encoders with Deep REDundancy must equal libopus's byte for
  * byte, and decoders of complexity 5 to 10 must reproduce, sample for sample, libopus's output over lossy traces
  * whose lost packets are concealed with the deep PLC, rebuilt from in-band FEC, or rebuilt from the DRED of the next
  * packet as {@code opus_demo} does, with LACE and NoLACE enhancing SILK speech at complexity 6 and from 7. A trace
@@ -34,15 +34,15 @@ class OpusDnnGoldenTest {
      * bandwidth, FEC, expected loss, DTX, DRED duration in 10 ms frames, SHA-256 of the libopus bitstream.
      */
     static final String[] ENCODERS = {
-            "e_dred48 speech48k 48000 1 voip 32000 cvbr 10 20000 auto auto 0 20 0 100 d11ece46d6e56266295d6bbaa89d57982f461589eab921df0a9e198c0d2eb112",
-            "e_dred16_fec speech16k 16000 1 voip 40000 vbr 10 20000 auto auto 1 15 0 50 8e68eb4f2332eb170efc069a85a338dd2f62b86179e04f52f868cb05dcb668ad",
-            "e_dred48_cbr40 speech48k 48000 1 voip 24000 cbr 10 40000 auto auto 0 25 0 100 38cfc7f64a5b01f675006c9bda62179f356ef2a54861876d781bf5a59f258d9f",
-            "e_dred16_st60 speech16k_stereo 16000 2 voip 32000 vbr 9 60000 voice auto 0 30 0 60 d6a254499c86370b7883b3d13aee2ae6d181960ea36ab87acaab0ca25e0dd8aa",
-            "e_dred48_dtx speech48k 48000 1 voip 20000 vbr 10 20000 auto auto 0 20 1 100 98816055ac8f8789d5e3fd5f9e2335cf66a8117f0d88a2212f1be032b25f4c0f",
-            "e_dred48_hyb40 speech48k 48000 1 audio 48000 cvbr 10 40000 auto auto 0 20 0 30 c0c16646a0e44c53b835b8acc34e4f101f34cbe06420894ca50fdfb01c611b92",
+            "e_dred48 speech48k 48000 1 voip 32000 cvbr 10 20000 auto auto 0 20 0 100 a325c893e6272a7e71350ddb000a1011d4f9180921e0a4663089cf9321580d63",
+            "e_dred16_fec speech16k 16000 1 voip 40000 vbr 10 20000 auto auto 1 15 0 50 760c5360d0ec1d212b772e3c93b5a43a3b17b21c1410344c294b3b7983152727",
+            "e_dred48_cbr40 speech48k 48000 1 voip 24000 cbr 10 40000 auto auto 0 25 0 100 907fb287f0003aee69d20528cba53e43693c4f73963b9efe86ba8aec4f4f6052",
+            "e_dred16_st60 speech16k_stereo 16000 2 voip 32000 vbr 9 60000 voice auto 0 30 0 60 c350dfca01ae10f127e4604f4bf98d71d31ce75affbe0c5001f0477cc1ceb35a",
+            "e_dred48_dtx speech48k 48000 1 voip 20000 vbr 10 20000 auto auto 0 20 1 100 b9d65aa3552db8d422d3e88bc4a890cd8b6fb0b508ed922c97d58357783faa07",
+            "e_dred48_hyb40 speech48k 48000 1 audio 48000 cvbr 10 40000 auto auto 0 20 0 30 d3270ed46f010c1c50ba80bf69d423517b1e7f61b72b01a0ce1972e44228af8b",
             "e_dred12 speech12k 12000 1 voip 32000 vbr 10 20000 auto auto 0 20 0 40 89a28a4d9fd4ccc07894cdfb782e1bab4eb3889cb50d2551079b9a60fdd67d49",
             "e_dred8 speech8k 8000 1 voip 28000 vbr 10 10000 auto auto 0 25 0 104 2845164d6041121f5a40b97c611ba1ced6d8fe99a23eb7dcb640cffb98bb7f0c",
-            "e_dred24 speech24k 24000 1 voip 40000 vbr 10 20000 auto auto 0 15 0 20 b2733c7b01effbfcfcaebe00c974b91d4f8cc77d1d0b6d7d9aa103f250d667ce",
+            "e_dred24 speech24k 24000 1 voip 40000 vbr 10 20000 auto auto 0 15 0 20 c1e7198b8bb32451a8372f2bf32f3f960ac61b5acd21cc42a989f9e73f270867",
             "e_plain16 speech16k 16000 1 voip 20000 vbr 10 20000 auto auto 1 15 0 0 d03c9d35ec9e5403f288dfd4435f85566fb16cd1ef57aa1b265ef0ba63e93758",
             "e_celt48 music48k_mono 48000 1 audio 48000 vbr 10 20000 auto auto 0 0 0 0 c6e7fd6942daeb0a325629ede243e557f676e44807d703c3c2bbce4585fb36cf",
             "e_celt48st music48k 48000 2 audio 96000 vbr 10 20000 auto auto 0 0 0 0 2167cd8bfd7a9bdfe14f13ec1af04be534deee8b4c7224549aca488009f6afc5",
@@ -53,18 +53,18 @@ class OpusDnnGoldenTest {
      * the libopus decoder output, number of packets rebuilt from DRED.
      */
     static final String[] DECODERS = {
-            "d_dred48_c5 e_dred48 48000 5 20 3 dred f32 7c4d4b67dc12252b7904eca703dbe5ba14b42f7f30a4f51ab5aab676cbbd176b 99",
-            "d_dred48_c7_s16 e_dred48 48000 7 20 3 dred s16 09f4d0f8750b0fedfed33297ba4e2a8d42c88c30f5f4c6b4f7071c8529256202 99",
-            "d_dred48_at16k e_dred48 16000 6 25 5 dred f32 596fd722cf7f9209ecb5104ba6aa9cf03f213dd6f42083718b0dc5a8223b83d0 124",
+            "d_dred48_c5 e_dred48 48000 5 20 3 dred f32 418987425516c3908b757c1529efc45aa6dc95bd755a16f84e22582701ab6cc2 99",
+            "d_dred48_c7_s16 e_dred48 48000 7 20 3 dred s16 74d2a20b14a391557dce4db57515c49e632063ca8c557f50dfe26ad446d810e6 99",
+            "d_dred48_at16k e_dred48 16000 6 25 5 dred f32 e6d2f49f49077e391e20a14845295a860ac693a1d0b86193dc4b8d8d50a9dd6a 124",
             "d_dred16_fec e_dred16_fec 16000 10 15 2 fec f32 4442c1e1abf5ffad7be8fac3e31df300a28684cdc28b6c9d12aef3402c9ded6d 0",
-            "d_dred16_dred e_dred16_fec 16000 5 30 9 dred f32 a5fe643d54f21a5cfa254868071c7d585e38c875822f0df3e8c0daeb080c7d70 142",
-            "d_dred48_cbr40 e_dred48_cbr40 48000 5 25 1 dred f32 16fde3bc99968ad5360a35d367f95e8ae1e91acb54d84ec12ea11966e68c47ed 63",
-            "d_dred16_st60 e_dred16_st60 16000 7 30 2 dred f32 0fe29ea782f1e6c09a076d6eb53f838ff555559af55edfeefd68cc2554acbe82 49",
-            "d_dred48_dtx e_dred48_dtx 48000 5 20 6 dred f32 b9249e54e4305b2fadf43892263b2932b6ed2a5640a5cea1bd8ff0f3ed7a7f1a 98",
-            "d_dred48_hyb40 e_dred48_hyb40 48000 5 20 4 dred f32 e44b4a5221eb2ff57533374e292d6fa03635d9fcf063f8b45245220130255667 50",
+            "d_dred16_dred e_dred16_fec 16000 5 30 9 dred f32 983790dbc1fe7ab248e57b4978560410670f3a6b182649d458689c210d74392c 142",
+            "d_dred48_cbr40 e_dred48_cbr40 48000 5 25 1 dred f32 9cfb8ed0016b734ec694aa133d597325bd1bd1c52131e47e00d4a8571004268b 63",
+            "d_dred16_st60 e_dred16_st60 16000 7 30 2 dred f32 8f5f7de33e659d7ab21c50d58b796e4c3dcb2f956e239c86e52d21c59b346a28 49",
+            "d_dred48_dtx e_dred48_dtx 48000 5 20 6 dred f32 1e36a58114a802df6a948a8867759a6da7a91646a26500d8ade44dff099f948d 97",
+            "d_dred48_hyb40 e_dred48_hyb40 48000 5 20 4 dred f32 0b6d4fdbd56867a3c4500160ad2e479a3d54cf622e302415236aed8d551dcd24 50",
             "d_dred12 e_dred12 12000 6 20 8 dred f32 40d21404235c6c99c0d1510a6c7f5aa4894430772b102b7a0a39f1ad77fab324 0",
             "d_dred8 e_dred8 8000 5 35 3 dred f32 5de57ae5911c8fec388080aea18af9726f2ab63bfd2653ed1a388e5e34205b0e 0",
-            "d_dred24 e_dred24 24000 9 20 4 dred s16 de2115e08097ae271393b12a9b5f1eb82ccbefc23907dd4840b52d8bb68c282d 99",
+            "d_dred24 e_dred24 24000 9 20 4 dred s16 3f78ad067a23a62c63c3be028b9078b3c0deae324109d6312d4f802f1678bc2a 99",
             "d_plc16 e_plain16 16000 5 15 2 plc f32 fba7152fbb4d39634c9012efe4d5bc5ae85b70f693c8fe09b2d1d7a14ad2c020 0",
             "d_lace16 e_plain16 16000 6 0 0 plc f32 8c70aa986c3aadb4fa14a1f392865ab77408aa9e7a6ffe4fa18ffb3970638b5e 0",
             "d_nolace16 e_plain16 16000 7 0 0 plc f32 91f109359e6feefbaf8eea59fd47370baba4d5ba1525363076ce50e965180b64 0",

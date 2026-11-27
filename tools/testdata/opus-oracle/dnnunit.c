@@ -1,4 +1,5 @@
-/* Writes the unit vectors of Smalt's port of the libopus 1.5.2 neural extensions: the outputs of the activation
+/* Writes the unit vectors of Smalt's port of the libopus 1.5.2 neural extensions, with the standardized DRED of
+   libopus 1.6.1 (see build.py): the outputs of the activation
    approximations, the LPCNet feature analysis, the Burg cepstrum, the FARGAN vocoder, the deep PLC, the DRED
    RDOVAE decoder and the LACE and NoLACE enhancers on deterministic inputs that Smalt's
    OpusDnnUnitTest generates the same way. build.py links it with the neural build.
@@ -129,12 +130,13 @@ int main(int argc, char **argv) {
 
     static RDOVAEDec rdovae;
     static float state[DRED_STATE_DIM];
-    static float latents[26 * DRED_LATENT_DIM];
+    /* Each latent is followed by the decoder's quantizer level input. */
+    static float latents[26 * (DRED_LATENT_DIM + 1)];
     static float rfeat[2 * 52 * DRED_NUM_FEATURES];
     init_rdovaedec(&rdovae, rdovaedec_arrays);
     lcg_state = 7;
     for (int i = 0; i < DRED_STATE_DIM; i++) state[i] = 2.f * lcg();
-    for (int i = 0; i < 26 * DRED_LATENT_DIM; i++) latents[i] = 3.f * lcg();
+    for (int i = 0; i < 26 * (DRED_LATENT_DIM + 1); i++) latents[i] = 3.f * lcg();
     DRED_rdovae_decode_all(&rdovae, rfeat, state, latents, 26, 0);
     record("rdovae", rfeat, 2 * 52 * DRED_NUM_FEATURES, 0);
 

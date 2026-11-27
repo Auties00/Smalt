@@ -1,5 +1,6 @@
-/* Reference harness of the libopus 1.5.2 neural extensions (deep PLC, DRED, OSCE), built by build.py with
-   ENABLE_DEEP_PLC, ENABLE_DRED and ENABLE_OSCE and the generic C code of the networks.
+/* Reference harness of the libopus 1.5.2 neural extensions (deep PLC, DRED, OSCE), with the standardized DRED of
+   libopus 1.6.1, built by build.py with ENABLE_DEEP_PLC, ENABLE_DRED and ENABLE_OSCE and the generic C code of the
+   networks.
 
    dnn enc <in.pcm> <out.bit> <rate> <channels> <voip|audio|lowdelay> <bitrate> <vbr|cvbr|cbr> <complexity>
            <frame_us> <signal auto|voice|music> <maxbw auto|nb|mb|wb|swb|fb> <fec 0|1> <loss pct> <dtx 0|1>

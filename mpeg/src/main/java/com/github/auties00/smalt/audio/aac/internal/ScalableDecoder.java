@@ -215,9 +215,10 @@ final class ScalableDecoder {
     private final float[][] predictionOverlaps;
 
     /**
-     * The window shape of the previous frame.
+     * The window shape of the previous frame, or -1 before the first frame, whose left half takes its own shape, as
+     * the ISO/IEC 14496-26 2nd edition references of {@code ac22} and {@code er_ac121} have it.
      */
-    private int previousShape;
+    private int previousShape = -1;
 
     /**
      * The scratch spectrum and time signal of the reconstruction of the first layer.
@@ -519,6 +520,9 @@ final class ScalableDecoder {
         extensionTns[0] = false;
         extensionTns[1] = false;
         readMainLayer();
+        if (previousShape < 0) {
+            previousShape = windowShape;
+        }
         var lastStereoBands = layerChannels[0] == 2 ? maxBands[0] : 0;
         for (var layer = 1; layer < present; layer++) {
             readExtensionLayer(layer, lastStereoBands);

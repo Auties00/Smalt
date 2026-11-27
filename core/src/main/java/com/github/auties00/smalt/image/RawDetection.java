@@ -79,10 +79,13 @@ final class RawDetection {
     private static final int SAMSUNG_COMPRESSION = 32773;
 
     /**
-     * The tags only camera raw files carry: Kodak's directory of the DCS files (33424), Leaf's metadata packets
-     * of the MOS files (34310) and Kodak's directory of the KDC files (65024).
+     * The tags only camera raw files carry in their first directory, in increasing order: Kodak's directory of the
+     * DCS files (33424), Leaf's metadata packets of the MOS files (34310), the private data a camera vendor keeps
+     * for raw converters ({@code DNGPrivateData}, 50740: Sony's pointer to its SR2 data, Pentax's maker note; a DNG
+     * file, which may have it too, is still a DNG by its {@code DNGVersion}) and Kodak's directory of the KDC files
+     * (65024).
      */
-    private static final int[] RAW_TAGS = {33424, 34310, 65024};
+    private static final int[] RAW_TAGS = {33424, 34310, 50740, 65024};
 
     /**
      * The most directories examined.

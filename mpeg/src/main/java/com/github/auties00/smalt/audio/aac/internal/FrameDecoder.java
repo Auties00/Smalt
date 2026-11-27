@@ -399,7 +399,9 @@ public final class FrameDecoder {
     private float[][] overlaps = new float[0][];
 
     /**
-     * The window shape of the previous frame of each coded channel.
+     * The window shape of the previous frame of each coded channel, or -1 before the first frame, whose left half
+     * takes its own shape: the ISO/IEC 14496-26 2nd edition references ({@code er_ad2101np}, {@code ac22},
+     * {@code er_ac121}) are decoded that way.
      */
     private int[] previousShapes = new int[0];
 
@@ -1142,6 +1144,9 @@ public final class FrameDecoder {
         var sbr = sbrActive();
         for (var channel = 0; channel < channelStreams.length; channel++) {
             var stream = channelStreams[channel];
+            if (previousShapes[channel] < 0) {
+                previousShapes[channel] = stream.windowShape();
+            }
             if (longTermPrediction) {
                 longTermPredictors[channel].predict(stream, overlaps[channel], previousShapes[channel], synthesis);
             }
@@ -1267,7 +1272,7 @@ public final class FrameDecoder {
                 var value = gain * source[k];
                 target[k] = state < 0 ? -value : value;
             }
-            stream.prepareConcealment(sequence, previousShapes[channel]);
+            stream.prepareConcealment(sequence, Math.max(previousShapes[channel], 0));
             lastSequences[channel] = sequence;
         }
         concealmentNoise = state;
@@ -1620,6 +1625,7 @@ public final class FrameDecoder {
             LimitChecks.checkAllocation(limits, (long) channels * (frameLength * 8L + outputLength * 4L + predictionBytes));
             overlaps = new float[channels][frameLength];
             previousShapes = new int[channels];
+            Arrays.fill(previousShapes, -1);
             lastSpectra = new float[channels][frameLength];
             lastSequences = new int[channels];
             concealable = false;

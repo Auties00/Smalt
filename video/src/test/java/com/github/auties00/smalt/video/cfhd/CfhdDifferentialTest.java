@@ -288,42 +288,48 @@ class CfhdDifferentialTest {
         FFMPEG.check(name, difference);
     }
 
+    /**
+     * The MD5 of each frame of GoPro's 16-bit Bayer (BYR4) decode of cfhd-samples-lower_res.mov: the frames' 16-bit
+     * little-endian photosites, row after row, from the cineform-sdk decoder (commit 11574d0, built from source) at
+     * full resolution. ffmpeg's decode of the file is no reference: its photosites differ from GoPro's everywhere
+     * (the first 31712 against GoPro's 27600), as its Bayer support rebuilds the quads without the SDK's
+     * reconstruction.
+     */
+    static final List<String> LOWER_RES_BYR4 = List.of("88232159f0288ea57e63f9cc3fff29a6",
+            "8ac0fee732ce75f907be3ca9fef5bed5", "0f3e01eebacfcd375d30594344ab2d63", "9a7d483263688597edd25033f7505f1a",
+            "8107b7f597555e1d3b1f1f460c9d10f9", "472378712cbf89f8df852ea62ebdb5b4", "91bf1c6877d4192b46eaf2adcb80c6b2",
+            "908e3ad88e8dcad6d5fd66a13b95f1f6", "28b8090aaa30331a14dc659c2ab7ca44");
+
     @Test
-    @DisplayName("decodes a GoPro Studio Bayer file to the photosites ffmpeg reads")
-    void decodesGoProBayerFile() {
+    @DisplayName("decodes a GoPro Studio Bayer file to the photosites of GoPro's 16-bit Bayer output")
+    void decodesGoProBayerFile() throws Exception {
         var file = com.github.auties00.smalt.testkit.Conformance.vector("cfhd-samples-lower_res.mov");
         var stream = IntraTesting.demux(file);
         var width = stream.track().width();
         var height = stream.track().height();
         var decoder = new CfhdDecoder(stream.track(), CfhdDecoderOptions.builder()
                 .bayerOutput(CfhdBayerOutput.MOSAIC).build());
-        var frame = 0;
+        var digest = java.security.MessageDigest.getInstance("MD5");
+        var md5s = new java.util.ArrayList<String>();
         for (var packet : stream.packets()) {
             var picture = decoder.decodeFrame(packet.data(), 0, packet.data().length);
             if (picture == null) {
                 continue;
             }
+            // the file's source had its curve applied before encoding (PCRV), so the mosaic keeps the coded curve
             var mosaic = (Yuv16Picture) picture;
             assertEquals(width, mosaic.width());
             assertEquals(height, mosaic.height());
-            var ours = new int[width * height];
+            var bytes = new byte[width * height * 2];
             for (var y = 0; y < height; y++) {
                 for (var x = 0; x < width; x++) {
-                    ours[y * width + x] = mosaic.y()[y * mosaic.yStride() + x] & 0xFFFF;
+                    var value = mosaic.y()[y * mosaic.yStride() + x];
+                    bytes[2 * (y * width + x)] = (byte) value;
+                    bytes[2 * (y * width + x) + 1] = (byte) (value >> 8);
                 }
             }
-            var coded = IntraTesting.ffmpegDecodeFrame(file, List.of(), "bayer_rggb16le", frame, width * height * 2);
-            var theirs = new int[ours.length];
-            for (var i = 0; i < theirs.length; i++) {
-                theirs[i] = (coded[2 * i] & 0xFF) | (coded[2 * i + 1] & 0xFF) << 8;
-            }
-            // the file's source had its curve applied before encoding (PCRV), so the mosaic keeps it and compares
-            // with ffmpeg's photosites directly; the bound is CfhdBayerTest's for ffmpeg's wavelet rounding
-            var difference = Tolerance.Difference.of(theirs, ours);
-            System.out.printf("lower_res frame %d: %s%n", frame, difference);
-            Tolerance.maxAbs(512).and(Tolerance.meanAbs(48)).check("lower_res frame " + frame, difference);
-            frame++;
+            md5s.add(java.util.HexFormat.of().formatHex(digest.digest(bytes)));
         }
-        assertEquals(stream.packets().size(), frame);
+        assertEquals(LOWER_RES_BYR4, md5s);
     }
 }

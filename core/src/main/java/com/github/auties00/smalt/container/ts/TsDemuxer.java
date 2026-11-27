@@ -58,7 +58,9 @@ import java.util.function.Function;
  *       first key frame; temporal units before it are dropped;</li>
  *   <li>the DOVI video stream descriptor (tag {@code 0xB0}, Dolby's "Dolby Vision Streams Within the MPEG-2
  *       Transport Stream Format") of an H.264, HEVC or AV1 stream gives its track's
- *       {@link com.github.auties00.smalt.track.VideoTrack#dolbyVision() Dolby Vision configuration};</li>
+ *       {@link com.github.auties00.smalt.track.VideoTrack#dolbyVision() Dolby Vision configuration}; a private
+ *       data stream ({@code 0x06}) with the descriptor is the enhancement layer of a dual-PID stream, read as the
+ *       video of its profile's codec (H.264 for profiles 0, 1 and 9, AV1 for profile 10, HEVC otherwise);</li>
  *   <li>MPEG-4 Part 2 ({@code 0x10}): one packet per PES packet, with the visual object sequence,
  *       visual object and video object layer headers of the first key frame as the
  *       configuration, and the picture size, frame rate and sample aspect ratio of the video
@@ -102,7 +104,9 @@ import java.util.function.Function;
  *       (one segment, usually) per packet; DVB subtitles ({@code 0x06} with a subtitling descriptor) as
  *       {@link Codec#DVB_SUBTITLE}, the segments of each PES packet with the descriptor body as the
  *       configuration; DVB teletext ({@code 0x06} with a teletext descriptor) as {@link Codec#DVB_TELETEXT}, each
- *       PES data field with the descriptor body as the configuration;</li>
+ *       PES data field with the descriptor body as the configuration; DVB TTML subtitles ({@code 0x06} with a TTML
+ *       subtitling descriptor, ETSI EN 303 560) as {@link Codec#TTML}, the TTML document of each PES packet, its
+ *       times moved onto the track's timeline;</li>
  *   <li>MPEG-1 and MPEG-2 video ({@code 0x01}, {@code 0x02}) as {@link Codec#MPEG1_VIDEO} and
  *       {@link Codec#MPEG2_VIDEO}, as the sequence header says (either stream type may carry either): one packet
  *       per PES packet (a PES packet that starts inside a picture completing the packet before it), with the
@@ -896,6 +900,9 @@ public final class TsDemuxer implements Demuxer {
             }
             probeScanner.finish(recorder);
             scannedTo = probeScanner.position();
+            if (selected != null && !complete() && pmtOffsets.get(selected.number()) > geometry.first()) {
+                replay(selected.number());
+            }
             if (selected == null) {
                 selectFallback();
             }
@@ -1028,6 +1035,31 @@ public final class TsDemuxer implements Demuxer {
                     return;
                 }
             }
+        }
+
+        /**
+         * Probes a program again from the start of the file, for a program whose map table came after the first
+         * packets of its streams (a recording that starts before its tables): the read pass applies the map from
+         * the start, so the parameter sets carried before the table configure the parsers.
+         *
+         * @param number the program number
+         */
+        private void replay(int number) {
+            probeVersions.clear();
+            parsers.clear();
+            used.clear();
+            firstTimes.clear();
+            var replay = new TsScanner(source, geometry, geometry.first(), geometry.first() + options.probeBytes(),
+                    limits, new TsClock(0, TsClock.NONE));
+            choose(number, replay);
+            ElementaryParser.UnitSink recorder = this::record;
+            while (replay.step(recorder)) {
+                if (complete()) {
+                    break;
+                }
+            }
+            replay.finish(recorder);
+            scannedTo = Math.max(scannedTo, replay.position());
         }
 
         /**
@@ -1410,6 +1442,16 @@ public final class TsDemuxer implements Demuxer {
         if (stream.registered(Psi.HEVC)) {
             return new NalParser(stream, limits, Codec.HEVC);
         }
+        if (stream.dolbyVision() != null) {
+            // the enhancement layer of a dual-PID Dolby Vision stream: "Dolby Vision Streams Within the MPEG-2
+            // Transport Stream Format" carries it as private data with the DOVI registration and video stream
+            // descriptor, in the codec of its profile
+            return switch (stream.dolbyVision().profile()) {
+                case 0, 1, 9 -> new NalParser(stream, limits, Codec.H264);
+                case 10 -> new Av1Parser(stream, limits);
+                default -> new NalParser(stream, limits, Codec.HEVC);
+            };
+        }
         if (stream.dtsDescriptor() || stream.registered(Psi.DTS1) || stream.registered(Psi.DTS2)
                 || stream.registered(Psi.DTS3)) {
             return new DtsParser(stream, limits);
@@ -1422,6 +1464,9 @@ public final class TsDemuxer implements Demuxer {
         }
         if (stream.teletext()) {
             return new PesParser(stream, limits, Codec.DVB_TELETEXT, null, stream.teletextPages());
+        }
+        if (stream.ttml()) {
+            return new TtmlParser(stream, limits);
         }
         return new SniffingParser(stream, limits);
     }

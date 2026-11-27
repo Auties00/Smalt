@@ -433,24 +433,50 @@ class AvifConformanceTest {
     }
 
     /**
-     * libheif's files of the low-overhead {@code mini} box (a zero-size one, tiles with alpha and with metadata):
-     * no oracle reads them, so each decodes to a picture of its declared size or is reported unsupported.
+     * libheif's files of the low-overhead {@code mini} box (ISO/IEC 23008-12:2024 Amd 2, brand {@code mif3}): tiles with
+     * alpha and with metadata. Their image and alpha items must decode as ffmpeg decodes the AV1 data of the items
+     * (no oracle reads the {@code mini} box itself), and the ICC profile (672 bytes in both), the EXIF (314 bytes) and
+     * the XMP (4276 bytes) chunks the boxes declare must come back whole.
      */
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"heif-libheif-mini_size_zero.avif", "heif-libheif-simple_osm_tile_alpha.avif",
-            "heif-libheif-simple_osm_tile_meta.avif"})
-    @DisplayName("decode libheif's mini box files or report them unsupported")
+    @ValueSource(strings = {"heif-libheif-simple_osm_tile_alpha.avif", "heif-libheif-simple_osm_tile_meta.avif"})
+    @DisplayName("decode libheif's mini box files as ffmpeg decodes their items")
     void miniBox(String vector) {
+        Oracle.assume(Oracle.Tool.FFMPEG);
         var data = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Conformance.vector(vector));
-        try {
-            var info = Images.probe(MediaSource.of(data));
-            var image = AvifDecoder.decode(MediaSource.of(data));
-            assertEquals(info.width(), image.picture().width(), vector);
-            assertEquals(info.height(), image.picture().height(), vector);
-            System.out.printf("%s: %dx%d%n", vector, info.width(), info.height());
-        } catch (com.github.auties00.smalt.MediaException.Unsupported unsupported) {
-            System.out.printf("%s: unsupported (%s)%n", vector, unsupported.getMessage());
+        var info = Images.probe(MediaSource.of(data));
+        assertEquals(256, info.width(), vector);
+        assertEquals(256, info.height(), vector);
+        var image = AvifDecoder.decode(MediaSource.of(data), ImageDecoderOptions.builder().highBitDepth(true).build());
+        assertPlanesEqual(AvifReference.primary(data), AvifReference.Planes.of(image.picture()), vector);
+        assertEquals(672, image.iccProfile().orElseThrow().length, vector);
+        var alpha = vector.endsWith("_alpha.avif");
+        assertEquals(alpha, image.picture().hasAlpha(), vector);
+        if (alpha) {
+            assertTrue(image.exif().isEmpty() && image.xmp().isEmpty(), vector);
+        } else {
+            var exif = image.exif().orElseThrow();
+            assertTrue(exif[0] == 'M' || exif[0] == 'I', vector);
+            assertEquals(4276, image.xmp().orElseThrow().length, vector);
         }
+    }
+
+    @Test
+    @DisplayName("decode a mini box whose size field is 0 (to the end of the file) like the same box with its size")
+    void miniBoxSizeZero() {
+        // mini_size_zero.avif is simple_osm_tile_alpha.avif with the mini box's size field set to 0 (ISO/IEC 14496-12
+        // 4.2: the box extends to the end of the file); every other byte is the same
+        var sized = com.github.auties00.smalt.testkit.Fixtures.read(
+                com.github.auties00.smalt.testkit.Conformance.vector("heif-libheif-simple_osm_tile_alpha.avif"));
+        var unsized = com.github.auties00.smalt.testkit.Fixtures.read(
+                com.github.auties00.smalt.testkit.Conformance.vector("heif-libheif-mini_size_zero.avif"));
+        var expected = com.github.auties00.smalt.image.ops.ImageOps.toRgba16(
+                AvifDecoder.decode(MediaSource.of(sized)).picture());
+        var actual = com.github.auties00.smalt.image.ops.ImageOps.toRgba16(
+                AvifDecoder.decode(MediaSource.of(unsized)).picture());
+        assertEquals(expected.width(), actual.width());
+        assertEquals(expected.height(), actual.height());
+        org.junit.jupiter.api.Assertions.assertArrayEquals(expected.pixels(), actual.pixels());
     }
 
     @Test

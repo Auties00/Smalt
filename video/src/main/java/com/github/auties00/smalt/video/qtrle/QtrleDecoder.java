@@ -22,7 +22,11 @@ import java.util.function.Consumer;
  *
  * <p>Every depth of the format decodes: 1, 2, 4 and 8-bit indices through the track's color table or the default
  * Macintosh table of the depth, 16-bit 5-5-5 RGB, 24-bit RGB, 32-bit ARGB, and gray indices of 1, 2, 4 or 8 bits
- * (depths 33, 34, 36 and 40) from white at index 0 to black at the last index. Frames decode to an
+ * (depths 33, 34, 36 and 40) from white at index 0 to black at the last index. A packet that carries a new codec
+ * configuration switches to that sample description's depth and color table, as a QuickTime file whose sample-to-chunk
+ * table gives frames different descriptions requires; at an index depth the picture is the indices the frames left
+ * shown through the current description's table, so a new table recolors the pixels a frame does not code too.
+ * Frames decode to an
  * {@link RgbaPicture}, opaque except at depth 32, which keeps the stored alpha; 5-bit components widen to 8 bits by
  * repeating their high bits. The output is exact: decoding a stream returns the very pixels it codes.
  *
@@ -45,29 +49,29 @@ public final class QtrleDecoder implements VideoDecoder {
     private final VideoTrack track;
 
     /**
-     * The sample description's depth.
+     * The current sample description's depth.
      */
-    private final int depth;
+    private int depth;
 
     /**
      * The palette of the index depths, as {@code 0xAARRGGBB} entries, or {@code null}.
      */
-    private final int[] palette;
+    private int[] palette;
 
     /**
      * The bytes of a coded unit.
      */
-    private final int unitBytes;
+    private int unitBytes;
 
     /**
      * The pixels a coded unit covers.
      */
-    private final int unitPixels;
+    private int unitPixels;
 
     /**
      * The bits of an index, or 0 for the direct color depths.
      */
-    private final int indexBits;
+    private int indexBits;
 
     private final int width;
 
@@ -81,7 +85,18 @@ public final class QtrleDecoder implements VideoDecoder {
     /**
      * The repeated unit of a run, expanded to RGBA.
      */
-    private final byte[] run;
+    private byte[] run;
+
+    /**
+     * The repeated unit of a run of an index depth, as indices.
+     */
+    private int[] runIndices;
+
+    /**
+     * The color index of every pixel coded at an index depth, {@code -1} for a pixel whose color {@link #canvas} holds,
+     * or {@code null} before the first index frame and after a change to a direct color depth.
+     */
+    private short[] indices;
 
     /**
      * Creates a decoder for a QuickTime Animation track.
@@ -102,8 +117,31 @@ public final class QtrleDecoder implements VideoDecoder {
             throw new IllegalArgumentException("not a qtrle track: " + track.codec());
         }
         this.track = track;
-        var config = track.codecConfig().orElse(null);
-        this.depth = IntermediateFrames.qtrleDepth(config);
+        configure(track.codecConfig().orElse(null));
+        this.width = track.width();
+        this.height = track.height();
+        if (width <= 0 || height <= 0) {
+            throw new MediaException.Malformed("QuickTime Animation track has no picture size");
+        }
+        MediaLimits limits = options.limits();
+        LimitChecks.checkPicture(limits, width, height);
+        LimitChecks.checkAllocation(limits, 4L * width * height);
+        this.canvas = new byte[width * height * 4];
+        if (depth != 32) {
+            for (var i = 3; i < canvas.length; i += 4) {
+                canvas[i] = (byte) 0xFF;
+            }
+        }
+    }
+
+    /**
+     * Takes the depth and color table of a sample description.
+     *
+     * @param config the description's configuration, as {@link Codec#QTRLE} describes, or {@code null}
+     * @throws MediaException.Unsupported if the configuration declares a depth the format does not define
+     */
+    private void configure(byte[] config) {
+        var depth = IntermediateFrames.qtrleDepth(config);
         switch (depth) {
             case 1, 33 -> {
                 unitBytes = 2;
@@ -142,22 +180,33 @@ public final class QtrleDecoder implements VideoDecoder {
             }
             default -> throw new MediaException.Unsupported("QuickTime Animation", "depth " + depth);
         }
-        this.palette = indexBits == 0 ? null : fullPalette(IntermediateFrames.qtrlePalette(config), indexBits);
-        this.width = track.width();
-        this.height = track.height();
-        if (width <= 0 || height <= 0) {
-            throw new MediaException.Malformed("QuickTime Animation track has no picture size");
-        }
-        MediaLimits limits = options.limits();
-        LimitChecks.checkPicture(limits, width, height);
-        LimitChecks.checkAllocation(limits, 4L * width * height);
-        this.canvas = new byte[width * height * 4];
-        this.run = new byte[unitPixels * 4];
-        if (depth != 32) {
-            for (var i = 3; i < canvas.length; i += 4) {
-                canvas[i] = (byte) 0xFF;
+        if (indexBits == 0 && indices != null) {
+            // a direct color description keeps the picture as the previous table showed it
+            for (var p = 0; p < indices.length; p++) {
+                if (indices[p] >= 0) {
+                    color(canvas, p, palette[indices[p]]);
+                }
             }
+            indices = null;
         }
+        this.depth = depth;
+        this.palette = indexBits == 0 ? null : fullPalette(IntermediateFrames.qtrlePalette(config), indexBits);
+        this.run = new byte[unitPixels * 4];
+        this.runIndices = new int[unitPixels];
+    }
+
+    /**
+     * Writes an opaque color into a packed RGBA picture.
+     *
+     * @param pixels the picture
+     * @param pixel the index of the pixel
+     * @param color the color, as {@code 0xAARRGGBB}
+     */
+    private static void color(byte[] pixels, int pixel, int color) {
+        pixels[pixel * 4] = (byte) (color >>> 16);
+        pixels[pixel * 4 + 1] = (byte) (color >>> 8);
+        pixels[pixel * 4 + 2] = (byte) color;
+        pixels[pixel * 4 + 3] = (byte) 0xFF;
     }
 
     /**
@@ -183,7 +232,8 @@ public final class QtrleDecoder implements VideoDecoder {
     }
 
     /**
-     * {@return the depth the track's configuration declares}
+     * {@return the depth of the current sample description: the track's configuration, or the last new configuration
+     * a decoded packet carried}
      */
     public int depth() {
         return depth;
@@ -192,14 +242,22 @@ public final class QtrleDecoder implements VideoDecoder {
     /**
      * Decodes one packet holding one frame.
      *
+     * <p>A packet whose side data carries a {@linkplain com.github.auties00.smalt.track.PacketSideData#newCodecConfig()
+     * new codec configuration} starts another sample description: its depth and color table apply from this frame on.
+     *
      * @param packet the next packet in decoding order
      * @param output receives the frame, carrying the packet's timestamps and key frame flag
      * @throws MediaException.Malformed if the frame is damaged
+     * @throws MediaException.Unsupported if a new configuration declares a depth the format does not define
      */
     @Override
     public void decode(Packet packet, Consumer<VideoFrame> output) {
         Objects.requireNonNull(packet, "packet");
         Objects.requireNonNull(output, "output");
+        var config = packet.sideData().newCodecConfig();
+        if (config.isPresent()) {
+            configure(config.get());
+        }
         var data = packet.data();
         decodeInto(data, 0, data.length);
         output.accept(new VideoFrame(picture(), packet.pts(),
@@ -227,7 +285,15 @@ public final class QtrleDecoder implements VideoDecoder {
      * {@return a copy of the current picture}
      */
     private RgbaPicture picture() {
-        return RgbaPicture.of(width, height, width * 4, canvas.clone(), depth == 32);
+        var pixels = canvas.clone();
+        if (indices != null) {
+            for (var p = 0; p < indices.length; p++) {
+                if (indices[p] >= 0) {
+                    color(pixels, p, palette[indices[p]]);
+                }
+            }
+        }
+        return RgbaPicture.of(width, height, width * 4, pixels, depth == 32);
     }
 
     /**
@@ -388,11 +454,11 @@ public final class QtrleDecoder implements VideoDecoder {
     }
 
     /**
-     * Expands one coded unit to RGBA pixels.
+     * Expands one coded unit to RGBA pixels, or to {@link #runIndices} at an index depth.
      *
      * @param data the array holding the unit
      * @param at the index of its first byte
-     * @param pixels receives {@link #unitPixels} RGBA pixels
+     * @param pixels receives {@link #unitPixels} RGBA pixels at a direct color depth
      */
     private void unit(byte[] data, int at, byte[] pixels) {
         switch (depth) {
@@ -420,12 +486,7 @@ public final class QtrleDecoder implements VideoDecoder {
                 var perByte = 8 / indexBits;
                 for (var i = 0; i < unitPixels; i++) {
                     var b = data[at + i / perByte] & 0xFF;
-                    var index = b >>> (8 - indexBits * (i % perByte + 1)) & mask;
-                    var color = palette[index];
-                    pixels[i * 4] = (byte) (color >>> 16);
-                    pixels[i * 4 + 1] = (byte) (color >>> 8);
-                    pixels[i * 4 + 2] = (byte) color;
-                    pixels[i * 4 + 3] = (byte) 0xFF;
+                    runIndices[i] = b >>> (8 - indexBits * (i % perByte + 1)) & mask;
                 }
             }
         }
@@ -442,7 +503,8 @@ public final class QtrleDecoder implements VideoDecoder {
     }
 
     /**
-     * Writes the pixels of one unit into a row, dropping those past its end.
+     * Writes the pixels of one unit into a row, dropping those past its end: the RGBA pixels at a direct color depth,
+     * {@link #runIndices} at an index depth.
      *
      * @param row the picture row
      * @param x the column of the unit's first pixel
@@ -450,8 +512,20 @@ public final class QtrleDecoder implements VideoDecoder {
      */
     private void put(int row, int x, byte[] pixels) {
         var count = Math.min(unitPixels, width - x);
-        if (count > 0) {
+        if (count <= 0) {
+            return;
+        }
+        if (indexBits == 0) {
             System.arraycopy(pixels, 0, canvas, (row * width + x) * 4, count * 4);
+            return;
+        }
+        if (indices == null) {
+            indices = new short[width * height];
+            Arrays.fill(indices, (short) -1);
+        }
+        var first = row * width + x;
+        for (var i = 0; i < count; i++) {
+            indices[first + i] = (short) runIndices[i];
         }
     }
 

@@ -224,8 +224,9 @@ class JpegLosslessTest {
             var source = assertInstanceOf(com.github.auties00.smalt.image.Rgba16Picture.class, png.picture());
             var jpeg = com.github.auties00.smalt.image.jpeg.JpegEncoder.encode(source,
                     com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.builder().lossless(true)
+                            .colorSpace(com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.ColorSpace.RGB)
                             .predictor(predictor).build());
-            // the RGB components decode to planes; their samples are compared as RGBA
+            // coded as RGB (cjpeg -rgb), without the lossy YCbCr conversion; the samples are compared as RGBA
             var decoded = com.github.auties00.smalt.image.ops.ImageOps.toRgba16(decode(jpeg, WIDE).picture());
             assertEquals(source.width(), decoded.width());
             for (var y = 0; y < source.height(); y++) {

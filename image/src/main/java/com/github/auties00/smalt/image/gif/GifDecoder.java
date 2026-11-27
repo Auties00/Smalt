@@ -40,8 +40,12 @@ import java.util.Optional;
  * <p>Damage is rendered, not rejected: an LZW code past the current table stops
  * that image with the pixels decoded so far; a missing trailer, a truncated last image (drawn
  * partially), or unknown bytes between blocks end the datastream. Only an invalid header, a
- * truncated global color table, or a datastream without any image raises
- * {@link MediaException.Malformed}. Pixel indices past the color table are not drawn.
+ * truncated global color table, or an empty canvas (a zero-size logical screen without an image to
+ * size it) raises {@link MediaException.Malformed}. Pixel indices past the color table are not drawn.
+ *
+ * <p>A datastream without any image, which the GIF89a grammar allows (as does an image descriptor or
+ * local color table cut short by the end of the input), renders as browsers render it: one fully
+ * transparent frame of the logical screen.
  *
  * <p>This class is thread-safe.
  */
@@ -62,15 +66,15 @@ public final class GifDecoder {
      * Reads the block structure of a GIF datastream without decoding pixels.
      *
      * <p>Every block is visited (image data is skipped), so {@link ImageInfo#frameCount()} is
-     * exact and {@link ImageInfo#animated()} is {@code true} when there is more than one image.
-     * {@link ImageInfo#hasAlpha()} is {@code true} when an image has a transparent index, the
-     * first image does not cover the canvas, an image is disposed to background, or the last
-     * image is truncated. The size is the canvas size, reported without checking it against any
+     * exact (1 for a datastream without any image) and {@link ImageInfo#animated()} is
+     * {@code true} when there is more than one image. {@link ImageInfo#hasAlpha()} is {@code true}
+     * when an image has a transparent index, the first image does not cover the canvas, an image is
+     * disposed to background, the last image is truncated, or there is no image. The size is the canvas size, reported without checking it against any
      * limit.
      *
      * @param source the input, read from offset zero
      * @return the image summary
-     * @throws MediaException.Malformed if the header is invalid or the datastream holds no image
+     * @throws MediaException.Malformed if the header is invalid or the canvas is empty
      * @throws MediaException.LimitExceeded if probing runs out of memory
      * @throws MediaException.Io if reading the source fails
      */
@@ -90,7 +94,7 @@ public final class GifDecoder {
      *
      * @param source the input, read from offset zero
      * @return the decoded image
-     * @throws MediaException.Malformed if the header is invalid or the datastream holds no image
+     * @throws MediaException.Malformed if the header is invalid or the canvas is empty
      * @throws MediaException.LimitExceeded if the canvas or the image exceeds the default limits, or
      * decoding runs out of memory
      * @throws MediaException.Io if reading the source fails
@@ -102,10 +106,10 @@ public final class GifDecoder {
 
     /**
      * Decodes the first image of a GIF datastream, composited onto a transparent canvas of the
-     * logical screen size.
+     * logical screen size, or that transparent canvas alone when the datastream holds no image.
      *
      * <p>The picture's {@link RgbaPicture#hasAlpha()} is {@code true} when the image has a
-     * transparent index, does not cover the canvas, or was not fully decoded. The reduced-size
+     * transparent index, does not cover the canvas, or was not fully decoded, or there is no image. The reduced-size
      * hint of {@code options} is ignored.
      *
      * <p>The ICC profile of an {@code ICCRGBG1} application extension preceding the first image
@@ -120,7 +124,7 @@ public final class GifDecoder {
      * is ignored
      * @return the decoded image
      * @throws IllegalArgumentException if the region does not lie inside the image
-     * @throws MediaException.Malformed if the header is invalid or the datastream holds no image
+     * @throws MediaException.Malformed if the header is invalid or the canvas is empty
      * @throws MediaException.LimitExceeded if the canvas or the image exceeds the limits, or
      * decoding runs out of memory
      * @throws MediaException.Io if reading the source fails
@@ -145,19 +149,19 @@ public final class GifDecoder {
                 var reader = new GifReader(source, limits);
                 reader.readHeader();
                 var frame = new GifFrame();
-                if (!reader.nextFrame(frame, true)) {
-                    throw new MediaException.Malformed("GIF datastream holds no image");
-                }
-                var width = GifSummary.canvasSide(reader.screenWidth(), frame.left, frame.width);
-                var height = GifSummary.canvasSide(reader.screenHeight(), frame.top, frame.height);
+                var found = reader.nextFrame(frame, true);
+                var width = found ? GifSummary.canvasSide(reader.screenWidth(), frame.left, frame.width)
+                        : reader.screenWidth();
+                var height = found ? GifSummary.canvasSide(reader.screenHeight(), frame.top, frame.height)
+                        : reader.screenHeight();
                 if (width <= 0 || height <= 0) {
                     throw new MediaException.Malformed("GIF canvas is empty");
                 }
                 LimitChecks.checkPicture(limits, width, height);
                 LimitChecks.checkAllocation(limits, (long) width * height * 4);
                 var canvas = new GifCanvas(width, height, true, limits);
-                var complete = canvas.draw(frame);
-                var alpha = frame.transparentIndex >= 0 || !frame.covers(width, height) || !complete;
+                var alpha = !found || !canvas.draw(frame) || frame.transparentIndex >= 0
+                        || !frame.covers(width, height);
                 var picture = RgbaPicture.of(width, height, width * 4, canvas.picture().pixels(), alpha);
                 var icc = reader.iccProfile();
                 var image = new DecodedImage(picture, ImageFormat.GIF, Orientation.NORMAL, width, height,
@@ -190,7 +194,7 @@ public final class GifDecoder {
      *
      * @param source the input, read from offset zero; it must stay open until the reader is closed
      * @return the animation reader
-     * @throws MediaException.Malformed if the header is invalid or the datastream holds no image
+     * @throws MediaException.Malformed if the header is invalid or the canvas is empty
      * @throws MediaException.LimitExceeded if the canvas or the frame count exceeds the default
      * limits
      * @throws MediaException.Io if reading the source fails
@@ -210,7 +214,7 @@ public final class GifDecoder {
      * stored {@code NETSCAPE2.0}/{@code ANIMEXTS1.0} loop count ({@code 0} meaning forever), or
      * {@code 1} when the datastream has none; each frame's
      * {@link AnimationFrame#durationMillis()} is the stored delay times 10. A still GIF yields a
-     * one-frame animation.
+     * one-frame animation, and so does a datastream without any image (a transparent frame).
      *
      * <p>The returned reader reads {@code source} lazily, so the source must stay open until the
      * reader is closed. It can seek: a seek backwards composites again from the first frame.
@@ -218,7 +222,7 @@ public final class GifDecoder {
      * @param source the input, read from offset zero
      * @param options the limits; the size hint is ignored
      * @return the animation reader
-     * @throws MediaException.Malformed if the header is invalid or the datastream holds no image
+     * @throws MediaException.Malformed if the header is invalid or the canvas is empty
      * @throws MediaException.LimitExceeded if the canvas or the frame count exceeds the limits
      * @throws MediaException.Io if reading the source fails
      */

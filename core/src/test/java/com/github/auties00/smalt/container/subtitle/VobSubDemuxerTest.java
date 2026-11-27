@@ -16,7 +16,9 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -391,7 +393,7 @@ class VobSubDemuxerTest {
     }
 
     @Test
-    @DisplayName("reads FATE's VobSub pair as ffprobe reads its index")
+    @DisplayName("reads FATE's VobSub pair as ffmpeg's demuxer and subtitle decoder read it")
     void fate() throws Exception {
         var idx = com.github.auties00.smalt.testkit.Conformance.vector("fate-sub-vobsub.idx");
         var sub = com.github.auties00.smalt.testkit.Conformance.vector("fate-sub-vobsub.sub");
@@ -401,24 +403,49 @@ class VobSubDemuxerTest {
             var copy = java.nio.file.Files.copy(idx, directory.resolve("fate-sub-vobsub.idx"));
             java.nio.file.Files.copy(sub, directory.resolve("fate-sub-vobsub.sub"));
             var probe = com.github.auties00.smalt.container.ContainerProbe.probe(copy);
+            var raw = directory.resolve("packets.bin");
+            com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG,
+                    java.time.Duration.ofMinutes(1), List.of("-v", "error", "-i", copy.toString(), "-map", "0",
+                            "-c", "copy", "-f", "data", raw.toString()));
+            var bytes = java.nio.file.Files.readAllBytes(raw);
+            // ffmpeg's demuxer returns a packet per index entry, and the file indexes the second PES packet of three
+            // subpicture units (at 185.9 s, 302.0 s and 328.4 s, stamped with their own times); its DVD subtitle
+            // decoder joins packets until the unit's size field is met (dvdsubdec.c, append_to_cached_buf), so the
+            // units are the joined packets, at the time of the packet that starts each
+            var times = new ArrayList<Long>();
+            var units = new ArrayList<byte[]>();
+            var position = 0;
+            var pending = new ByteArrayOutputStream();
+            long pts = 0;
+            for (var packet : probe.packets()) {
+                if (pending.size() == 0) {
+                    pts = packet.pts();
+                }
+                pending.write(bytes, position, packet.size());
+                position += packet.size();
+                var unit = pending.toByteArray();
+                if (unit.length >= 2 && unit.length >= ((unit[0] & 0xFF) << 8 | (unit[1] & 0xFF))) {
+                    units.add(unit);
+                    times.add(pts);
+                    pending.reset();
+                }
+            }
+            assertEquals(bytes.length, position, "ffmpeg's packet data");
+            assertEquals(0, pending.size(), "a unit ffmpeg leaves unfinished");
             try (var demuxer = new VobSubDemuxer(MediaSource.of(idx), MediaSource.of(sub),
                     com.github.auties00.smalt.container.DemuxerOptions.defaults())) {
                 var ours = com.github.auties00.smalt.container.ContainerProbe.demuxAll(demuxer);
                 assertEquals(probe.streams().size(), ours.tracks().size());
-                var expected = probe.packets();
                 var actual = ours.order();
-                assertEquals(expected.size(), actual.size());
+                assertEquals(units.size(), actual.size());
                 var track = ours.tracks().getFirst();
-                for (var index = 0; index < expected.size(); index++) {
-                    var want = expected.get(index);
+                for (var index = 0; index < units.size(); index++) {
                     var got = actual.get(index);
-                    assertEquals(want.size(), got.size(), "packet " + index);
-                    assertEquals(want.hash(), com.github.auties00.smalt.container.ContainerProbe.crc32(got.data()),
-                            "packet " + index);
+                    assertArrayEquals(units.get(index), got.data(), "packet " + index);
                     // ffmpeg's index timestamps are milliseconds
                     var millis = track.timeBase().rescale(got.pts(),
                             com.github.auties00.smalt.track.Rational.timeBaseOf(1000));
-                    assertEquals(want.pts() - expected.getFirst().pts(), millis - track.timeBase().rescale(
+                    assertEquals(times.get(index) - times.getFirst(), millis - track.timeBase().rescale(
                             actual.getFirst().pts(), com.github.auties00.smalt.track.Rational.timeBaseOf(1000)), 1,
                             "pts of " + index);
                 }

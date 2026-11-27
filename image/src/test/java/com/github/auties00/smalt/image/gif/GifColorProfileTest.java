@@ -217,9 +217,18 @@ class GifColorProfileTest {
         void truncated() {
             var profile = ColorProfile.displayP3().toByteArray();
             var gif = GifFiles.create(6, 5, PALETTE).icc(profile).bytes();
+            var headerEnd = 13 + 3 * PALETTE.length;
             for (var cut = 14; cut < gif.length; cut += 37) {
                 var data = Arrays.copyOf(gif, cut);
-                assertThrows(MediaException.Malformed.class, () -> GifDecoder.decode(MediaSource.of(data)));
+                if (cut < headerEnd) {
+                    assertThrows(MediaException.Malformed.class, () -> GifDecoder.decode(MediaSource.of(data)));
+                } else {
+                    // no image: the transparent logical screen, without the cut profile
+                    var image = GifDecoder.decode(MediaSource.of(data));
+                    assertEquals(6, image.picture().width());
+                    assertTrue(image.iccProfile().isEmpty(), "cut at " + cut);
+                    assertTrue(image.colorProfile().isEmpty(), "cut at " + cut);
+                }
             }
         }
 

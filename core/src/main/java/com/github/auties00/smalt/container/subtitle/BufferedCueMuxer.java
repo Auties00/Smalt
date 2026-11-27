@@ -131,7 +131,7 @@ abstract sealed class BufferedCueMuxer implements Muxer permits SamiMuxer, LrcMu
         started = true;
         var cue = target.decoder().decode(packet);
         if (cue != null) {
-            target.merger().offer(cue);
+            target.merger().offer(cue, packet.duration() == Packet.UNKNOWN_DURATION);
         }
     }
 

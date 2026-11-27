@@ -157,7 +157,20 @@ class AacDecoderDifferentialTest {
         @ValueSource(ints = {7350, 8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000})
         @DisplayName("match ffmpeg at every standard rate")
         void rate(int rate) {
-            assertMatchesFfmpeg(fixture("chirp", 2, rate, 2, "aac", "-b:a", Integer.toString(Math.min(160000, rate * 3))));
+            // ffmpeg's encoder opens some of these streams with a frame of the KBD shape; the shape before the first
+            // frame, which the standard leaves to the decoder, is the sine shape to ffmpeg and that frame's own to the
+            // ISO/IEC 14496-26 2nd edition reference decoder (which this decoder follows, see FrameDecoder), so the
+            // first block, the encoder's priming, is left out
+            var file = fixture("chirp", 2, rate, 2, "aac", "-b:a", Integer.toString(Math.min(160000, rate * 3)));
+            var stream = parse(file);
+            var planes = AacTestSupport.decodeAll(stream).planes();
+            var reference = AacTestSupport.deinterleave(Oracle.decodeAudio(file), planes.length);
+            assertEquals(reference[0].length, planes[0].length, "sample count");
+            for (var channel = 0; channel < reference.length; channel++) {
+                TOLERANCE.assertPcm("channel " + channel,
+                        java.util.Arrays.copyOfRange(reference[channel], 1024, reference[channel].length),
+                        java.util.Arrays.copyOfRange(planes[channel], 1024, planes[channel].length));
+            }
         }
     }
 

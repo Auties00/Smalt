@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link MatroskaMuxer}) checked with ffprobe and with a second demux, key-frame seeking in Theora,
  * and the Skeleton {@code fisbone} fields, languages and granule mappings of a hand-built file.
  */
-@DisplayName("Ogg Theora, Speex and Skeleton")
+@DisplayName("Ogg Theora, VP8, Speex and Skeleton")
 class OggCodecsTest {
     @TempDir
     Path directory;
@@ -457,5 +457,21 @@ class OggCodecsTest {
                     .map(Packet::pts).toList());
             assertEquals(3, packets.stream().filter(packet -> packet.trackId() == 0).count(), "the fisbone packets");
         }
+    }
+
+    @Test
+    @DisplayName("reads VP8 in Ogg (OVP80) with ffprobe's packets, timestamps and frame size")
+    void vp8() {
+        var demuxed = com.github.auties00.smalt.container.ThirdPartyDemux.assertMatchesFfprobe("chromium-sync2.ogv",
+                OggDemuxer::new);
+        var video = demuxed.tracks().stream().filter(track -> track instanceof VideoTrack).map(VideoTrack.class::cast)
+                .findFirst().orElseThrow();
+        assertEquals(Codec.VP8, video.codec());
+        var probe = com.github.auties00.smalt.container.ContainerProbe.probe(
+                com.github.auties00.smalt.testkit.Conformance.vector("chromium-sync2.ogv"));
+        var stream = probe.streams().stream().filter(candidate -> "vp8".equals(candidate.codecName())).findFirst()
+                .orElseThrow();
+        assertEquals(Integer.parseInt(stream.get("width")), video.width());
+        assertEquals(Integer.parseInt(stream.get("height")), video.height());
     }
 }

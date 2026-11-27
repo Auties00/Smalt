@@ -930,7 +930,8 @@ SHA-256), compiles `ofdown.c`, which muxes libopus packets into Ogg with libogg 
 opusfile's `op_read_float_stereo`, and prints the goldens of `OpusDownmixTest`.
 
 The neural extensions of libopus 1.5 (deep PLC, DRED, OSCE) have their own build: `build.py` compiles libopus a second
-time with `ENABLE_DEEP_PLC`, `ENABLE_DRED` and `ENABLE_OSCE` and the sources of `lpcnet_sources.mk`, its `dnn/` files
+time, with the DRED files of libopus 1.6.1 (the standardized DRED, payload version 12) in place of 1.5.2's, with
+`ENABLE_DEEP_PLC`, `ENABLE_DRED` and `ENABLE_OSCE` and the sources of `lpcnet_sources.mk`, its `dnn/` files
 without the x86 SIMD macros so that `vec.h` selects the generic C code Smalt ports, and links it with `dnn.c` and
 `dnnunit.c`. `dnn.c enc` encodes with a DRED duration (the controls of `msenc.c` plus the DRED frames) and `dnn.c dec`
 decodes at a complexity while dropping packets by `msdec.c`'s rule, concealing them, rebuilding the last one from

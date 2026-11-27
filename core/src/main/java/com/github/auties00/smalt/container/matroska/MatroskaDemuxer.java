@@ -187,7 +187,8 @@ import java.util.Set;
  * <p>Damage inside a cluster (an invalid element header, or an element that overruns its cluster)
  * makes the demuxer resynchronize at the next {@code Cluster} identifier, and junk before the
  * first cluster is skipped up to the next top-level element; a block with an invalid lace is
- * skipped. Every element read into memory is bounded by the {@link MediaLimits}, and
+ * skipped; a file cut short inside a block returns the blocks before it, then {@link #read()} raises
+ * {@link MediaException.Malformed}. Every element read into memory is bounded by the {@link MediaLimits}, and
  * master elements are parsed to a bounded depth.
  *
  * <p>A source that reads its input once, front to back (a stream), is told before every element

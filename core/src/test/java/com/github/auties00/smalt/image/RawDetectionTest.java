@@ -68,6 +68,8 @@ class RawDetectionTest {
     void dng() {
         var near = tiff(8, false, 256, 16, 50706, 1);
         assertEquals(Optional.of(ImageFormat.DNG), ImageFormat.detect(near, near.length));
+        var withPrivateData = tiff(8, false, 256, 16, 50706, 1, 50740, 8);
+        assertEquals(Optional.of(ImageFormat.DNG), Images.detect(MediaSource.of(withPrivateData)));
         var far = tiff(4000, false, 256, 16, 50706, 1);
         assertEquals(Optional.of(ImageFormat.TIFF), ImageFormat.detect(far, ImageFormat.DETECTION_LENGTH));
         assertEquals(Optional.of(ImageFormat.DNG), Images.detect(MediaSource.of(far)));
@@ -90,12 +92,21 @@ class RawDetectionTest {
     }
 
     @ParameterizedTest(name = "tag {0}")
-    @ValueSource(ints = {33424, 34310, 65024})
-    @DisplayName("a TIFF whose first directory carries Kodak's or Leaf's raw tags is a camera raw file")
+    @ValueSource(ints = {33424, 34310, 50740, 65024})
+    @DisplayName("a TIFF whose first directory carries Kodak's or Leaf's raw tags or DNGPrivateData is a camera raw file")
     void vendorTags(int tag) {
         assertEquals(Optional.of(ImageFormat.RAW), Images.detect(MediaSource.of(tiff(8, false, 256, 160, tag, 8))));
         assertEquals(Optional.of(ImageFormat.TIFF), Images.detect(MediaSource.of(tiff(8, false, 256, 160, tag + 1,
                 8))));
+    }
+
+    @Test
+    @DisplayName("a Sony ARW whose raw directory is YCbCr is a camera raw file by the DNGPrivateData of its first directory")
+    void sonyYcbcr() {
+        // the ILCE-9M3's raw directory is Photometric 6 (YCbCr) with compression 7 (lossless JPEG tiles), which a
+        // TIFF image could also be; its first directory holds Sony's DNGPrivateData, the pointer to its SR2 data
+        var file = com.github.auties00.smalt.testkit.Conformance.vector("rawpixls-sony-ilce-9m3-3-2.arw");
+        assertEquals(Optional.of(ImageFormat.RAW), Images.detect(MediaSource.of(file)));
     }
 
     @Test

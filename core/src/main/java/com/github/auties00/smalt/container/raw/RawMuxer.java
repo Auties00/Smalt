@@ -5,6 +5,7 @@ import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
+import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.internal.nal.NalRecords;
@@ -53,6 +54,8 @@ import java.util.Objects;
  *   <li>MPEG-4 Part 2: the pictures, back to back (an {@code .m4v} file), the configuration headers
  *       of the track repeated before every key frame that does not start with its own;</li>
  *   <li>H.263: the pictures, back to back (a {@code .263} file);</li>
+ *   <li>MPEG-1 and MPEG-2 video: the pictures, back to back (an {@code .m2v} file), the sequence header of the track
+ *       configuration repeated before every key frame that does not start with its own;</li>
  *   <li>WavPack: the blocks, back to back (a {@code .wv} file); a packet of complete blocks is written as it is,
  *       and the headerless blocks of a Matroska track ({@code A_WAVPACK4}, whose configuration is the stream
  *       version) get their headers back, the block index counting the samples written and the total length
@@ -267,11 +270,12 @@ public final class RawMuxer implements Muxer {
      *
      * @param codec the codec of the track
      * @return {@code true} for PCM, MP3, MP2, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, H.264, HEVC, VVC, AV1, MPEG-4
-     * Part 2, H.263 and WavPack
+     * Part 2, H.263, MPEG-1 and MPEG-2 video and WavPack
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, VVC, AV1, MPEG4_PART2, H263, WAVPACK -> true;
+            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, VVC, AV1, MPEG4_PART2, H263, MPEG1_VIDEO,
+                 MPEG2_VIDEO, WAVPACK -> true;
             default -> codec.isPcm();
         };
     }
@@ -284,7 +288,8 @@ public final class RawMuxer implements Muxer {
      * {@link ContainerFormat#DTS} DTS, {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC},
      * {@link ContainerFormat#VVC}, {@link ContainerFormat#AV1}, {@link ContainerFormat#AV1_ANNEX_B},
      * {@link ContainerFormat#MPEG4_VIDEO}, {@link ContainerFormat#H263} and {@link ContainerFormat#WAVPACK} their
-     * codec, and {@link ContainerFormat#PCM} every PCM codec; every other format is not an elementary stream this
+     * codec, {@link ContainerFormat#MPEG_VIDEO} MPEG-1 and MPEG-2 video, and {@link ContainerFormat#PCM} every PCM
+     * codec; every other format is not an elementary stream this
      * muxer writes.
      *
      * @param format the file format
@@ -306,6 +311,7 @@ public final class RawMuxer implements Muxer {
             case AV1, AV1_ANNEX_B -> codec == Codec.AV1;
             case MPEG4_VIDEO -> codec == Codec.MPEG4_PART2;
             case H263 -> codec == Codec.H263;
+            case MPEG_VIDEO -> codec == Codec.MPEG1_VIDEO || codec == Codec.MPEG2_VIDEO;
             case WAVPACK -> codec == Codec.WAVPACK;
             case PCM -> codec.isPcm();
             default -> false;
@@ -484,6 +490,12 @@ public final class RawMuxer implements Muxer {
             case AV1 -> writeTemporalUnit(packet);
             case MPEG4_PART2 -> {
                 if (packet.keyframe() && config != null && !startsWithConfiguration(packet.data())) {
+                    output.write(ByteBuffer.wrap(config));
+                }
+                output.write(ByteBuffer.wrap(packet.data()));
+            }
+            case MPEG1_VIDEO, MPEG2_VIDEO -> {
+                if (packet.keyframe() && config != null && !MpegVideoHeaders.startsWithSequenceHeader(packet.data())) {
                     output.write(ByteBuffer.wrap(config));
                 }
                 output.write(ByteBuffer.wrap(packet.data()));

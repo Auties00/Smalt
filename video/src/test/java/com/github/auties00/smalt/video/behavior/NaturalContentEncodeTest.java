@@ -54,6 +54,9 @@ class NaturalContentEncodeTest {
 
     private static final Tolerance LOSSLESS = Tolerance.exact();
 
+    /** The frames of a clip each encoder codes. */
+    private static final int FRAMES = 10;
+
     record Clip(String vector, ChromaFormat chroma, int depth) {
         String pixelFormat() {
             var base = switch (chroma) {
@@ -114,7 +117,7 @@ class NaturalContentEncodeTest {
         return cases.stream();
     }
 
-    /** Reads the frames of a clip as raw planar video of its pixel format. */
+    /** Reads the first {@link #FRAMES} frames of a clip as raw planar video of its pixel format. */
     static byte[] source(Clip clip) {
         var file = Conformance.vector(clip.vector()).toString();
         var input = clip.raw()
@@ -122,7 +125,8 @@ class NaturalContentEncodeTest {
                 : List.of("-i", file);
         var arguments = new ArrayList<>(List.of("-v", "error"));
         arguments.addAll(input);
-        arguments.addAll(List.of("-f", "rawvideo", "-pix_fmt", clip.pixelFormat(), "-"));
+        arguments.addAll(List.of("-frames:v", Integer.toString(FRAMES), "-f", "rawvideo", "-pix_fmt",
+                clip.pixelFormat(), "-"));
         return Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), arguments);
     }
 
@@ -168,7 +172,7 @@ class NaturalContentEncodeTest {
     void encodes(Clip clip, Codec codec) throws IOException {
         var raw = source(clip);
         var size = frameBytes(clip);
-        var frames = Math.min(10, raw.length / size);
+        var frames = raw.length / size;
         assertEquals(0, raw.length % size, clip + " frame size");
         var packets = new ArrayList<Packet>();
         VideoTrack track;

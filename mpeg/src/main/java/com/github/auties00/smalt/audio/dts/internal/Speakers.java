@@ -87,6 +87,38 @@ public final class Speakers {
     }
 
     /**
+     * Returns the speakers of a 16-bit mask of Table 7-10 in the order DTS Express (LBR) codes its full band channels:
+     * the pairs first, in the order of their mask bits, then the single speakers, the LFE channels left out.
+     *
+     * <p>The LBR coding takes its channels two by two (the residual of a channel pair, the partial stereo of the pair),
+     * so a pair of speakers is coded as two consecutive channels: a 5.0 mask codes L, R, Ls, Rs and C, as ffmpeg's
+     * decoder maps them (and as the 5.1 and 2.0 representations of the DASH-IF DTS Express vectors agree, the 2.0
+     * downmix matching the front left and surround left of the 5.1 decode only in that order).
+     *
+     * @param mask the mask of speakers and pairs
+     * @return the speaker bit of each coded full band channel
+     */
+    public static int[] lbrOrder(int mask) {
+        var order = new int[Integer.bitCount(expand(mask) & ~(LFE1 | LFE2))];
+        var index = 0;
+        for (var pass = 0; pass < 2; pass++) {
+            for (var i = 0; i < 16; i++) {
+                var speakers = PAIRS[i];
+                if ((mask & 1 << i) == 0 || speakers == LFE1 || speakers == LFE2
+                        || (Integer.bitCount(speakers) == 2) != (pass == 0)) {
+                    continue;
+                }
+                for (var bit = 0; bit < 32; bit++) {
+                    if ((speakers & 1 << bit) != 0) {
+                        order[index++] = 1 << bit;
+                    }
+                }
+            }
+        }
+        return order;
+    }
+
+    /**
      * Returns the speaker of a DTS speaker bit.
      *
      * @param bit the speaker bit of Table 6-22

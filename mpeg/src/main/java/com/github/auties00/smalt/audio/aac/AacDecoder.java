@@ -144,7 +144,9 @@ import java.util.function.Consumer;
  * prediction domain coder (ACELP and TCX with forward aliasing cancellation, after the plain or the time-warped
  * transform), enhanced spectral band replication
  * (the QMF based harmonic transposer, predictive vector coding and inter-TES, at the 2:1, 8:3 and 4:1 ratios),
- * MPEG Surround 2-1-2 with residual coding, {@code AudioPreRoll} and the MPEG-D DRC decoder of ISO/IEC 23003-4,
+ * MPEG Surround 2-1-2 with residual coding, {@code AudioPreRoll} (also one that switches to another configuration,
+ * as the representations of an adaptive stream switched at a segment boundary do: the sampling rate, layout and
+ * frame length then follow the new configuration) and the MPEG-D DRC decoder of ISO/IEC 23003-4,
  * whose loudness normalization and DRC set selection follow {@link AacDecoderOptions#targetLevel()} and
  * {@link AacDecoderOptions#drcEffect()}. A USAC access unit whose data is corrupt is
  * concealed from the first element that fails to decode, as a lost one is ({@link #conceal}), and so are the access
@@ -229,9 +231,10 @@ public final class AacDecoder implements AudioDecoder {
     private final FrameDecoder decoder;
 
     /**
-     * The USAC decoder, or {@code null} for the other object types.
+     * The USAC decoder, or {@code null} for the other object types; replaced when an {@code AudioPreRoll()} brings
+     * another configuration.
      */
-    private final UsacDecoder usac;
+    private UsacDecoder usac;
 
     /**
      * The parsed stream configuration, or {@code null} for USAC.
@@ -954,7 +957,14 @@ public final class AacDecoder implements AudioDecoder {
             return;
         }
         if (usac != null) {
-            ConsumerFailure.<AudioBuffer>run("USAC packet", output, emit -> usac.decode(data, 0, data.length, emit));
+            ConsumerFailure.<AudioBuffer>run("USAC packet", output, emit -> {
+                var next = usac.reconfigure(data, 0, data.length);
+                if (next != null) {
+                    usac.flush(emit);
+                    usac = next;
+                }
+                usac.decode(data, 0, data.length, emit);
+            });
             return;
         }
         ConsumerFailure.<AudioBuffer>run("AAC packet", output, emit -> decoder.decode(data, 0, data.length, emit));

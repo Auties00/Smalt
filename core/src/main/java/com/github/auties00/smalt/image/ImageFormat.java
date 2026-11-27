@@ -510,6 +510,13 @@ public enum ImageFormat {
                 case "avif", "avis" -> {
                     return AVIF;
                 }
+                case "mif3" -> {
+                    // the minor version of a low-overhead image file names the brand of its transformed meta box
+                    if (header[12] == 'a' && header[13] == 'v' && header[14] == 'i' && header[15] == 'f') {
+                        return AVIF;
+                    }
+                    match = HEIC;
+                }
                 case "heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "mif2", "msf1", "miaf", "avci", "avcs", "jpeg",
                      "jpgs", "j2ki", "j2is" -> match = HEIC;
                 default -> {

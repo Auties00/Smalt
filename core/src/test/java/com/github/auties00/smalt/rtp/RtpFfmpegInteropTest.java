@@ -344,7 +344,9 @@ class RtpFfmpegInteropTest {
             }
             if (!process.isAlive()) {
                 var written = read(log);
-                if (retryBusyPort && written.contains("bind failed: Address already in use")) {
+                // ffmpeg names the error with strerror on POSIX and by its WSAEADDRINUSE number on Windows
+                if (retryBusyPort && (written.contains("bind failed: Address already in use")
+                        || written.contains("bind failed: Error number -10048 occurred"))) {
                     return false;
                 }
                 fail("ffmpeg exited early: " + tail(written));

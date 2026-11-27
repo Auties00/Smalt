@@ -87,9 +87,10 @@ public final class CouplingChannel {
     private final float[] overlap;
 
     /**
-     * The window shape of the previous frame of an independently switched coupling channel.
+     * The window shape of the previous frame of an independently switched coupling channel, or -1 before the first
+     * frame, whose left half takes its own shape, as for the channels it couples to.
      */
-    private int previousShape;
+    private int previousShape = -1;
 
     /**
      * The AAC Main predictor bank of the coupling channel, or {@code null} for other object types.
@@ -326,6 +327,9 @@ public final class CouplingChannel {
      * @param synthesis the filterbank whose windows the frame uses
      */
     public void predictLongTerm(Synthesis synthesis) {
+        if (previousShape < 0) {
+            previousShape = stream.windowShape();
+        }
         if (longTermPredictor != null) {
             longTermPredictor.predict(stream, overlap, previousShape, synthesis);
         }
@@ -338,6 +342,9 @@ public final class CouplingChannel {
      * @param ssr the SSR filterbank, used for AAC SSR streams
      */
     public void synthesize(Synthesis synthesis, SsrSynthesis ssr) {
+        if (previousShape < 0) {
+            previousShape = stream.windowShape();
+        }
         if (ssrState != null) {
             ssr.synthesize(stream, ssrState, timeSignal, 0);
         } else {

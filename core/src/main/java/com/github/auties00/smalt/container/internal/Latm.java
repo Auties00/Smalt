@@ -21,8 +21,9 @@ import java.util.Arrays;
  * and HVXC payloads, whose lengths in bits come from the frame length tables of ISO/IEC 14496-3 Tables 1.46 to
  * 1.48); the payloads of the first stream, program 0 and layer 0, are the ones returned. Its
  * {@code AudioSpecificConfig} is copied byte aligned, a program config element included (channel configuration
- * zero), and must be of AAC Main, LC, SSR or LTP, alone or under HE-AAC or HE-AAC v2, of CELP or ER CELP, or of HVXC
- * or ER HVXC. An ER CELP or ER HVXC stream may apply the error protection tool ({@code epConfig} 2 or 3, its
+ * zero), and must be of a General Audio object type (AAC Main, LC, SSR, LTP and Scalable, TwinVQ, and the error
+ * resilient AAC LC, LTP, Scalable, TwinVQ, BSAC and LD), alone or under HE-AAC or HE-AAC v2, of CELP or ER CELP, or
+ * of HVXC or ER HVXC. An error resilient stream may apply the error protection tool ({@code epConfig} 2 or 3, its
  * {@code ErrorProtectionSpecificConfig} copied with the configuration), whose protected payloads take their lengths
  * from {@code PayloadLengthInfo} or a fixed frame length, not from the CELP and HVXC frame length tables;
  * {@code epConfig} 1 is rejected, as subclause 1.7.1 excludes it from LATM. A payload whose length is not a whole
@@ -174,7 +175,7 @@ public final class Latm {
                     }
                     var start = bits.bitPosition();
                     if (program == 0 && layer == 0) {
-                        asc = readAudioSpecificConfig(bits, start);
+                        asc = readAudioSpecificConfig(bits, start, ascBits);
                         if (asc == null || asc.frameSamples == 0) {
                             return null;
                         }
@@ -182,7 +183,7 @@ public final class Latm {
                     } else if (ascBits >= 0) {
                         asc = new Asc(null, 0, 0, 0, peekObjectType(bits), 0, false);
                     } else {
-                        asc = readAudioSpecificConfig(bits, start);
+                        asc = readAudioSpecificConfig(bits, start, -1);
                         if (asc == null) {
                             return null;
                         }
@@ -275,7 +276,7 @@ public final class Latm {
     public static long audioSpecificConfigBits(byte[] config) {
         var bits = new MsbBitReader(config);
         try {
-            if (readAudioSpecificConfig(bits, 0) == null || bits.overrun()) {
+            if (readAudioSpecificConfig(bits, 0, -1) == null || bits.overrun()) {
                 return -1;
             }
         } catch (MediaException exception) {
@@ -294,7 +295,7 @@ public final class Latm {
      */
     public static int audioSpecificConfigFrameSamples(byte[] config) {
         try {
-            var asc = readAudioSpecificConfig(new MsbBitReader(config), 0);
+            var asc = readAudioSpecificConfig(new MsbBitReader(config), 0, -1);
             return asc == null ? -1 : asc.frameSamples();
         } catch (MediaException exception) {
             return -1;
@@ -557,13 +558,19 @@ public final class Latm {
      * 1.6.2.1) and copies its bits into a byte-aligned configuration.
      *
      * @param bits the reader
+     * <p>When the length of the configuration is known ({@code ascLen} of an {@code audioMuxVersion} 1
+     * {@code StreamMuxConfig}), the bits after the object type's specific configuration, such as the sync extensions
+     * that signal spectral band replication and parametric stereo backward-compatibly (clause 1.6.5), are copied too.
+     *
+     * @param bits the reader
      * @param start the bit position of the configuration, to which the byte alignment of a program config
      * element is relative
+     * @param length the length of the configuration in bits, or {@code -1} when it is found by parsing it
      * @return the configuration, or {@code null} for an unsupported object type or channel
      * configuration
      * @throws MediaException.Malformed if a program config element is truncated
      */
-    private static Asc readAudioSpecificConfig(MsbBitReader bits, long start) {
+    private static Asc readAudioSpecificConfig(MsbBitReader bits, long start, long length) {
         var writer = new MsbBitWriter(16);
         var objectType = copyObjectType(bits, writer);
         var frequency = bits.read(4);
@@ -594,6 +601,7 @@ public final class Latm {
             if (frameSamples < 0) {
                 return null;
             }
+            copyRemainder(bits, writer, start, length);
             writer.alignWithZeros();
             return new Asc(writer.toByteArray(), coreRate, channels, 1, objectType, frameSamples, protection[0]);
         }
@@ -603,13 +611,15 @@ public final class Latm {
             if (frameSamples < 0) {
                 return null;
             }
+            copyRemainder(bits, writer, start, length);
             writer.alignWithZeros();
             return new Asc(writer.toByteArray(), coreRate, channels, 1, objectType, frameSamples, protection[0]);
         }
-        if (objectType < 1 || objectType > 4 || channels > 7 || coreRate <= 0) {
+        if (!isGeneralAudio(objectType) || channels > 7 || coreRate <= 0) {
             return null;
         }
-        writer.write(bits.read(1), 1);
+        var shortFrames = bits.read(1);
+        writer.write(shortFrames, 1);
         var dependsOnCoreCoder = bits.read(1);
         writer.write(dependsOnCoreCoder, 1);
         if (dependsOnCoreCoder == 1) {
@@ -625,11 +635,59 @@ public final class Latm {
                 return null;
             }
         }
-        if (extensionFlag == 1) {
-            writer.write(bits.read(1), 1);
+        if (objectType == 6 || objectType == 20) {
+            copy(bits, writer, 3);
         }
+        if (extensionFlag == 1) {
+            if (objectType == 22) {
+                copy(bits, writer, 5 + 11);
+            }
+            if (objectType == 17 || objectType == 19 || objectType == 20 || objectType == 23) {
+                copy(bits, writer, 3);
+            }
+            copy(bits, writer, 1);
+        }
+        var protection = new boolean[1];
+        if (objectType >= 17 && !copyErrorProtection(bits, writer, protection)) {
+            return null;
+        }
+        copyRemainder(bits, writer, start, length);
         writer.alignWithZeros();
-        return new Asc(writer.toByteArray(), coreRate, channels, declared, objectType, 1024, false);
+        var frameSamples = objectType == 23 ? (shortFrames == 1 ? 480 : 512) : shortFrames == 1 ? 960 : 1024;
+        return new Asc(writer.toByteArray(), coreRate, channels, declared, objectType, frameSamples, protection[0]);
+    }
+
+    /**
+     * Copies the bits of a configuration of known length that follow its parsed syntax.
+     *
+     * @param bits the reader, after the parsed syntax
+     * @param writer the configuration being written
+     * @param start the bit position of the configuration
+     * @param length the length of the configuration in bits, or {@code -1} when it is not known
+     */
+    private static void copyRemainder(MsbBitReader bits, MsbBitWriter writer, long start, long length) {
+        if (length < 0) {
+            return;
+        }
+        var remaining = Math.min(length - (bits.bitPosition() - start), bits.bitsLeft());
+        while (remaining > 0) {
+            var count = (int) Math.min(remaining, 24);
+            copy(bits, writer, count);
+            remaining -= count;
+        }
+    }
+
+    /**
+     * Returns whether an object type is a General Audio one whose configuration is a {@code GASpecificConfig}
+     * (ISO/IEC 14496-3 Table 1.1): AAC Main, LC, SSR and LTP, AAC Scalable, TwinVQ, and the error resilient AAC LC,
+     * LTP, Scalable, TwinVQ, BSAC and LD.
+     *
+     * @param objectType the object type
+     * @return {@code true} for a General Audio object type
+     */
+    private static boolean isGeneralAudio(int objectType) {
+        return objectType >= 1 && objectType <= 4 || objectType == 6 || objectType == 7
+                || objectType == 17 || objectType >= 19 && objectType <= 23;
     }
 
     /**

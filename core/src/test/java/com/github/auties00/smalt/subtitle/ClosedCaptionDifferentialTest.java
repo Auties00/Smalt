@@ -94,10 +94,21 @@ class ClosedCaptionDifferentialTest {
     }
 
     static List<Cue> ffmpeg(Path video) {
-        var srt = directory().resolve(video.getFileName() + ".srt");
+        return ffmpeg(video, List.of());
+    }
+
+    /**
+     * Returns the captions ffmpeg's {@code cc_dec} reads from a video, with options of the caption decoder (such as
+     * {@code -data_field second} for the channels of field 2).
+     */
+    static List<Cue> ffmpeg(Path video, List<String> decoderOptions) {
+        var srt = directory().resolve(video.getFileName() + String.join("", decoderOptions) + ".srt");
         var movie = video.toAbsolutePath().toString().replace('\\', '/').replace(":", "\\\\:");
-        Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), List.of("-hide_banner", "-loglevel", "error", "-y",
-                "-f", "lavfi", "-i", "movie=" + movie + "[out0+subcc]", "-map", "0:1", srt.toString()));
+        var arguments = new ArrayList<>(List.of("-hide_banner", "-loglevel", "error", "-y"));
+        arguments.addAll(decoderOptions);
+        arguments.addAll(List.of("-f", "lavfi", "-i", "movie=" + movie + "[out0+subcc]", "-map", "0:1",
+                srt.toString()));
+        Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(2), arguments);
         String text;
         try {
             text = Files.readString(srt, StandardCharsets.UTF_8);
@@ -197,7 +208,7 @@ class ClosedCaptionDifferentialTest {
          * in its character set) as ASCII, and the 708 logs, like ffmpeg's SubRip, keep markup and ASS hard spaces.
          */
         static String normalize(String text) {
-            return text.replace('\u2019', '\'').replace("\\h", " ").replaceAll("<[^>]*>", "").replaceAll("\\s+", " ")
+            return text.replace('\u2019', '\'').replace("\\h", " ").replace('\u00a0', ' ').replaceAll("<[^>]*>", "").replaceAll("\\s+", " ")
                     .strip();
         }
 
@@ -344,9 +355,16 @@ class ClosedCaptionDifferentialTest {
             return cues;
         }
 
+        /**
+         * The logs of the caption channels and services, CC3 aside: caption-inspector's CC3 log reads the extended
+         * character pairs of field 2 ({@code 13 22}, {@code 12 25} and the like: CEA-608 extended characters, which
+         * replace the standard character before them) as preamble address and mid-row codes, so its text keeps the
+         * replaced characters ("NOS DAMOS AL" {@code {R13:Green}} "." for "NOS DAMOS AÍ."). CC3 is compared
+         * with ffmpeg's decode of field 2 instead ({@link #bigBuckBunnyThirdChannel()}).
+         */
         @ParameterizedTest(name = "{0}")
         @org.junit.jupiter.params.provider.CsvSource({"BigBuckBunny_256x144-24fps-C1.608, CC1",
-                "BigBuckBunny_256x144-24fps-C3.608, CC3", "BigBuckBunny_256x144-24fps-S1.708, S1",
+                "BigBuckBunny_256x144-24fps-S1.708, S1",
                 "BigBuckBunny_256x144-24fps-S2.708, S2", "BigBuckBunny_256x144-24fps-S3.708, S3",
                 "BigBuckBunny_256x144-24fps-S4.708, S4", "BigBuckBunny_256x144-24fps-S5.708, S5",
                 "BigBuckBunny_256x144-24fps-S6.708, S6"})
@@ -358,6 +376,25 @@ class ClosedCaptionDifferentialTest {
             assertShown(expected, video(vector("BigBuckBunny_256x144-24fps.ts"), selected), log + " from the TS", 4);
             assertShown(expected, decode(mcc(vector("BigBuckBunny_256x144-24fps.mcc")), selected),
                     log + " from the MCC", 4);
+        }
+
+        /**
+         * CC3 of the transport stream and of its MCC file against ffmpeg's {@code cc_dec} reading field 2
+         * ({@code -data_field second}), whose extended characters follow CEA-608 as Smalt's do (see
+         * {@link #bigBuckBunny(String, String)} for why caption-inspector's log is not the reference).
+         */
+        @org.junit.jupiter.api.Test
+        @DisplayName("decode CC3 of the transport stream and of its MCC file as ffmpeg decodes field 2")
+        void bigBuckBunnyThirdChannel() {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var file = vector("BigBuckBunny_256x144-24fps.ts");
+            var expected = ffmpeg(file, List.of("-data_field", "second")).stream()
+                    .map(cue -> normalize(cue.text())).toList();
+            assertTrue(expected.size() > 10, expected.size() + " cues");
+            var service = CaptionService.cea608(3);
+            assertShown(expected, video(file, service), "CC3 from the TS", 4);
+            assertShown(expected, decode(mcc(vector("BigBuckBunny_256x144-24fps.mcc")), service),
+                    "CC3 from the MCC", 4);
         }
 
         @ParameterizedTest(name = "{0}")
@@ -470,6 +507,11 @@ class ClosedCaptionDifferentialTest {
         var expected = ffmpeg(file);
         assertTrue(!expected.isEmpty(), "ffmpeg reads captions");
         var actual = CaptionInspector.video(file, CaptionService.cea608(1));
+        // ffmpeg's caption decoder outputs a cue only when a carriage return, an erase or an end of caption commits
+        // it, so the caption still on screen when the stream ends is not among its cues; Smalt ends it there
+        if (actual.size() == expected.size() + 1 && actual.getLast().start() >= expected.getLast().start()) {
+            actual = actual.subList(0, expected.size());
+        }
         assertEquals(expected.stream().map(Cue::text).map(CaptionInspector::normalize).toList(),
                 actual.stream().map(Cue::text).map(CaptionInspector::normalize).toList(), name);
     }

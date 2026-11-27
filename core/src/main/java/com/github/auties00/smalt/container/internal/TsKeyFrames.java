@@ -14,14 +14,20 @@ import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Reads the key frames an HLS I-frame playlist of transport stream segments addresses: each byte range, behind the
  * program tables of the playlist's {@code EXT-X-MAP} when it has one, is a transport stream of its own whose video
- * packets are its key frame, so that the continuity counters that jump between ranges damage nothing. The tracks
- * are the video tracks of the first range; the timestamps of every range keep their place on the PES timeline of the
+ * packets are its key frame (the first video access unit of the range: a segmenter may end a range after the
+ * transport stream packet that opens the next frame), so that the continuity counters that jump between ranges
+ * damage nothing. Without an {@code EXT-X-MAP} a media resource begins with its initialization section (RFC 8216
+ * clause 4.3.3.6): a range that starts later in its resource is read behind the program tables at the resource's
+ * start, the transport stream packets of the program association table, the program map tables it names and the
+ * other tables of PIDs below {@code 0x20} that open the resource. The tracks are the video tracks of the first
+ * range; the timestamps of every range keep their place on the PES timeline of the
  * first, whose earliest presentation time is zero.
  *
  * <p>Instances are not thread-safe.
@@ -31,6 +37,16 @@ public final class TsKeyFrames implements Demuxer {
      * The 33-bit wrap of PES timestamps.
      */
     private static final long WRAP = 1L << 33;
+
+    /**
+     * The size of a transport stream packet.
+     */
+    private static final int PACKET = 188;
+
+    /**
+     * The most packets of leading program tables read before a range.
+     */
+    private static final int MAX_TABLES = 64;
 
     private final SegmentSource.Part tables;
     private final List<SegmentSource.Part> ranges;
@@ -108,8 +124,85 @@ public final class TsKeyFrames implements Demuxer {
      * @return the source
      */
     private SegmentSource source(int index) {
-        var parts = tables == null ? List.of(ranges.get(index)) : List.of(tables, ranges.get(index));
+        var range = ranges.get(index);
+        var leading = tables != null ? tables : leadingTables(range);
+        var parts = leading == null ? List.of(range) : List.of(leading, range);
         return new SegmentSource(parts, resolver, options.limits());
+    }
+
+    /**
+     * Returns the program tables that open the resource of a range that starts after them, its initialization
+     * section when the playlist has no {@code EXT-X-MAP}.
+     *
+     * @param range the range
+     * @return the part of the leading table packets, or {@code null} when the range starts its resource, is encrypted
+     * whole or the resource opens with no table
+     */
+    private SegmentSource.Part leadingTables(SegmentSource.Part range) {
+        if (range.offset() < PACKET || range.key() != null) {
+            return null;
+        }
+        var head = new byte[(int) Math.min(range.offset(), MAX_TABLES * PACKET)];
+        int read;
+        try (var source = new SegmentSource(List.of(new SegmentSource.Part(range.uri(), 0, head.length, null, null)),
+                resolver, options.limits())) {
+            read = 0;
+            while (read < head.length) {
+                var count = source.read(read, head, read, head.length - read);
+                if (count <= 0) {
+                    break;
+                }
+                read += count;
+            }
+        }
+        var programMaps = new HashSet<Integer>();
+        var length = 0;
+        while (length + PACKET <= read && head[length] == 0x47) {
+            var pid = (head[length + 1] & 0x1F) << 8 | head[length + 2] & 0xFF;
+            if (pid >= 0x20 && !programMaps.contains(pid)) {
+                break;
+            }
+            if (pid == 0 && (head[length + 1] & 0x40) != 0) {
+                programMaps.addAll(programMapPids(head, length));
+            }
+            length += PACKET;
+        }
+        return length == 0 ? null : new SegmentSource.Part(range.uri(), 0, length, null, null);
+    }
+
+    /**
+     * Returns the program map table PIDs of a program association table that starts in one transport stream packet.
+     *
+     * @param data the packets
+     * @param packet the offset of the packet, whose payload starts a section
+     * @return the PIDs, empty when the section does not fit the packet
+     */
+    private static List<Integer> programMapPids(byte[] data, int packet) {
+        var position = packet + 4;
+        var control = (data[packet + 3] >> 4) & 0x03;
+        if (control == 2) {
+            return List.of();
+        }
+        if (control == 3) {
+            position += 1 + (data[position] & 0xFF);
+        }
+        var end = packet + PACKET;
+        if (position >= end) {
+            return List.of();
+        }
+        position += 1 + (data[position] & 0xFF);
+        if (position + 8 > end || data[position] != 0) {
+            return List.of();
+        }
+        var sectionEnd = position + 3 + (((data[position + 1] & 0x0F) << 8) | (data[position + 2] & 0xFF)) - 4;
+        var pids = new ArrayList<Integer>();
+        for (var entry = position + 8; entry + 4 <= Math.min(sectionEnd, end); entry += 4) {
+            var number = (data[entry] & 0xFF) << 8 | data[entry + 1] & 0xFF;
+            if (number != 0) {
+                pids.add((data[entry + 2] & 0x1F) << 8 | data[entry + 3] & 0xFF);
+            }
+        }
+        return pids;
     }
 
     /**
@@ -178,6 +271,9 @@ public final class TsKeyFrames implements Demuxer {
                     var pts = packet.pts() == Packet.NO_TIMESTAMP ? Packet.NO_TIMESTAMP : packet.pts() + shift;
                     var dts = packet.dts() == Packet.NO_TIMESTAMP ? Packet.NO_TIMESTAMP : packet.dts() + shift;
                     pending.add(packet.withTiming(pts, dts, packet.duration()));
+                    // the range holds one I-frame (RFC 8216 clause 4.3.3.6); a segmenter may end it after the
+                    // packet that starts the next frame, which is not part of it
+                    break;
                 }
             }
         }

@@ -35,12 +35,14 @@ import java.util.Objects;
  *
  * <p>The single track is {@link Codec#MUSEPACK7} or {@link Codec#MUSEPACK8}, with the configuration that codec
  * describes, the stream's sample rate and channels (stereo for version 7) and its length in samples, the decoder's
- * delay and the stream's leading silence excluded (for version 7 at most the frames' samples less the delay, which
- * is all the decoder outputs). Packets are timestamped in samples of the decoded output, so the
- * first ones start before zero: version 7 packets are single frames of 1152 samples, version 8 packets are audio
- * packets. Every packet is a key frame, although a version 7 frame depends on the frames before it: a decode that
- * starts at one converges after a few frames. APEv2 and ID3v1 tags at the end and an ID3v2
- * tag at the start become {@link #metadata()}.
+ * delay and the stream's leading silence excluded (for a gapless version 7 stream the samples its last frame
+ * declares). Packets are timestamped in samples of the decoded output, so the first ones start before zero: version 7
+ * packets are single frames of 1152 samples, version 8 packets are audio packets. A gapless version 7 stream whose
+ * last frame and the decoder's delay of 481 samples exceed one frame ends with the flush frame the encoder writes
+ * after the counted frames (after the 11-bit length of the last one), which the demuxer returns as one more packet
+ * when it lies within the audio data, as libmpcdec decodes it. Every packet is a key frame, although a version 7
+ * frame depends on the frames before it: a decode that starts at one converges after a few frames. APEv2 and ID3v1
+ * tags at the end and an ID3v2 tag at the start become {@link #metadata()}.
  *
  * <p>A file of known size seeks to the packet holding the target sample (a version 7 stream to the frame, whose
  * decode converges after a few frames), walking the frames or packets once to index them.
@@ -182,7 +184,7 @@ public final class MusepackDemuxer implements Demuxer {
                 this.firstPacket = 200;
                 builder = AudioTrack.builder().codec(Codec.MUSEPACK7).codecConfig(config).sampleRate(rate)
                         .timeBase(Rational.timeBaseOf(rate)).layout(ChannelLayout.STEREO)
-                        .duration(Math.max(Math.min(samples, frames * FRAME_LENGTH - SYNTH_DELAY), 0));
+                        .duration(Math.max(samples, 0));
             } else if (magic[0] == 'M' && magic[1] == 'P' && magic[2] == 'C' && magic[3] == 'K') {
                 this.sv8 = true;
                 byte[] header = null;
@@ -400,14 +402,17 @@ public final class MusepackDemuxer implements Demuxer {
     }
 
     private Packet readSv7() {
-        if (index >= totalFrames) {
+        var flush = index == totalFrames;
+        if (index > totalFrames || (flush && track.duration() <= totalFrames * FRAME_LENGTH - delay)) {
             return null;
         }
-        var length = sv7Bits(position, 20);
-        if (length < 0) {
+        // the flush frame follows the 11-bit length of the last counted frame
+        var start = flush ? position + 11 : position;
+        var length = sv7Bits(start, 20);
+        var dataBits = streamEnd == Long.MAX_VALUE ? Long.MAX_VALUE : (streamEnd - headerPosition) * 8;
+        if (length < 0 || (flush && start + 20 + length > dataBits)) {
             return null;
         }
-        var start = position;
         var bits = 20 + length + (index == totalFrames - 1 ? 11 : 0);
         var end = start + bits;
         var firstWord = start >>> 5;
@@ -490,7 +495,7 @@ public final class MusepackDemuxer implements Demuxer {
             var count = seekIndex.size();
             var end = count == 0 ? 0 : (long) count * framesPerPacket * FRAME_LENGTH - delay;
             if (target >= end) {
-                index = sv8 ? Long.MAX_VALUE / 2 : totalFrames;
+                index = sv8 ? Long.MAX_VALUE / 2 : totalFrames + 1;
                 position = sv8 ? streamEnd : position;
                 return;
             }

@@ -83,6 +83,23 @@ class LosslessJpegTest {
     }
 
     @Test
+    @DisplayName("samples reconstructed above the precision keep their bits, modulo 2^16 (T.81 H.1.2.1)")
+    void aboveThePrecision() {
+        // a DNG of the Galaxy S23 codes 12-bit samples whose differences reach past 4095, which the DNG SDK keeps
+        var width = 8;
+        var samples = new int[width * 3];
+        for (var i = 0; i < samples.length; i++) {
+            samples[i] = i % 3 == 0 ? 4095 + 13 * i : 40 * i;
+        }
+        var stream = Lj92Encoder.encode(samples, width, 3, 1, 12, 1, 0, 0);
+        assertArrayEquals(samples, decode(stream));
+        var components = new int[samples.length];
+        new LosslessJpeg(stream, 0, stream.length).decodeComponents((component, row, values) ->
+                System.arraycopy(values, 0, components, row * width, width));
+        assertArrayEquals(samples, components);
+    }
+
+    @Test
     @DisplayName("a truncated stream decodes every row with zero bits for the missing data")
     void truncated() {
         var samples = noise(64 * 32, 16, 9);

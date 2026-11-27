@@ -11,6 +11,7 @@ import com.github.auties00.smalt.image.jpeg.internal.JpegOutput;
 import com.github.auties00.smalt.image.jpeg.internal.JpegReader;
 import com.github.auties00.smalt.image.jpeg.internal.LosslessOutput;
 import com.github.auties00.smalt.image.jpeg.internal.MotionJpegFields;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Codec;
@@ -56,7 +57,7 @@ import java.util.function.Consumer;
  *   field is the top field unless the track's {@linkplain VideoTrack#interlacing() scan} is
  *   {@link Interlacing#BOTTOM_FIELD_FIRST} or {@link Interlacing#BOTTOM_FIELD_FIRST_SEPARATED}. The
  *   picture is as high as the two fields together, or as the track when the track is lower and
- *   higher than one field. The second image is ignored, and the frame decoded as one holding a
+ *   higher than one field (keeping the top rows, or the bottom rows of an Avid frame). The second image is ignored, and the frame decoded as one holding a
  *   single field image, when the first image is already as high as the track, when the second
  *   image cannot be decoded, or when the fields differ in kind (Y'CbCr or RGB), width, chroma
  *   format, depth or alpha, or in height other than by the top field having one more row.</li>
@@ -67,6 +68,10 @@ import java.util.function.Consumer;
  *   marker-less {@code mjpg} header in place of SOI, has each field rebuilt into an interchange
  *   JPEG stream from the header's offsets and is then decoded the same way.</li>
  * </ul>
+ *
+ * <p>A frame written by Avid's codecs ({@code AVRn}, {@code AVDJ}, recognized by the {@code AVID}
+ * comment segment of its first image) whose picture is higher than its track is cropped to the track
+ * height from the top: Avid codes rows of padding above the picture, which ffmpeg crops likewise.
  *
  * <p>A field of any of these forms without a DQT or DHT segment before its scan (without the
  * corresponding offset, in format B) takes those tables from the sample description's {@code mjqt}
@@ -262,15 +267,46 @@ public final class MjpegDecoder implements VideoDecoder {
                             && MotionJpegFields.pairs(first, first)) {
                         return MotionJpegFields.weave(first, first, frameHeight, limits);
                     }
-                    return first;
+                    return avidCrop(first, frameHeight, bytes);
                 }
                 var height = top.height() + bottom.height();
+                if (avid(bytes)) {
+                    return avidCrop(MotionJpegFields.weave(top, bottom, height, limits), frameHeight, bytes);
+                }
                 if (frameHeight > top.height() && frameHeight < height) {
                     height = frameHeight;
                 }
                 return MotionJpegFields.weave(top, bottom, height, limits);
             });
         }
+    }
+
+    /**
+     * Returns whether the first image of the frame being decoded was written by an Avid codec.
+     *
+     * @param data the array holding the frame
+     * @return {@code true} for an Avid frame
+     */
+    private boolean avid(byte[] data) {
+        return MotionJpegFields.isAvid(data, bounds[0], bounds[1]);
+    }
+
+    /**
+     * Crops the picture of an Avid frame that is higher than its track to the track height, keeping
+     * the bottom rows: Avid's codecs code the picture below rows of padding, as ffmpeg's crop of
+     * {@code AVRn} and {@code AVDJ} frames assumes.
+     *
+     * @param picture the decoded picture
+     * @param frameHeight the track height, or 0 when unknown
+     * @param data the array holding the frame
+     * @return the cropped picture, or {@code picture} when the frame is not an Avid frame higher
+     * than its track
+     */
+    private Picture avidCrop(Picture picture, int frameHeight, byte[] data) {
+        if (frameHeight <= 0 || picture.height() <= frameHeight || !avid(data)) {
+            return picture;
+        }
+        return ImageOps.crop(picture, 0, picture.height() - frameHeight, picture.width(), frameHeight);
     }
 
     /**

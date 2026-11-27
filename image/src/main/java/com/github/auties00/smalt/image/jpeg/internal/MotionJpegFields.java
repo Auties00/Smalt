@@ -389,6 +389,34 @@ public final class MotionJpegFields {
     }
 
     /**
+     * Returns whether a field was written by Avid's Motion-JPEG codecs ({@code AVRn},
+     * {@code AVDJ}): a {@code COM} segment before its first scan starts with {@code AVID}.
+     *
+     * @param data the array holding the field
+     * @param offset the index of the field's SOI marker
+     * @param end the index after the field
+     * @return {@code true} for an Avid field
+     */
+    public static boolean isAvid(byte[] data, int offset, int end) {
+        var at = offset + 2;
+        while (at + 4 <= end && data[at] == (byte) 0xFF) {
+            var marker = data[at + 1] & 0xFF;
+            if (marker == 0xDA || marker == 0xD9) {
+                return false;
+            }
+            var size = u16(data, at + 2);
+            if (size < 2) {
+                return false;
+            }
+            if (marker == 0xFE && size >= 6 && at + 8 <= end && u32(data, at + 4) == 0x41564944) {
+                return true;
+            }
+            at += 2 + size;
+        }
+        return false;
+    }
+
+    /**
      * Returns where the field after the one at {@code offset} starts according to its
      * {@code APP1 mjpg} or {@code APP0 AVI1} segment.
      *

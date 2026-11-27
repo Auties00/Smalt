@@ -189,7 +189,9 @@ public final class AudioStreamOptions {
      * {@link #DEFAULT_LATENCY} by default}
      *
      * <p>It is how much audio the operating system holds between the device thread and the
-     * hardware. A session raises it to at least one {@linkplain #period() period}, and the
+     * hardware. A session raises it to at least one {@linkplain #period() period} (a shared-mode
+     * capture session on Windows, whose device buffer only bounds how late the device thread may
+     * wake, to the length of its {@linkplain #bufferDuration() queue}), and the
      * operating system may grant more, which {@link AudioCaptureSession#latencyMicros()} reports.
      */
     public Duration latency() {

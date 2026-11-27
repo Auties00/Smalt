@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.aac.internal.ep.ErrorProtectionDecoder;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -94,7 +95,7 @@ public final class CelpObject {
     private final int[] sizes;
 
     /**
-     * Creates the decoder of an object.
+     * Creates the decoder of an object from the first reading of its configurations ({@link #readings(List)}).
      *
      * @param configs the {@code AudioSpecificConfig} of each elementary stream, in stream order, the base layer first
      * @param maxLayer the highest layer to decode, from 0 (the base layer) to 4, counting the bitrate scalable layers
@@ -107,13 +108,20 @@ public final class CelpObject {
      * without direct mapping
      */
     public CelpObject(List<byte[]> configs, int maxLayer, boolean postFilter, MediaLimits limits) {
-        if (configs.isEmpty()) {
-            throw new IllegalArgumentException("no configuration");
-        }
-        var parsed = new CelpConfig[configs.size()];
-        for (var i = 0; i < parsed.length; i++) {
-            parsed[i] = CelpConfig.parse(configs.get(i));
-        }
+        this(readings(configs).getFirst(), maxLayer, postFilter, limits);
+    }
+
+    /**
+     * Creates the decoder of an object from one reading of its configurations.
+     *
+     * @param parsed the configuration of each elementary stream, in stream order, the base layer first
+     * @param maxLayer the highest layer to decode, from 0 (the base layer) to 4, counting the bitrate scalable layers
+     * from 1 and the bandwidth scalable layer after them; -1 for every layer
+     * @param postFilter whether to run the post-processor
+     * @param limits the resource limits
+     * @throws MediaException.Malformed if the configurations do not describe the layers of one object
+     */
+    public CelpObject(CelpConfig[] parsed, int maxLayer, boolean postFilter, MediaLimits limits) {
         this.base = parsed[0];
         if (base.layer() != CelpConfig.BASE) {
             throw new MediaException.Malformed("the first CELP stream is not a base layer");
@@ -183,6 +191,94 @@ public final class CelpObject {
             readers[i] = new MsbBitReader(NO_DATA);
         }
         this.speech = new double[2 * layout.frameSize];
+    }
+
+    /**
+     * Reads the configurations of an object in the syntax of Corrigendum 1 and in the earlier syntax
+     * ({@link CelpConfig}).
+     *
+     * <p>Both readings are valid only for a base layer of regular pulse excitation alone, read with fine rate
+     * control and {@code RPE_Configuration} 0 or 1 in the earlier syntax and without fine rate control and with
+     * {@code RPE_Configuration} 0 or 2 in the corrected one; its access units then have lengths only one of the
+     * readings can hold ({@link #holds(int)}).
+     *
+     * @param configs the {@code AudioSpecificConfig} of each elementary stream, in stream order, the base layer first
+     * @return the valid readings, the corrected syntax first; the earlier syntax leaves out the streams of layers the
+     * base layer does not announce
+     * @throws IllegalArgumentException if {@code configs} is empty
+     * @throws MediaException.Malformed if no reading is valid, with the reason of the corrected syntax
+     * @throws MediaException.Unsupported if a configuration is not of a CELP object, or maps error protection classes
+     * without direct mapping
+     */
+    public static List<CelpConfig[]> readings(List<byte[]> configs) {
+        if (configs.isEmpty()) {
+            throw new IllegalArgumentException("no configuration");
+        }
+        var readings = new ArrayList<CelpConfig[]>(2);
+        MediaException.Malformed failure = null;
+        try {
+            var corrected = new CelpConfig[configs.size()];
+            for (var i = 0; i < corrected.length; i++) {
+                corrected[i] = CelpConfig.parse(configs.get(i));
+            }
+            if (corrected[0].layer() != CelpConfig.BASE) {
+                throw new MediaException.Malformed("the first CELP stream is not a base layer");
+            }
+            readings.add(corrected);
+        } catch (MediaException.Malformed exception) {
+            failure = exception;
+        }
+        try {
+            readings.add(earlier(configs));
+        } catch (MediaException.Malformed exception) {
+            if (failure != null) {
+                throw failure;
+            }
+        }
+        return readings;
+    }
+
+    /**
+     * Reads the configurations in the syntax before Corrigendum 1: after the base layer (and its four other
+     * category streams with {@code epConfig} 1) come the bitrate scalable layers the base layer announces, then its
+     * bandwidth scalable layer.
+     */
+    private static CelpConfig[] earlier(List<byte[]> configs) {
+        var base = CelpConfig.parseEarlier(configs.getFirst(), CelpConfig.BASE, 0);
+        var parsed = new ArrayList<CelpConfig>(configs.size());
+        parsed.add(base);
+        var categories = base.epConfig() == 1 ? CelpFrameReader.CATEGORIES : 1;
+        for (var i = 1; i < configs.size(); i++) {
+            var layer = i - categories + 1;
+            if (i < categories) {
+                parsed.add(CelpConfig.parseEarlier(configs.get(i), CelpConfig.BASE, 0));
+            } else if (layer <= base.enhancementLayers()) {
+                parsed.add(CelpConfig.parseEarlier(configs.get(i), CelpConfig.BITRATE, layer));
+            } else if (layer == base.enhancementLayers() + 1 && base.bandwidthScalable()) {
+                parsed.add(CelpConfig.parseEarlier(configs.get(i), CelpConfig.BANDWIDTH, 0));
+            } else {
+                break;
+            }
+        }
+        return parsed.toArray(CelpConfig[]::new);
+    }
+
+    /**
+     * Returns whether an access unit of the base layer of a length can hold a frame of this reading: object type 8
+     * gives a frame a fixed length, or one of two with fine rate control (with and without the LPC indices).
+     *
+     * @param length the length of the access unit, in bytes
+     * @return whether the length fits
+     */
+    public boolean holds(int length) {
+        if (base.errorResilient()) {
+            return true;
+        }
+        var bits = layout.frameBits();
+        if (!base.fineRateControl()) {
+            return length == (bits + 7) >>> 3;
+        }
+        return length == (bits + 9) >>> 3 || length == (bits - layout.lpcBits() + 9) >>> 3;
     }
 
     /**

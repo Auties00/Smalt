@@ -1,11 +1,12 @@
-/* Writes the libopus 1.5.2 DNN models as weight blobs, one file per model, in the record format of
+/* Writes libopus DNN models as weight blobs, one file per model, in the record format of
    dnn/write_lpcnet_weights.c (a 64-byte WeightHead, "DNNw", version 0, type, size, block size and name,
    then the data padded to a multiple of 64 bytes).
 
    Usage: dump <output directory>
 
-   Build it against the libopus 1.5.2 sources with the dnn, celt and include directories on the include
-   path, linking dnn/parse_lpcnet_weights.c; regen.py does both. */
+   Built with -DDUMP_BASE it writes the pitch, FARGAN, PLC, LACE and NoLACE models; with -DDUMP_DRED, the DRED
+   encoder and decoder. Build it against the libopus sources (1.5.2 and 1.6.1 respectively) with the dnn, celt and
+   include directories on the include path, linking dnn/parse_lpcnet_weights.c; regen.py does both. */
 #include <stdio.h>
 #include <string.h>
 #include "nnet.h"
@@ -16,13 +17,17 @@
 #ifdef USE_WEIGHTS_FILE
 #undef USE_WEIGHTS_FILE
 #endif
+#ifdef DUMP_BASE
 #include "pitchdnn_data.c"
 #include "fargan_data.c"
 #include "plc_data.c"
-#include "dred_rdovae_enc_data.c"
-#include "dred_rdovae_dec_data.c"
 #include "lace_data.c"
 #include "nolace_data.c"
+#endif
+#ifdef DUMP_DRED
+#include "dred_rdovae_enc_data.c"
+#include "dred_rdovae_dec_data.c"
+#endif
 
 static int write_weights(const WeightArray *list, const char *dir, const char *file)
 {
@@ -65,11 +70,14 @@ int main(int argc, char **argv)
     fprintf(stderr, "usage: dump <output directory>\n");
     return 2;
   }
+#ifdef DUMP_BASE
   return write_weights(pitchdnn_arrays, argv[1], "pitchdnn.bin")
       || write_weights(fargan_arrays, argv[1], "fargan.bin")
       || write_weights(plcmodel_arrays, argv[1], "plc.bin")
-      || write_weights(rdovaeenc_arrays, argv[1], "rdovae-enc.bin")
-      || write_weights(rdovaedec_arrays, argv[1], "rdovae-dec.bin")
       || write_weights(lacelayers_arrays, argv[1], "lace.bin")
       || write_weights(nolacelayers_arrays, argv[1], "nolace.bin");
+#else
+  return write_weights(rdovaeenc_arrays, argv[1], "rdovae-enc.bin")
+      || write_weights(rdovaedec_arrays, argv[1], "rdovae-dec.bin");
+#endif
 }

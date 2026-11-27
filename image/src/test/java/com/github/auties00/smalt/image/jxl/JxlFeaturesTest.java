@@ -696,9 +696,10 @@ class JxlFeaturesTest {
     }
 
     /**
-     * libjxl's test data ({@code jxl-testdata-*}): cropped frames blended over earlier frames and splines on the
-     * first frame, against the reference renders shipped next to them (8-bit PNGs, compared within one level, the
-     * rounding of libjxl's 8-bit export), and the splines and extended-size container files against djxl.
+     * libjxl's test data ({@code jxl-testdata-*}): cropped frames blended over earlier frames, against the reference
+     * renders shipped next to them (8-bit PNGs, compared within one level, the rounding of libjxl's 8-bit export),
+     * splines on the first frame against its reference render with the tolerance libjxl's own test applies to it,
+     * and the splines and extended-size container files against djxl.
      */
     @Nested
     @DisplayName("libjxl test data")
@@ -740,11 +741,24 @@ class JxlFeaturesTest {
             var image = JxlDecoder.decode(MediaSource.of(read("spline_on_first_frame.jxl")));
             var ours = com.github.auties00.smalt.testkit.image.RasterTesting.tight(ImageOps.toRgba(
                     ImageOps.toEightBit(image.picture())));
-            Tolerance.maxAbs(1).assertWithin("spline_on_first_frame", png("spline_on_first_frame.png"), ours);
+            var expected = png("spline_on_first_frame.png");
+            // the render is not exact: libjxl's splines_test (SplinesTest.ClearedEveryFrame, v0.11.2) accepts a color
+            // sample whose error is within 0.01 or within 10% of the expected value (VerifyRelativeError), and djxl
+            // 0.11.2 itself differs from it by up to 4 levels
+            assertEquals(expected.length, ours.length, "size");
+            for (var index = 0; index < expected.length; index++) {
+                var reference = (expected[index] & 0xFF) / 255.0;
+                var error = Math.abs(reference - (ours[index] & 0xFF) / 255.0);
+                if (index % 4 == 3) {
+                    assertEquals(expected[index], ours[index], "alpha of pixel " + index / 4);
+                } else if (error > 0.01 && (reference < 1e-10 || error / reference > 0.1)) {
+                    fail("sample " + index + ": " + (ours[index] & 0xFF) + " for " + (expected[index] & 0xFF));
+                }
+            }
         }
 
         @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"splines.jxl", "square-extended-size-container.jxl"})
+        @ValueSource(strings = {"splines.jxl", "spline_on_first_frame.jxl", "square-extended-size-container.jxl"})
         @DisplayName("decodes splines and a container of 64-bit box sizes as djxl does")
         void againstDjxl(String name) {
             com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.DJXL);

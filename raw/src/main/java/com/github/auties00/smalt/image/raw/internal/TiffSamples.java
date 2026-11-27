@@ -311,12 +311,83 @@ final class TiffSamples {
         }
         var little = ifd.reader().little();
         var source = ifd.reader().source();
+        if (compression == 7 && blocks.length > 0) {
+            var frame = frameMarker(source, blocks[0]);
+            if (frame >= 0) {
+                throw new MediaException.Unsupported("raw", "lossless JPEG sensor data holding a DCT (SOF"
+                        + (frame - 0xC0) + ") stream is not supported");
+            }
+        }
         return (plane, limits) -> {
             read(source, little, blocks, layout, plane, limits);
             if (rowFactor > 1 || columnFactor > 1) {
                 deinterleave(plane, rowFactor, columnFactor, limits);
             }
         };
+    }
+
+    /**
+     * Finds the frame header of a compression 7 block whose JPEG stream is a DCT one, as some CinemaDNG
+     * cameras write, by walking the marker segments before the first frame or scan header.
+     *
+     * <p>The walk only reads the segment headers; a block that is not a well-formed JPEG stream is
+     * left to the decoder to report.
+     *
+     * @param source the raw file the block lies in
+     * @param block the strip or tile
+     * @return the code of the block's DCT frame header ({@code 0xC0} to {@code 0xCE}), or -1 when the
+     * stream starts no DCT frame
+     */
+    private static int frameMarker(MediaSource source, Block block) {
+        var end = block.offset + block.length;
+        var header = new byte[4];
+        if (!readHeader(source, block.offset, header, 2, end)
+                || (header[0] & 0xFF) != 0xFF || (header[1] & 0xFF) != 0xD8) {
+            return -1;
+        }
+        var at = block.offset + 2;
+        while (readHeader(source, at, header, 4, end) && (header[0] & 0xFF) == 0xFF) {
+            var code = header[1] & 0xFF;
+            if (code == 0xFF) {
+                at++;
+                continue;
+            }
+            switch (code) {
+                case 0xC0, 0xC1, 0xC2, 0xC5, 0xC6, 0xC9, 0xCA, 0xCD, 0xCE -> {
+                    return code;
+                }
+                case 0xC3, 0xC7, 0xCB, 0xCF, 0xDA, 0xD9, 0xF7 -> {
+                    return -1;
+                }
+                default -> at += 2 + ((header[2] & 0xFF) << 8 | header[3] & 0xFF);
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Reads the first bytes of a marker segment inside a block.
+     *
+     * @param source the raw file
+     * @param position the absolute offset of the segment
+     * @param header the destination of the bytes
+     * @param length the number of bytes to read
+     * @param end the absolute offset past the block's last byte
+     * @return whether the bytes lie inside the block and the source holds them
+     */
+    private static boolean readHeader(MediaSource source, long position, byte[] header, int length, long end) {
+        if (position < 0 || position + length > end) {
+            return false;
+        }
+        var done = 0;
+        while (done < length) {
+            var read = source.read(position + done, header, done, length - done);
+            if (read <= 0) {
+                return false;
+            }
+            done += read;
+        }
+        return true;
     }
 
     /**

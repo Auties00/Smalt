@@ -18,11 +18,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -184,19 +186,9 @@ class Vp9DifferentialTest {
     void scaledReferences(String name) throws Exception {
         var file = Vp9Vectors.stream(name);
         var ours = frameMd5s(Vp9Vectors.packets(name, Files.readAllBytes(file)), false).stream()
-                .filter(java.util.Objects::nonNull).toList();
+                .filter(Objects::nonNull).toList();
         for (var decoder : List.of("vp9", "libvpx-vp9")) {
-            var lines = new String(Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), List.of("-v", "error", "-c:v",
-                    decoder, "-i", file.toString(), "-fps_mode", "passthrough", "-noautoscale", "-f", "framemd5", "-")),
-                    java.nio.charset.StandardCharsets.US_ASCII).split("\\R");
-            var theirs = new ArrayList<String>();
-            for (var line : lines) {
-                if (!line.isBlank() && !line.startsWith("#")) {
-                    var fields = line.split(",");
-                    theirs.add(fields[fields.length - 1].trim());
-                }
-            }
-            assertEquals(theirs, ours, name + " vs " + decoder);
+            assertEquals(ffmpegFrameMd5s(file, decoder, List.of("-noautoscale")), ours, name + " vs " + decoder);
         }
     }
 
@@ -223,18 +215,34 @@ class Vp9DifferentialTest {
     @DisplayName("real-world streams match ffmpeg's libvpx and native decoders")
     void realWorld(String name, String pixelFormat) {
         var file = Conformance.vector(name);
-        // the ladder streams run for minutes: their first 240 packets hold key frames, alternate reference pyramids
-        // and every tile layout, and keep the raw frames within the heap
-        var all = webmPackets(file);
-        var packets = all.subList(0, Math.min(240, all.size()));
-        var ours = decodeRaw(packets, false);
+        // the ladder streams run for minutes, too many raw frames to hold: each side is compared through the MD5 of
+        // every shown frame's packed planes, ffmpeg's framemd5 of its rawvideo output
+        var packets = webmPackets(file);
+        var md5s = frameMd5s(packets, false);
+        var ours = md5s.stream().filter(Objects::nonNull).toList();
         for (var decoder : List.of("libvpx-vp9", "vp9")) {
-            var expected = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), List.of("-v", "error", "-c:v", decoder,
-                    "-i", file.toString(), "-frames:v", Integer.toString(ours.size()), "-f", "rawvideo", "-pix_fmt",
-                    pixelFormat, "-fps_mode", "passthrough", "-"));
-            assertSameFrames(expected, ours, name + " vs " + decoder);
+            assertEquals(ffmpegFrameMd5s(file, decoder, List.of("-pix_fmt", pixelFormat)), ours,
+                    name + " vs " + decoder);
         }
-        assertEquals(frameMd5s(packets, false), frameMd5s(packets, true), name + " parallel");
+        assertEquals(md5s, frameMd5s(packets, true), name + " parallel");
+    }
+
+    /** Returns the per-frame MD5s of ffmpeg's decode of a file through one decoder, in output order. */
+    static List<String> ffmpegFrameMd5s(Path file, String decoder, List<String> outputArguments) {
+        var arguments = new ArrayList<>(List.of("-v", "error", "-c:v", decoder, "-i", file.toString(), "-fps_mode",
+                "passthrough"));
+        arguments.addAll(outputArguments);
+        arguments.addAll(List.of("-f", "framemd5", "-"));
+        var lines = new String(Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), arguments),
+                StandardCharsets.US_ASCII).split("\\R");
+        var md5s = new ArrayList<String>();
+        for (var line : lines) {
+            if (!line.isBlank() && !line.startsWith("#")) {
+                var fields = line.split(",");
+                md5s.add(fields[fields.length - 1].trim());
+            }
+        }
+        return md5s;
     }
 
     @ParameterizedTest(name = "{0}")

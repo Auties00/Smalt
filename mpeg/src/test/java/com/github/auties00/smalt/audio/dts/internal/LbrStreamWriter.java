@@ -152,7 +152,7 @@ final class LbrStreamWriter {
             distance(w, group, tone.frequency() - frequency + 2);
             frequency = tone.frequency() + 1;
             if (channels > 1) {
-                w.write(tone.main(), LbrTables.BITS_FOR_CHANNELS[channels] - 1);
+                w.write(tone.main(), LbrTables.BITS_FOR_CHANNELS[channels - 1]);
             }
             TONAL_SCF.put(w, tone.amplitude());
             w.write(tone.phase(), 3);

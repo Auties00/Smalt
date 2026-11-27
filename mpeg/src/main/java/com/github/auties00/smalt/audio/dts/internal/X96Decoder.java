@@ -3,6 +3,8 @@ package com.github.auties00.smalt.audio.dts.internal;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
 
+import java.util.Arrays;
+
 /**
  * Decodes the X96 frequency extension of the DTS core (ETSI TS 102 114 clause 6.2): the subbands 32 to 63 of a
  * 64-band representation at twice the core rate, and a residual refining the core subbands, carried in the core
@@ -131,6 +133,13 @@ final class X96Decoder {
      * The number of channels of each channel set.
      */
     private final int[] setChannels = new int[4];
+
+    /**
+     * The X96 residual of the core subbands by plane and subband: {@link SubbandBuffer#HISTORY} samples of
+     * prediction history, then the frame.
+     */
+    private final float[][][] residual = new float[SubbandBuffer.MAX_CHANNELS][32][SubbandBuffer.HISTORY
+            + SubbandBuffer.MAX_SAMPLES];
 
     /**
      * The state of the noise generator of subbands without bits.
@@ -282,25 +291,33 @@ final class X96Decoder {
         var buffer = core.buffer();
         var steps = core.steps();
         var everySubsubframe = core.header().syncEverySubsubframe;
+        if (!core.header().predictorHistory) {
+            for (var ch = 0; ch < channels; ch++) {
+                for (var band : residual[firstPlane + ch]) {
+                    Arrays.fill(band, 0, SubbandBuffer.HISTORY, 0);
+                }
+            }
+        }
         for (var subframe = 0; subframe < core.subframes(); subframe++) {
             var subsubframes = core.subsubframes(subframe);
             var partial = core.partial(subframe);
             var offset = core.subframeOffset(subframe);
             readSideInformation(channels, core.header().crcPresent && !substream);
             var count = subsubframes * 8 + partial;
+            var base = SubbandBuffer.HISTORY + offset;
             for (var ch = 0; ch < channels; ch++) {
-                var planes = buffer.planes[firstPlane + ch];
                 for (var n = firstBand; n < lastBand[ch]; n++) {
-                    var base = SubbandBuffer.HISTORY + offset;
+                    var samples = samples(buffer, firstPlane + ch, n);
                     if (allocation[ch][n] == 0) {
-                        noise(planes[n], base, count, scales[ch][n], n < 32);
+                        noise(samples, base, count, scales[ch][n]);
                     } else if (allocation[ch][n] == 1) {
+                        var scale = (int) scales[ch][n];
                         for (var half = 0; half * 16 < count; half++) {
                             var index = reader.read(10);
                             var elements = Math.min(16, count - half * 16);
                             for (var m = 0; m < elements; m++) {
-                                var value = scales[ch][n] * (1.0f / 16) * DtsVqTables.highFrequency(index, m);
-                                add(planes[n], base + half * 16 + m, value, n < 32);
+                                var value = DtsVqTables.highFrequency(index, m) * scale + (1 << 3) >> 4;
+                                samples[base + half * 16 + m] = ChannelSet.clip(value);
                             }
                         }
                     }
@@ -308,22 +325,19 @@ final class X96Decoder {
             }
             var last = partial > 0 ? subsubframes : subsubframes - 1;
             for (var subsubframe = 0; subsubframe <= last; subsubframe++) {
-                var samples = subsubframe < subsubframes ? 8 : partial;
+                var length = subsubframe < subsubframes ? 8 : partial;
                 for (var ch = 0; ch < channels; ch++) {
-                    var planes = buffer.planes[firstPlane + ch];
                     for (var n = firstBand; n < lastBand[ch]; n++) {
                         var abits = allocation[ch][n] - 1;
                         if (abits <= 0) {
                             continue;
                         }
-                        readCodes(ch, abits, samples);
+                        readCodes(ch, abits, length);
                         var step = (long) scales[ch][n] * steps[abits];
-                        var base = SubbandBuffer.HISTORY + offset + 8 * subsubframe;
-                        for (var m = 0; m < samples; m++) {
-                            add(planes[n], base + m, ChannelSet.dequantize(codes[m], step), n < 32);
-                        }
-                        if (predictionMode[ch][n] != 0 && n >= 32) {
-                            ChannelSet.inverseAdpcm(planes[n], base, samples, predictionVector[ch][n]);
+                        var samples = samples(buffer, firstPlane + ch, n);
+                        var at = base + 8 * subsubframe;
+                        for (var m = 0; m < length; m++) {
+                            samples[at + m] = ChannelSet.dequantize(codes[m], step);
                         }
                     }
                 }
@@ -332,23 +346,58 @@ final class X96Decoder {
                 }
             }
             for (var ch = 0; ch < channels; ch++) {
+                for (var n = firstBand; n < lastBand[ch]; n++) {
+                    if (predictionMode[ch][n] != 0) {
+                        ChannelSet.inverseAdpcm(samples(buffer, firstPlane + ch, n), base, count,
+                                predictionVector[ch][n]);
+                    }
+                }
+            }
+            for (var ch = 0; ch < channels; ch++) {
                 if (joint[ch] == 0) {
                     continue;
                 }
-                var source = buffer.planes[sourcePlane[ch]];
-                var target = buffer.planes[firstPlane + ch];
                 for (var n = lastBand[ch]; n < planeLastBand[sourcePlane[ch]]; n++) {
-                    for (var m = 0; m < count; m++) {
-                        var index = SubbandBuffer.HISTORY + offset + m;
-                        target[n][index] = jointScales[ch][n] * source[n][index];
+                    var source = samples(buffer, sourcePlane[ch], n);
+                    var target = samples(buffer, firstPlane + ch, n);
+                    for (var m = base; m < base + count; m++) {
+                        target[m] = jointScales[ch][n] * source[m];
                     }
                 }
             }
         }
         reader.checkNotOverrun();
+        var frameSamples = core.samples();
         for (var ch = 0; ch < channels; ch++) {
-            buffer.saveHistory(firstPlane + ch, 32, 64, core.samples());
+            var plane = firstPlane + ch;
+            buffer.saveHistory(plane, 32, 64, frameSamples);
+            var active = joint[ch] == 0 ? lastBand[ch] : Math.max(lastBand[ch], planeLastBand[sourcePlane[ch]]);
+            for (var n = 0; n < 32; n++) {
+                var samples = residual[plane][n];
+                if (n < firstBand || n >= active) {
+                    Arrays.fill(samples, 0);
+                    continue;
+                }
+                var core32 = buffer.planes[plane][n];
+                for (var m = SubbandBuffer.HISTORY; m < SubbandBuffer.HISTORY + frameSamples; m++) {
+                    core32[m] += samples[m];
+                }
+                System.arraycopy(samples, frameSamples, samples, 0, SubbandBuffer.HISTORY);
+            }
         }
+    }
+
+    /**
+     * {@return the samples X96 codes for a subband of a plane} The upper subbands are the plane's own; the core
+     * subbands get a residual of their own, with its own prediction history, which joins the core subband once
+     * the frame is decoded, as in dcadec and ffmpeg, whose 64-band synthesis adds the two.
+     *
+     * @param buffer the subband buffer of the core
+     * @param plane the plane
+     * @param band the subband
+     */
+    private float[] samples(SubbandBuffer buffer, int plane, int band) {
+        return band < 32 ? residual[plane][band] : buffer.planes[plane][band];
     }
 
     /**
@@ -455,24 +504,20 @@ final class X96Decoder {
     }
 
     /**
-     * Writes or adds a sample: a residual adds to the core subbands, the upper subbands are written.
+     * Fills a subband without allocated bits with uniform noise at its scale factor, as dcadec and ffmpeg do: the
+     * low 31 bits of the generator centred on zero, times the scale factor in Q31 with rounding; a subband whose
+     * scale factor is at most 1 is silent and draws nothing.
      */
-    private static void add(float[] plane, int index, float value, boolean residual) {
-        if (residual) {
-            plane[index] += value;
-        } else {
-            plane[index] = value;
+    private void noise(float[] samples, int base, int count, float scale) {
+        if (scale <= 1) {
+            Arrays.fill(samples, base, base + count, 0);
+            return;
         }
-    }
-
-    /**
-     * Fills a subband without allocated bits with uniform noise at its scale factor.
-     */
-    private void noise(float[] plane, int base, int count, float scale, boolean residual) {
-        for (var m = 0; m < count; m++) {
+        var factor = (long) scale;
+        for (var m = base; m < base + count; m++) {
             seed = seed * 1103515245 + 12345;
-            var value = scale * ((seed >> 8) * (1.0f / (1 << 23)));
-            add(plane, base + m, value, residual);
+            var random = (seed & 0x7FFFFFFF) - 0x40000000;
+            samples[m] = (random * factor + (1L << 30)) >> 31;
         }
     }
 

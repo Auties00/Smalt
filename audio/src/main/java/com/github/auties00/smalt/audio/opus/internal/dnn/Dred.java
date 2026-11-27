@@ -1,4 +1,4 @@
-/* Ports libopus 1.5.2 (dnn/dred_decoder.c, dnn/dred_rdovae_dec.c, dnn/dred_coding.c, dnn/dred_config.h,
+/* Ports libopus 1.6.1 (dnn/dred_decoder.c, dnn/dred_rdovae_dec.c, dnn/dred_coding.c, dnn/dred_config.h,
    celt/laplace.c (ec_laplace_decode_p0), src/opus_decoder.c (dred_find_payload, opus_dred_parse,
    opus_dred_process)). Copyright Amazon, CSIRO and Xiph.Org Foundation; BSD 3-Clause License.
    Modified for Smalt. */
@@ -16,7 +16,9 @@ import java.util.Arrays;
  * packet, newest first.
  *
  * <p>DRED travels in the packet's padding as extension {@value #EXTENSION_ID}, whose payload starts with the
- * experimental marker {@code 'D', 10}. Instances are reusable and not thread-safe.
+ * marker {@code 'D', 12} of the standardized DRED of draft-ietf-mlcodec-opus-dred (libopus 1.6); a payload of
+ * another version, such as the experimental version 10 of libopus 1.5, is ignored as libopus does. Instances are
+ * reusable and not thread-safe.
  */
 public final class Dred {
     /**
@@ -27,7 +29,7 @@ public final class Dred {
     /**
      * The version byte that follows {@code 'D'} in the payload ({@code DRED_EXPERIMENTAL_VERSION}).
      */
-    public static final int EXPERIMENTAL_VERSION = 10;
+    public static final int EXPERIMENTAL_VERSION = 12;
 
     /**
      * The number of marker bytes before the coded redundancy ({@code DRED_EXPERIMENTAL_BYTES}).
@@ -42,12 +44,12 @@ public final class Dred {
     /**
      * The size of a latent vector ({@code DRED_LATENT_DIM}).
      */
-    static final int LATENT_DIM = 21;
+    static final int LATENT_DIM = 25;
 
     /**
      * The size of the initial state ({@code DRED_STATE_DIM}).
      */
-    static final int STATE_DIM = 19;
+    static final int STATE_DIM = 50;
 
     /**
      * The largest number of latents of a packet, each covering 40 ms ({@code DRED_MAX_LATENTS}).
@@ -70,7 +72,12 @@ public final class Dred {
     final float[] fecFeatures = new float[2 * NUM_REDUNDANCY_FRAMES * NUM_FEATURES];
 
     final float[] state = new float[STATE_DIM];
-    final float[] latents = new float[(NUM_REDUNDANCY_FRAMES / 2) * LATENT_DIM];
+
+    /**
+     * The decoded latents, newest first, each followed by its quantizer level mapped to {@code [-1, 0.875]}: the
+     * input of the RDOVAE decoder.
+     */
+    final float[] latents = new float[(NUM_REDUNDANCY_FRAMES / 2) * (LATENT_DIM + 1)];
 
     /**
      * The number of decoded latents.
@@ -299,6 +306,16 @@ public final class Dred {
     }
 
     /**
+     * Decodes one latent at a quantizer level and appends the level, as the decoder network takes it.
+     */
+    private void decodeLatent(int index, int qLevel) {
+        var at = index * (LATENT_DIM + 1);
+        decodeLatents(latents, at, DredStats.DRED_LATENT_QUANT_SCALES_Q8, DredStats.DRED_LATENT_R_Q8,
+                DredStats.DRED_LATENT_P0_Q8, qLevel * LATENT_DIM, LATENT_DIM);
+        latents[at + LATENT_DIM] = (float) (qLevel * .125 - 1);
+    }
+
+    /**
      * Entropy decodes a DRED payload ({@code dred_ec_decode}).
      *
      * @param bytes the buffer holding the payload
@@ -335,8 +352,7 @@ public final class Dred {
                 break;
             }
             var qLevel = quantizer(q0, dQ, qmax, i / 2);
-            decodeLatents(latents, (i / 2) * LATENT_DIM, DredStats.DRED_LATENT_QUANT_SCALES_Q8,
-                    DredStats.DRED_LATENT_R_Q8, DredStats.DRED_LATENT_P0_Q8, qLevel * LATENT_DIM, LATENT_DIM);
+            decodeLatent(i / 2, qLevel);
         }
         processStage = 1;
         nbLatents = i / 2;
@@ -361,8 +377,7 @@ public final class Dred {
                 DredStats.DRED_STATE_P0_Q8, q0 * STATE_DIM, STATE_DIM);
         var count = 0;
         for (var i = chunks - 1; i >= 0 && count < NUM_REDUNDANCY_FRAMES / 2; i -= 2) {
-            decodeLatents(latents, count * LATENT_DIM, DredStats.DRED_LATENT_QUANT_SCALES_Q8,
-                    DredStats.DRED_LATENT_R_Q8, DredStats.DRED_LATENT_P0_Q8, q0 * LATENT_DIM, LATENT_DIM);
+            decodeLatent(count, q0);
             count++;
         }
         dredOffset = 0;
@@ -452,6 +467,8 @@ public final class Dred {
         private final LinearLayer[] gruRec;
         private final LinearLayer[] glu;
         private final LinearLayer[] conv;
+        private final LinearLayer[] convDense;
+        private final float[] convInput = new float[RdovaeDecModel.DEC_CONV_DENSE1_OUT_SIZE];
 
         /**
          * Constructs a decoder, loading its network on first use.
@@ -467,6 +484,8 @@ public final class Dred {
                 m.dec_gru4_recurrent, m.dec_gru5_recurrent};
             this.glu = new LinearLayer[]{m.dec_glu1, m.dec_glu2, m.dec_glu3, m.dec_glu4, m.dec_glu5};
             this.conv = new LinearLayer[]{m.dec_conv1, m.dec_conv2, m.dec_conv3, m.dec_conv4, m.dec_conv5};
+            this.convDense = new LinearLayer[]{m.dec_conv_dense1, m.dec_conv_dense2, m.dec_conv_dense3,
+                m.dec_conv_dense4, m.dec_conv_dense5};
         }
 
         /**
@@ -485,7 +504,7 @@ public final class Dred {
                 System.arraycopy(stateInit, k * GRU, gruState[k], 0, GRU);
             }
             for (var i = 0; i < 2 * nbLatents; i += 2) {
-                decodeQframe(features, 2 * i * NUM_FEATURES, latents, (i / 2) * LATENT_DIM);
+                decodeQframe(features, 2 * i * NUM_FEATURES, latents, (i / 2) * (LATENT_DIM + 1));
             }
         }
 
@@ -500,8 +519,10 @@ public final class Dred {
                 nnet.gru(gruIn[k], gruRec[k], gruState[k], 0, buffer, 0);
                 nnet.glu(glu[k], buffer, outputIndex, gruState[k], 0);
                 outputIndex += GRU;
-                nnet.conv1d(conv[k], buffer, outputIndex, convState[k], 0, buffer, 0, outputIndex,
-                        Nnet.ACTIVATION_TANH);
+                // Each convolution sees a dense projection of everything computed so far.
+                nnet.dense(convDense[k], convInput, 0, buffer, 0, Nnet.ACTIVATION_TANH);
+                nnet.conv1d(conv[k], buffer, outputIndex, convState[k], 0, convInput, 0,
+                        RdovaeDecModel.DEC_CONV1_IN_SIZE, Nnet.ACTIVATION_TANH);
                 outputIndex += RdovaeDecModel.DEC_CONV1_OUT_SIZE;
             }
             nnet.dense(model.dec_output, qframe, qframeOffset, buffer, 0, Nnet.ACTIVATION_LINEAR);

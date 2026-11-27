@@ -11,7 +11,8 @@ import java.util.function.Consumer;
  * <p>MP4 subtitle tracks repeat a cue in every sample during which it is shown, so a cue that
  * overlaps others reads back as several pieces; joining a cue with a later one when their text,
  * identifier and settings are equal and the later starts exactly where the first ends restores it.
- * A cue without a duration (a container block without one) ends where the next cue starts. By default
+ * A cue offered as open (from a container block without a duration) ends where the next cue starts; a
+ * cue of an explicit zero duration keeps it. By default
  * one cue is held back and a cue joins only the cue just before it; for documents of several cues, as
  * TTML samples are, the merger holds back the cues that may still continue, so that a cue joins its
  * continuation even when other cues come between them.
@@ -37,7 +38,7 @@ public final class CueMerger {
     /**
      * The cues held back, in start order.
      */
-    private final ArrayDeque<SubtitleCue> pending = new ArrayDeque<>();
+    private final ArrayDeque<Held> pending = new ArrayDeque<>();
 
     /**
      * Constructs a merger that joins a cue only with the cue just before it.
@@ -60,49 +61,55 @@ public final class CueMerger {
     }
 
     /**
-     * Adds the next cue, passing on the held-back cues that can no longer be joined.
+     * Adds the next cue, of a known duration, passing on the held-back cues that can no longer be joined.
      *
      * @param cue the cue, in start order
      */
     public void offer(SubtitleCue cue) {
+        offer(cue, false);
+    }
+
+    /**
+     * Adds the next cue, passing on the held-back cues that can no longer be joined.
+     *
+     * @param cue the cue, in start order
+     * @param open whether the cue's duration is unknown, so that it ends where the next cue starts
+     */
+    public void offer(SubtitleCue cue, boolean open) {
+        var next = new Held(cue, open && cue.durationMicros() == 0);
         if (pending.isEmpty()) {
-            pending.addLast(cue);
+            pending.addLast(next);
             return;
         }
         if (several) {
             var extended = false;
-            var copy = new ArrayDeque<SubtitleCue>(pending.size() + 1);
+            var copy = new ArrayDeque<Held>(pending.size() + 1);
             for (var held : pending) {
-                if (!extended && joins(held, cue)) {
-                    copy.addLast(held.withTiming(held.startMicros(), cue.endMicros()));
+                if (!extended && joins(held.cue(), cue)) {
+                    copy.addLast(new Held(held.cue().withTiming(held.cue().startMicros(), cue.endMicros()), false));
                     extended = true;
-                } else if (held.durationMicros() == 0 && cue.startMicros() > held.startMicros()) {
-                    copy.addLast(held.withTiming(held.startMicros(), cue.startMicros()));
                 } else {
-                    copy.addLast(held);
+                    copy.addLast(held.closedBy(cue));
                 }
             }
             pending.clear();
             pending.addAll(copy);
-            while (!pending.isEmpty() && (pending.peekFirst().endMicros() < cue.startMicros()
+            while (!pending.isEmpty() && (pending.peekFirst().cue().endMicros() < cue.startMicros()
                     || pending.size() >= MAX_PENDING)) {
-                output.accept(pending.pollFirst());
+                output.accept(pending.pollFirst().cue());
             }
             if (!extended) {
-                pending.addLast(cue);
+                pending.addLast(next);
             }
             return;
         }
         var held = pending.pollFirst();
-        if (joins(held, cue)) {
-            pending.addLast(held.withTiming(held.startMicros(), cue.endMicros()));
+        if (joins(held.cue(), cue)) {
+            pending.addLast(new Held(held.cue().withTiming(held.cue().startMicros(), cue.endMicros()), false));
             return;
         }
-        if (held.durationMicros() == 0 && cue.startMicros() > held.startMicros()) {
-            held = held.withTiming(held.startMicros(), cue.startMicros());
-        }
-        output.accept(held);
-        pending.addLast(cue);
+        output.accept(held.closedBy(cue).cue());
+        pending.addLast(next);
     }
 
     /**
@@ -122,7 +129,25 @@ public final class CueMerger {
      */
     public void finish() {
         while (!pending.isEmpty()) {
-            output.accept(pending.pollFirst());
+            output.accept(pending.pollFirst().cue());
+        }
+    }
+
+    /**
+     * A held-back cue.
+     *
+     * @param cue the cue
+     * @param open whether it ends where the next cue starts
+     */
+    private record Held(SubtitleCue cue, boolean open) {
+        /**
+         * Returns this cue ended by the start of the next one when it is open and the next one starts later.
+         */
+        Held closedBy(SubtitleCue next) {
+            if (!open || next.startMicros() <= cue.startMicros()) {
+                return this;
+            }
+            return new Held(cue.withTiming(cue.startMicros(), next.startMicros()), false);
         }
     }
 }

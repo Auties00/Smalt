@@ -16,8 +16,10 @@ import java.nio.ByteOrder;
  *
  * <p>Decoding never fails: it stops, keeping every index produced so far, at the end code, when
  * the output is full, when the data runs out, and at the first code that refers past the current
- * table (a corrupt stream), which is how browsers render damaged GIFs. A minimum code size outside
- * 1..8 produces no indices.
+ * table (a corrupt stream), which is how browsers render damaged GIFs. Minimum code sizes of 9 to
+ * 11, which GIF89a does not allow but browsers accept, start with codes of 10 to 12 bits; a literal
+ * code past 255 is kept modulo 256, as the byte-wide string tables of Chromium and Firefox keep it.
+ * A minimum code size outside 1..11 produces no indices.
  *
  * @implNote This implementation exploits that the string of every table entry already appears in
  *           the output: an entry is the previous code's string, which was written just before the
@@ -81,7 +83,7 @@ final class GifLzwDecoder {
      * @return the number of indices produced, from 0 to {@code count}
      */
     int decode(byte[] data, int dataLength, int minimumCodeSize, byte[] output, int count) {
-        if (minimumCodeSize < 1 || minimumCodeSize > 8 || count <= 0) {
+        if (minimumCodeSize < 1 || minimumCodeSize >= MAX_CODE_SIZE || count <= 0) {
             return 0;
         }
         var starts = this.starts;

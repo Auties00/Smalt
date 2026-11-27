@@ -17,7 +17,8 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Checks each neural building block of the Opus 1.5 extensions against libopus 1.5.2 on deterministic inputs:
+ * Checks each neural building block of the Opus 1.5 extensions against libopus 1.5.2 (with the standardized DRED of
+ * libopus 1.6.1) on deterministic inputs:
  * the activation approximations, the LPCNet feature analysis, the Burg cepstrum, the FARGAN vocoder, the deep
  * PLC (with DRED features queued before one burst), the DRED RDOVAE decoder and the LACE and NoLACE enhancers.
  * The references are {@code dnn-units.bin}, written by {@code tools/testdata/opus-oracle/dnnunit.c} with the
@@ -220,7 +221,8 @@ class OpusDnnUnitTest {
     @DisplayName("decodes DRED latents into features with the RDOVAE decoder")
     void rdovae() {
         var state = new float[Dred.STATE_DIM];
-        var latents = new float[26 * Dred.LATENT_DIM];
+        // each latent is followed by the decoder's quantizer level input
+        var latents = new float[26 * (Dred.LATENT_DIM + 1)];
         lcg = 7;
         for (var i = 0; i < state.length; i++) {
             state[i] = 2.f * lcg();

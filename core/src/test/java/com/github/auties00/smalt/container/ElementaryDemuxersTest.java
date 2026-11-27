@@ -247,7 +247,8 @@ class ElementaryDemuxersTest {
         void detection() {
             var mpeg2 = Fixtures.read(Fixtures.testVideo("m2v", 96, 64, 1, List.of("-c:v", "mpeg2video", "-an",
                     "-f", "mpeg2video")));
-            assertTrue(Containers.detect(MediaSource.of(mpeg2)).isEmpty(), "MPEG-2 video");
+            assertEquals(ContainerFormat.MPEG_VIDEO, Containers.detect(MediaSource.of(mpeg2)).orElseThrow(),
+                    "MPEG-2 video");
             assertTrue(AnnexBDemuxer.detect(mpeg2).isEmpty());
             var ps = Fixtures.read(Fixtures.testVideo("mpg", 96, 64, 1, List.of("-c:v", "mpeg2video", "-an",
                     "-f", "mpeg")));
@@ -611,6 +612,42 @@ class ElementaryDemuxersTest {
             }
             var ivf = Fixtures.read(Fixtures.testVideo("ivf", 96, 64, 1, AOM));
             assertEquals(ContainerFormat.IVF, Containers.detect(MediaSource.of(ivf)).orElseThrow());
+        }
+    }
+
+    @Nested
+    @DisplayName("MPEG-1 and MPEG-2 video streams")
+    class MpegVideo {
+        @Test
+        @DisplayName("are recognized and read picture by picture as ffprobe reads them, and written back unchanged")
+        void containers() {
+            var file = Fixtures.testVideo("m2v", 96, 64, 1, List.of("-c:v", "mpeg2video", "-bf", "2", "-g", "12",
+                    "-an", "-f", "mpeg2video"));
+            var data = Fixtures.read(file);
+            var probe = ContainerProbe.probe(file);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(data))) {
+                assertEquals(ContainerFormat.MPEG_VIDEO, demuxer.format());
+                var track = (com.github.auties00.smalt.track.VideoTrack) demuxer.tracks().getFirst();
+                assertEquals(Codec.MPEG2_VIDEO, track.codec());
+                assertEquals(96, track.width());
+                assertEquals(64, track.height());
+                var packets = readAll(demuxer);
+                var expected = probe.packets();
+                assertEquals(expected.size(), packets.size(), "pictures");
+                var times = new java.util.HashSet<Long>();
+                for (var i = 0; i < packets.size(); i++) {
+                    assertEquals(expected.get(i).size(), packets.get(i).size(), "size of picture " + i);
+                    assertEquals(expected.get(i).hash(), ContainerProbe.crc32(packets.get(i).data()), "picture " + i);
+                    assertEquals(expected.get(i).key(), packets.get(i).keyframe(), "key flag of " + i);
+                    assertTrue(i == 0 || packets.get(i).dts() > packets.get(i - 1).dts(), "decoding order " + i);
+                    assertTrue(times.add(packets.get(i).pts()), "presentation time of " + i);
+                }
+                var written = MuxSupport.toStream(demuxer.tracks(), packets,
+                        sink -> Containers.openMuxer(ContainerFormat.MPEG_VIDEO, sink));
+                assertArrayEquals(data, written, "the stream written back");
+            }
+            assertTrue(Containers.isMuxable(ContainerFormat.MPEG_VIDEO, Codec.MPEG2_VIDEO));
+            assertFalse(Containers.isMuxable(ContainerFormat.MPEG_VIDEO, Codec.MPEG4_PART2));
         }
     }
 

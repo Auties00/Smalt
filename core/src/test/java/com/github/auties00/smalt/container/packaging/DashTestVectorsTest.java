@@ -63,7 +63,7 @@ class DashTestVectorsTest {
     @DisplayName("demux like ffprobe, at the segment list's times, with the manifest's codecs, and repackage")
     void representation(String presentation, String representation, String kind) throws IOException {
         var file = join(presentation, representation);
-        var metadata = metadata(presentation, representation);
+        var metadata = metadata(described(presentation, representation), representation);
         var ours = ContainerProbe.demux(file, Mp4Demuxer::new);
         if (!kind.equals("text")) {
             DemuxAssertions.assertPacketsMatch(ours, ContainerProbe.probe(file), track -> 0, true);
@@ -106,6 +106,18 @@ class DashTestVectorsTest {
             assertEquals(packets.get(i).dts() - first.dts(), again.get(i).dts() - again.getFirst().dts(),
                     "repackaged decode time " + i);
         }
+    }
+
+    /**
+     * Returns the presentation whose segment list describes the files of a representation's archive. livesim-content
+     * ships one {@code A48.zip}, of 6-second segments, for {@code testpic_2s}, {@code testpic_6s} and
+     * {@code testpic4_8s} (the three archives have the same SHA-256 in {@code tools/testdata/archives.tsv}); the
+     * {@code A48_data.json} of {@code testpic_2s} and {@code testpic4_8s} lists 2 and 8-second segments, which are not
+     * the archive's files, so their audio is checked against the segment list of {@code testpic_6s}.
+     */
+    private static String described(String presentation, String representation) {
+        return representation.equals("A48") && (presentation.equals("testpic_2s") || presentation.equals("testpic4_8s"))
+                ? "testpic_6s" : presentation;
     }
 
     /** The segment list of a representation: media timescale, codecs and the span of its first eight segments. */

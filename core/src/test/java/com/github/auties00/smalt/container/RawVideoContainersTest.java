@@ -368,6 +368,13 @@ class RawVideoContainersTest {
             try (var demuxer = new Y4mDemuxer(MediaSource.of(cut))) {
                 assertEquals(2, ElementaryDemuxersTest.readAll(demuxer).size(), "a cut frame ends the stream");
             }
+            // libaom's av1-park_joy_90p_8_420_vertical_csp.y4m ends with a newline after its last frame; ffmpeg reads
+            // every frame of it
+            var trailing = Arrays.copyOf(data, data.length + 1);
+            trailing[data.length] = '\n';
+            try (var demuxer = new Y4mDemuxer(MediaSource.of(trailing))) {
+                assertEquals(3, ElementaryDemuxersTest.readAll(demuxer).size(), "a trailing newline ends the stream");
+            }
             assertThrows(MediaException.Malformed.class, () -> new Y4mDemuxer(MediaSource.of(
                     "YUV4MPEG2 H2 F25:1\n".getBytes(StandardCharsets.US_ASCII))));
             assertThrows(MediaException.Unsupported.class, () -> new Y4mDemuxer(MediaSource.of(

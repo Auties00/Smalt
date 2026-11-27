@@ -269,7 +269,7 @@ class VorbisBitrateManagementTest {
         @ParameterizedTest(name = "{0}")
         @CsvSource({"q=4 max=48000 res=8000", "q=0 min=200000 res=8000", "avg=96000 min=80000 max=112000",
                 "q=-1 max=32000 res=2000"})
-        @DisplayName("truncated and padded packets decode to the exact length with Smalt and ffmpeg alike")
+        @DisplayName("truncated and padded packets decode to the exact length with Smalt and libvorbis alike")
         void decodes(String spec) {
             var options = options(44100, 2, spec);
             var length = 44100 * 3 + 55;
@@ -285,9 +285,14 @@ class VorbisBitrateManagementTest {
             }
             assertTrue(VorbisEncoding.snr(input, decoded.planes()) > 3);
             if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
+                // libvorbis, through ffmpeg, is the reference decoder: a bitrate managed encoder truncates packets
+                // anywhere and an end of packet in the residue is nominal (Vorbis I, 2.1.8 and 8.6.2), but ffmpeg's
+                // native decoder rejects a packet that has no bits left at the start of a residue partition
+                // (vorbisdec.c returns AVERROR_INVALIDDATA there), which libvorbis 1.3.7 itself writes for q=4
+                // max=48000 res=8000 here: its audio packets equal Smalt's
                 var path = VorbisEncoderTest.save("managed", ".ogg", file);
-                Oracle.assertDecodesCleanly(path);
-                assertEquals(length * 2, Oracle.decodeAudio(path).length);
+                com.github.auties00.smalt.testkit.validate.Validators.assertValid(path);
+                assertEquals(length * 2, Oracle.decodeAudio(path, List.of("-xerror", "-c:a", "libvorbis")).length);
             }
         }
 

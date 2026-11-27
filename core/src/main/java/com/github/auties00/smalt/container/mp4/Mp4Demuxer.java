@@ -77,7 +77,8 @@ import java.util.Set;
  * {@code dva1}/{@code dvav}), HEVC ({@code hvc1}, {@code hev1}, Dolby Vision {@code dvh1}/{@code dvhe}), VVC
  * ({@code vvc1}, {@code vvi1}), VP8/VP9
  * ({@code vp08}/{@code vp09}), AV1 ({@code av01}, Dolby Vision {@code dav1}), MPEG-4 Part 2 ({@code mp4v}), H.263
- * ({@code s263}), Motion JPEG and ProRes for video; AAC, MPEG-4 CELP, TwinVQ and HVXC, MP3 and MP2 ({@code mp4a}
+ * ({@code s263}), Motion JPEG (Media 100 {@code dtPA} frames rewritten as format B frames, as ffmpeg's
+ * {@code media100_to_mjpegb} filter does) and ProRes for video; AAC, MPEG-4 CELP, TwinVQ and HVXC, MP3 and MP2 ({@code mp4a}
  * with the matching object type, {@code .mp3}), Opus, FLAC, ALAC, AMR-NB/WB, AC-3/E-AC-3 and every PCM
  * layout of the ISO and QuickTime sound descriptions for audio. The image sequence ({@code pict})
  * and auxiliary video ({@code auxv}) tracks of HEIF and AVIF sequences are video tracks too. Every
@@ -424,6 +425,12 @@ public final class Mp4Demuxer implements Demuxer {
     private long fragmentScan;
 
     /**
+     * The offset of the last {@code styp} box the walk of the fragments met, or {@code -1}: the start of the segment
+     * that holds the next {@code moof}.
+     */
+    private long segmentStart = -1;
+
+    /**
      * Every track of the movie, which the fragments indexed after construction extend, or
      * {@code null} when every fragment was indexed at construction.
      */
@@ -476,6 +483,11 @@ public final class Mp4Demuxer implements Demuxer {
      * constructs.
      */
     private final Set<Integer> captionTracks;
+
+    /**
+     * The Media 100 tracks, whose frames are rewritten as Motion JPEG format B frames, with their width and height.
+     */
+    private final Map<Integer, int[]> media100Tracks;
 
     /**
      * The cue packets of a WebVTT sample not returned yet.
@@ -622,6 +634,7 @@ public final class Mp4Demuxer implements Demuxer {
                 lazy = false;
             }
             this.fragmentScan = lazy ? scan.next : -1;
+            this.segmentStart = scan.segmentStart;
             this.fragmentTracks = lazy ? parser.tracks : null;
             var publicTracks = new ArrayList<Track>();
             var activeTracks = new ArrayList<Mp4Track>();
@@ -637,6 +650,7 @@ public final class Mp4Demuxer implements Demuxer {
             var webVtt = new HashSet<Integer>();
             var quickTimeText = new HashSet<Integer>();
             var captions = new HashSet<Integer>();
+            var media100 = new HashMap<Integer, int[]>();
             mergeLayerConfigs(parser.tracks);
             for (var track : parser.tracks) {
                 track.selectBaseEntry();
@@ -666,6 +680,9 @@ public final class Mp4Demuxer implements Demuxer {
                 if (described.codec() == Codec.CEA_608 || described.codec() == Codec.CEA_708) {
                     captions.add(described.id());
                 }
+                if (track.entry != null && track.entry.format() == BoxTypes.DTPA) {
+                    media100.put(described.id(), new int[]{track.entry.width(), track.entry.height()});
+                }
                 if (track.samples.count > 0 || (lazy && track.entry != null)) {
                     activeTracks.add(track);
                 }
@@ -674,6 +691,7 @@ public final class Mp4Demuxer implements Demuxer {
             this.webVttTracks = Set.copyOf(webVtt);
             this.quickTimeTextTracks = Set.copyOf(quickTimeText);
             this.captionTracks = Set.copyOf(captions);
+            this.media100Tracks = Map.copyOf(media100);
             this.metadata = Collections.unmodifiableMap(buildMetadata(scan.fileType, parser.metadata));
             this.durationMicros = computeDuration(parser, !scan.fragments.isEmpty());
             this.active = activeTracks.toArray(new Mp4Track[0]);
@@ -1124,7 +1142,8 @@ public final class Mp4Demuxer implements Demuxer {
      * @return {@code true} for a QuickTime text track
      */
     boolean convertsSamples(int trackId) {
-        return quickTimeTextTracks.contains(trackId) || captionTracks.contains(trackId);
+        return quickTimeTextTracks.contains(trackId) || captionTracks.contains(trackId)
+                || media100Tracks.containsKey(trackId);
     }
 
     /**
@@ -1201,7 +1220,8 @@ public final class Mp4Demuxer implements Demuxer {
      * a compressed box has been met the fragment is parsed at its offset in that file and the offsets
      * of its samples are mapped back into the file.
      *
-     * @param box the offset, header size, size and type of the box
+     * @param box the offset, header size, size and type of the box, and the offset of the segment that holds it
+     * ({@code -1} for none)
      * @param payload the prefetched payload of the box, or {@code null} to read it
      * @param tracks every track of the movie
      * @throws MediaException.Malformed if the box is corrupt or a compressed one is not a gzip stream
@@ -1215,7 +1235,7 @@ public final class Mp4Demuxer implements Demuxer {
         if (!packed && compression == null) {
             var payloadStart = position + box[1];
             var held = data;
-            FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), position, tracks,
+            FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), position, box[4], tracks,
                     (offset, length) -> inPayload(held, payloadStart, offset, length) ? Arrays.copyOfRange(held,
                             (int) (offset - payloadStart), (int) (offset - payloadStart) + length)
                             : readAuxiliary(offset, length));
@@ -1235,7 +1255,8 @@ public final class Mp4Demuxer implements Demuxer {
         }
         var inflated = data;
         var inflatedStart = start + CompressedBoxes.boxSize(data.length) - data.length;
-        FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), start, tracks, (offset, length) -> {
+        var segment = box[4] < 0 ? -1 : map.uncompressed(box[4]);
+        FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), start, segment, tracks, (offset, length) -> {
             if (!inPayload(inflated, inflatedStart, offset, length)) {
                 throw new MediaException.Malformed("sample auxiliary information outside a compressed movie fragment");
             }
@@ -1258,8 +1279,10 @@ public final class Mp4Demuxer implements Demuxer {
      */
     private void walkLater(long position, long[] box, List<Mp4Track> tracks) {
         var type = (int) box[2];
-        var entry = new long[]{position, box[0], box[1], type};
-        if (type == BoxTypes.MOOF || type == BoxTypes.COMPRESSED_MOOF) {
+        var entry = new long[]{position, box[0], box[1], type, segmentStart};
+        if (type == BoxTypes.STYP) {
+            segmentStart = position;
+        } else if (type == BoxTypes.MOOF || type == BoxTypes.COMPRESSED_MOOF) {
             parseFragment(entry, null, tracks);
         } else if (type == BoxTypes.COMPRESSED_SIDX || type == BoxTypes.COMPRESSED_SSIX) {
             addCompressedIndex(entry);
@@ -1605,6 +1628,10 @@ public final class Mp4Demuxer implements Demuxer {
                 }
                 if (packet != null && !captionTracks.isEmpty() && captionTracks.contains(packet.trackId())) {
                     return packet.withData(QuickTimeCaptions.toCcData(packet.data()));
+                }
+                var media100 = packet == null || media100Tracks.isEmpty() ? null : media100Tracks.get(packet.trackId());
+                if (media100 != null) {
+                    return packet.withData(Media100Frames.toMotionJpegB(packet.data(), media100[0], media100[1]));
                 }
                 if (packet == null || webVttTracks.isEmpty() || !webVttTracks.contains(packet.trackId())) {
                     return packet;
@@ -2211,6 +2238,13 @@ public final class Mp4Demuxer implements Demuxer {
             } else if (!captionTracks.isEmpty() && captionTracks.contains(track.id)) {
                 var converted = QuickTimeCaptions.toCcData(Arrays.copyOfRange(info.data, info.dataOffset,
                         info.dataOffset + info.size));
+                info.data = converted;
+                info.dataOffset = 0;
+                info.size = converted.length;
+            } else if (!media100Tracks.isEmpty() && media100Tracks.containsKey(track.id)) {
+                var size = media100Tracks.get(track.id);
+                var converted = Media100Frames.toMotionJpegB(Arrays.copyOfRange(info.data, info.dataOffset,
+                        info.dataOffset + info.size), size[0], size[1]);
                 info.data = converted;
                 info.dataOffset = 0;
                 info.size = converted.length;

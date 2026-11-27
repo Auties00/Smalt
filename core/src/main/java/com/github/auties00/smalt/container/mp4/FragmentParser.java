@@ -101,13 +101,22 @@ final class FragmentParser {
      * Parses one {@code moof} and appends its samples.
      *
      * @param moof the box payload
+     * <p>An explicit base data offset is an absolute file offset (ISO/IEC 14496-12 8.8.7.1), except in a media
+     * segment ({@code styp}) when it lies before the start of that segment: a DASH or CMAF segment is self-contained,
+     * so such an offset counts from the start of the segment's own file, as in the segments of packagers that write
+     * the offset of the media data in the segment (and a player that appends each segment on its own reads it).
+     *
+     * @param moof the box payload
      * @param moofStart the absolute file offset of the first byte of the {@code moof} box
+     * @param segmentStart the absolute file offset of the {@code styp} box of the segment that holds the fragment, or
+     * {@code -1} when it is in none
      * @param tracks the tracks of the movie
      * @param aux reads the sample auxiliary information that {@code saio} boxes locate
      * @throws MediaException.Malformed if a box is corrupt
      * @throws MediaException.LimitExceeded if a track exceeds the sample limit
      */
-    static void parse(BoxCursor moof, long moofStart, List<Mp4Track> tracks, CencSamples.AuxSource aux) {
+    static void parse(BoxCursor moof, long moofStart, long segmentStart, List<Mp4Track> tracks,
+                      CencSamples.AuxSource aux) {
         var previousEnd = moofStart;
         var firstTraf = true;
         while (moof.hasBox()) {
@@ -115,7 +124,8 @@ final class FragmentParser {
             if (box.type() != BoxTypes.TRAF) {
                 continue;
             }
-            previousEnd = parseTrackFragment(box, moofStart, firstTraf ? moofStart : previousEnd, tracks, aux);
+            previousEnd = parseTrackFragment(box, moofStart, segmentStart, firstTraf ? moofStart : previousEnd, tracks,
+                    aux);
             firstTraf = false;
         }
     }
@@ -125,14 +135,15 @@ final class FragmentParser {
      *
      * @param traf the box payload
      * @param moofStart the absolute offset of the enclosing {@code moof}
+     * @param segmentStart the absolute offset of the segment that holds it, or {@code -1}
      * @param implicitBase the base data offset to use when neither {@code tfhd} nor
      * {@code default-base-is-moof} gives one
      * @param tracks the tracks of the movie
      * @param aux reads the sample auxiliary information that {@code saio} boxes locate
      * @return the absolute offset just past the last sample of this track fragment
      */
-    private static long parseTrackFragment(BoxCursor traf, long moofStart, long implicitBase, List<Mp4Track> tracks,
-                                           CencSamples.AuxSource aux) {
+    private static long parseTrackFragment(BoxCursor traf, long moofStart, long segmentStart, long implicitBase,
+                                           List<Mp4Track> tracks, CencSamples.AuxSource aux) {
         BoxCursor tfhd = null;
         BoxCursor tfdt = null;
         BoxCursor randomAccess = null;
@@ -187,6 +198,9 @@ final class FragmentParser {
             base = tfhd.u64();
             if (base < 0) {
                 throw new MediaException.Malformed("negative base data offset");
+            }
+            if (segmentStart > 0 && base < segmentStart) {
+                base += segmentStart;
             }
         } else if ((flags & TFHD_DEFAULT_BASE_IS_MOOF) != 0) {
             base = moofStart;

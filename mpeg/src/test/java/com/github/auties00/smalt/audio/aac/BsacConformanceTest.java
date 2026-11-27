@@ -152,6 +152,17 @@ class BsacConformanceTest {
             Map.entry("er_bs03_32_ep1", 0), Map.entry("er_bs03_44_ep1", 0), Map.entry("er_bs03_48_ep1", 0),
             Map.entry("er_bs04_44_ep1", 36), Map.entry("er_bs04_48_ep1", 36));
 
+    /**
+     * The references in which the reference decoder conceals a frame, by reference name, with the frame and the
+     * channels concealed. Frame 26 of {@code er_bs09_08} is 2051 bytes long, more than the 11 bits of its
+     * {@code frame_length} count (it reads 3): at layer 24 the reference decoder finds no extension element in it and
+     * repeats the block before it in the channels those carry, which the check below asserts of the reference, while
+     * at layer 0 it decodes them. This decoder reads the frame whole at every layer ({@code BsacDecoder}), so the
+     * repeated block and the next one, whose first half overlaps it, are left out of the comparison of those channels.
+     */
+    private static final Map<String, Map.Entry<Integer, List<String>>> CONCEALED = Map.of("er_bs09_08_lay24",
+            Map.entry(26, List.of("f02", "b00", "b01")));
+
     private static final double RMS_LIMIT = Math.pow(2, -15) / Math.sqrt(12);
 
     private static final double PEAK_LIMIT = Math.pow(2, -14);
@@ -236,10 +247,33 @@ class BsacConformanceTest {
                     var reference = AacTestSupport.readWav(Fixtures.read(Mpeg4AudioVectors.file(name + "_" + speaker + ".wav")))[0];
                     var index = decoded.layout().indexOf(speakerOf(speaker));
                     assertTrue(index >= 0, name + " lacks " + speaker + " in " + decoded.layout());
-                    compare(name + "_" + speaker, reference, decoded.planes()[index]);
+                    var actual = decoded.planes()[index];
+                    var concealed = CONCEALED.get(name);
+                    if (concealed != null && concealed.getValue().contains(speaker)) {
+                        var start = concealed.getKey() * 1024;
+                        assertTrue(java.util.Arrays.equals(reference, start, start + 1024, reference, start - 1024,
+                                start), name + "_" + speaker + " repeats block " + (concealed.getKey() - 1));
+                        reference = withoutBlocks(reference, start);
+                        actual = withoutBlocks(actual, start);
+                    }
+                    compare(name + "_" + speaker, reference, actual);
                 }
             }
         }
+    }
+
+    /**
+     * Returns the samples of a channel without the two blocks of 1024 samples from a position.
+     *
+     * @param samples the samples
+     * @param start the first sample left out
+     * @return the remaining samples
+     */
+    private static float[] withoutBlocks(float[] samples, int start) {
+        var result = new float[samples.length - 2048];
+        System.arraycopy(samples, 0, result, 0, start);
+        System.arraycopy(samples, start + 2048, result, start, result.length - start);
+        return result;
     }
 
     /**

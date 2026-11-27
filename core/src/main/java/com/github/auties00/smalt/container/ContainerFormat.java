@@ -266,6 +266,12 @@ public enum ContainerFormat {
     H263,
 
     /**
+     * An MPEG-1 or MPEG-2 video elementary stream ({@code .m1v}, {@code .m2v}, {@code .mpv}): a sequence header,
+     * then groups of pictures, start-code prefixed.
+     */
+    MPEG_VIDEO,
+
+    /**
      * A YUV4MPEG2 file ({@code .y4m}): uncompressed video frames after a text header, magic
      * {@code YUV4MPEG2}.
      */

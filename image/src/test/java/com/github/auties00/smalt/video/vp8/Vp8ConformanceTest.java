@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Decodes every libvpx VP8 test vector (vp80-00 to vp80-06) and compares the MD5 of each shown
@@ -63,13 +64,14 @@ class Vp8ConformanceTest {
 
     /**
      * VP8 streams of other encoders (ffmpeg's FATE samples: a real-world WebM, a mid-stream frame size change, a
-     * stream using the sign bias of the golden and alternate references) and the long real-world Tears of Steel
-     * stream: every shown frame's I420 MD5 must equal ffmpeg's decode of it ({@code -f framemd5}, frames kept at
-     * their own size), whose VP8 decoder is bit-exact with libvpx's.
+     * stream using the sign bias of the golden and alternate references), the long real-world Tears of Steel stream
+     * and Chromium's VP8 in Ogg ({@code sync2.ogv}, the OggVP8 mapping, with Vorbis): every shown frame's I420 MD5
+     * must equal ffmpeg's decode of it ({@code -f framemd5}, frames kept at their own size), whose VP8 decoder is
+     * bit-exact with libvpx's.
      */
     @ParameterizedTest(name = "{0}")
     @org.junit.jupiter.params.provider.ValueSource(strings = {"vp8-fate-RRSF49-short.webm",
-            "vp8-fate-frame_size_change.webm", "vp8-fate-sintel-signbias.ivf", "tos_vp8.webm"})
+            "vp8-fate-frame_size_change.webm", "vp8-fate-sintel-signbias.ivf", "tos_vp8.webm", "chromium-sync2.ogv"})
     @DisplayName("every shown frame of third-party streams matches ffmpeg's MD5")
     void thirdParty(String name) throws IOException {
         com.github.auties00.smalt.testkit.Oracle.assume(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG);
@@ -96,7 +98,7 @@ class Vp8ConformanceTest {
                 var track = (VideoTrack) demuxer.tracks().stream().filter(VideoTrack.class::isInstance).findFirst()
                         .orElseThrow();
                 try (var decoder = new Vp8Decoder(track)) {
-                    for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    for (var packet = read(demuxer, name); packet != null; packet = read(demuxer, name)) {
                         if (packet.trackId() == track.id()) {
                             decoder.decode(packet, out -> actual.add(Ivf.md5(Ivf.i420((YuvPicture) out.picture()))));
                         }
@@ -107,6 +109,24 @@ class Vp8ConformanceTest {
         assertEquals(expected.size(), actual.size(), "shown frame count");
         for (var i = 0; i < expected.size(); i++) {
             assertEquals(expected.get(i), actual.get(i), "frame " + (i + 1));
+        }
+    }
+
+    /**
+     * Reads the next packet of a third-party file. {@code vp8-fate-RRSF49-short.webm} is cut short inside a block
+     * group: the Matroska demuxer returns every complete block, then reports the cut block as malformed (its
+     * documented contract), where the stream ends for the comparison, as it does for ffmpeg, which drops the cut
+     * block.
+     */
+    private static Packet read(com.github.auties00.smalt.container.Demuxer demuxer, String name) {
+        try {
+            return demuxer.read();
+        } catch (com.github.auties00.smalt.MediaException.Malformed exception) {
+            if (!name.equals("vp8-fate-RRSF49-short.webm")) {
+                throw exception;
+            }
+            assertTrue(exception.getMessage().contains("runs past the end of the input"), exception.getMessage());
+            return null;
         }
     }
 }

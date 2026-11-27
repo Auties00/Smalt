@@ -235,18 +235,27 @@ class CelpConfigurationsTest {
             assertThrows(MediaException.Malformed.class, () -> new CelpDecoder(tracks.getFirst()));
         }
 
+        /**
+         * With fine rate control, as without it {@code RPE_Configuration} 4 and 6 read in the syntax before
+         * Corrigendum 1 as the valid wideband {@code RPE_Configuration} 2 and 3 of the ISO/IEC 14496-26 streams
+         * {@code ceNNa} ({@link CelpDecoder}); with it they read there as the reserved 6 and 7.
+         */
         @ParameterizedTest(name = "RPE_Configuration {0}")
         @ValueSource(ints = {4, 5, 6, 7})
         @DisplayName("the reserved regular pulse configurations")
         void regularPulse(int configuration) {
-            var tracks = tracks(base(8, true, true, false, false, configuration, 0, false, 0));
+            var tracks = tracks(base(8, true, true, true, false, configuration, 0, false, 0));
             assertThrows(MediaException.Malformed.class, () -> new CelpDecoder(tracks.getFirst()));
         }
 
+        /**
+         * Regular pulse excitation at 8 kHz takes {@code RPE_Configuration} 1, as configuration 0 reads in the syntax
+         * before Corrigendum 1 as the valid wideband {@code RPE_Configuration} 0 ({@link CelpDecoder}).
+         */
         @Test
         @DisplayName("the combinations the standard leaves out")
         void combinations() {
-            for (var config : List.of(base(8, true, false, false, false, 0, 0, false, 0),
+            for (var config : List.of(base(8, true, false, false, false, 1, 0, false, 0),
                     base(8, false, false, false, false, 27, 1, false, 0),
                     base(8, false, false, false, false, 27, 0, true, 0),
                     base(8, false, true, false, false, 0, 0, true, 0))) {

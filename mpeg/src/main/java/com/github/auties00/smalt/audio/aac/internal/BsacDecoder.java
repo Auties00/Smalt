@@ -864,6 +864,11 @@ final class BsacDecoder {
         var stereoMode = 0;
         var intensityPresent = false;
         var frameBits = (int) readInput(11) * 8;
+        if (!extension && frameBits < 8L * inputLength && (inputLength - frameBits / 8) % 2048 == 0) {
+            // frame_length counts the bytes of the whole frame in 11 bits: of a frame of 2048 bytes or more an
+            // encoder leaves the length modulo 2048 (er_bs09_08 of ISO/IEC 14496-26, frame 26: 2051 bytes, field 3)
+            frameBits = 8 * inputLength;
+        }
         lastFrameLength = frameBits;
         if (!extension) {
             available = frameBits;
@@ -1911,7 +1916,9 @@ final class BsacDecoder {
     }
 
     /**
-     * Fills the noise substituted bands of an element ({@code sam_pns}).
+     * Fills the noise substituted bands of an element ({@code sam_pns}). A band whose noise is correlated takes in
+     * the second channel the noise the first channel generated for it, which the first generates as any other band:
+     * the ISO/IEC 14496-26 2nd edition references of {@code er_bs47_44} and {@code er_bs47_48} are decoded that way.
      */
     private void applyNoise(int maxSfb, int windowSequence, int groups, int first, int nch) {
         for (var ch = 0; ch < nch; ch++) {
@@ -1921,7 +1928,7 @@ final class BsacDecoder {
                     if (noiseFlags[ch][sfb] == 0) {
                         continue;
                     }
-                    fillNoise(spectrum, longOffsets[sfb], longOffsets[sfb + 1], noiseModes[sfb] != 0, sfb, sfb,
+                    fillNoise(spectrum, longOffsets[sfb], longOffsets[sfb + 1], ch == 1 && noiseModes[sfb] != 0, sfb, sfb,
                             scalefactors[ch][sfb]);
                 }
             } else {
@@ -1934,7 +1941,7 @@ final class BsacDecoder {
                                 continue;
                             }
                             fillNoise(spectrum, s * 128 + shortOffsets[sfb], s * 128 + shortOffsets[sfb + 1],
-                                    noiseModes[band] != 0, sfb, band, scalefactors[ch][band]);
+                                    ch == 1 && noiseModes[band] != 0, sfb, band, scalefactors[ch][band]);
                         }
                     }
                 }
@@ -1980,12 +1987,13 @@ final class BsacDecoder {
     }
 
     /**
-     * Applies intensity stereo ({@code sam_intensity}).
+     * Applies intensity stereo ({@code sam_intensity}) to the bands whose second channel is not noise substituted,
+     * as the references of {@code er_bs47_44} and {@code er_bs47_48} have it.
      */
     private void applyIntensity(int windowSequence, int groups, double[] left, double[] right, int maxSfb) {
         if (windowSequence != ChannelStream.EIGHT_SHORT_SEQUENCE) {
             for (var sfb = 0; sfb < maxSfb; sfb++) {
-                if (intensity[sfb] == 0) {
+                if (intensity[sfb] == 0 || noiseFlags[1][sfb] != 0) {
                     continue;
                 }
                 var scale = (intensity[sfb] == 1 ? 1 : -1) * StrictMath.pow(0.5, 0.25 * scalefactors[1][sfb]);
@@ -2000,7 +2008,7 @@ final class BsacDecoder {
             for (var b = 0; b < groupLengths[w]; b++, s++) {
                 for (var sfb = 0; sfb < maxSfb; sfb++) {
                     var band = w * maxSfb + sfb;
-                    if (intensity[band] == 0) {
+                    if (intensity[band] == 0 || noiseFlags[1][band] != 0) {
                         continue;
                     }
                     var scale = (intensity[band] == 1 ? 1 : -1) * StrictMath.pow(0.5, 0.25 * scalefactors[1][band]);

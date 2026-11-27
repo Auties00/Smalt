@@ -191,6 +191,24 @@ final class CelpLayout {
     }
 
     /**
+     * {@return the bits of the LPC indices of a frame}
+     */
+    int lpcBits() {
+        return wideband ? 46 : 22;
+    }
+
+    /**
+     * {@return the bits of a {@code CelpBaseFrame} of object type 8 that carries the LPC indices (Table 3.13)}
+     */
+    int frameBits() {
+        var bits = lpcBits();
+        if (rpe) {
+            return bits + subframes * (8 + positionBits + 6 + 3) + 2;
+        }
+        return bits + 8 + subframes * (delayBits + positionBits + signBits + gainBits);
+    }
+
+    /**
      * {@return the width of shape_bws_positions for a bandwidth configuration}
      *
      * @param bandwidthConfiguration {@code BWS_configuration}

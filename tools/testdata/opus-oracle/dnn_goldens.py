@@ -1,4 +1,5 @@
-"""Runs the libopus 1.5.2 neural build on the golden configurations of OpusDnnGoldenTest and prints its lines.
+"""Runs the libopus 1.5.2 neural build (with the DRED of 1.6.1) on the golden configurations of OpusDnnGoldenTest
+and prints its lines.
 
 Usage: python -I tools/testdata/opus-oracle/dnn_goldens.py <vector dir> <oracle dir> <work dir>
 

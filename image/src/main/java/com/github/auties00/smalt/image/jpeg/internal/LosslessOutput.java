@@ -96,8 +96,9 @@ public final class LosslessOutput {
     /**
      * Decodes a frame for which {@link #reversibleRgb} holds into 8-bit RGBA: with the components
      * {@code Y}, {@code U} and {@code V} of a sample, {@code G = Y - ((U + V - 512) >> 2)},
-     * {@code B = U - 256 + G} and {@code R = V - 256 + G}, each kept to 8 bits; the fourth component
-     * is the alpha, or the picture is opaque without one.
+     * {@code B = U - 256 + G} and {@code R = V - 256 + G}, each kept to 8 bits, the components kept to
+     * their 9 bits first as ffmpeg's decoder keeps them; the fourth component is the alpha, or the
+     * picture is opaque without one.
      *
      * @param reader the reader of the frame
      * @param limits the resource bounds checked before the allocation
@@ -117,9 +118,9 @@ public final class LosslessOutput {
         jpeg.decode((row, samples) -> {
             var at = row * stride;
             for (var x = 0; x < width; x++) {
-                var y = samples[x * count];
-                var u = samples[x * count + 1];
-                var v = samples[x * count + 2];
+                var y = samples[x * count] & 0x1FF;
+                var u = samples[x * count + 1] & 0x1FF;
+                var v = samples[x * count + 2] & 0x1FF;
                 var g = y - ((u + v - 512) >> 2);
                 pixels[at + 4 * x] = (byte) (v - 256 + g);
                 pixels[at + 4 * x + 1] = (byte) g;

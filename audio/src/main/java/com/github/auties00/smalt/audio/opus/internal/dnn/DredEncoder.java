@@ -1,4 +1,4 @@
-/* Ports libopus 1.5.2 (dnn/dred_encoder.c, dnn/dred_rdovae_enc.c, dnn/dred_coding.c, celt/laplace.c
+/* Ports libopus 1.6.1 (dnn/dred_encoder.c, dnn/dred_rdovae_enc.c, dnn/dred_coding.c, celt/laplace.c
    (ec_laplace_encode_p0)). Copyright Amazon, CSIRO and Xiph.Org Foundation; BSD 3-Clause License.
    Modified for Smalt. */
 package com.github.auties00.smalt.audio.opus.internal.dnn;
@@ -13,7 +13,8 @@ import java.util.Arrays;
  * LPCNet features every 10 ms, compresses each pair of frames into a latent vector and an initial state with the
  * RDOVAE encoder, and codes the newest latents, coarser with age, into the DRED extension payload.
  *
- * <p>The payload is bit-identical to that of libopus 1.5.2 built with DRED and the generic C code of its networks.
+ * <p>The payload is the standardized DRED of libopus 1.6.1 (payload version {@value Dred#EXPERIMENTAL_VERSION}),
+ * bit-identical to that of libopus built with DRED and the generic C code of its networks.
  * Instances are not thread-safe.
  */
 public final class DredEncoder {
@@ -41,6 +42,12 @@ public final class DredEncoder {
     private static final int GRU = RdovaeEncModel.ENC_GRU1_STATE_SIZE;
 
     /**
+     * The offset added to each downmixed sample, which keeps the resampling filters out of denormals
+     * ({@code VERY_SMALL}).
+     */
+    private static final float VERY_SMALL = 1e-30f;
+
+    /**
      * The 48 and 24 kHz anti-aliasing filter, {@code ellip(7, .2, 70, 7750/24000)}.
      */
     private static final float[] B_48K = {0.005873358047f, 0.012980854831f, 0.014531340042f, 0.014531340042f,
@@ -50,7 +57,7 @@ public final class DredEncoder {
     private static final float B0_48K = 0.004523418224f;
 
     /**
-     * The 12 kHz filter.
+     * The 12 kHz filter, {@code ellip(7, .2, 70, 5800/24000)}.
      */
     private static final float[] B_12K = {-0.001017101081f, 0.003673127243f, 0.001009165267f, 0.001009165267f,
         0.003673127243f, -0.001017101081f, 0.002033596776f, 0.f};
@@ -97,21 +104,26 @@ public final class DredEncoder {
     private final LinearLayer[] gruIn;
     private final LinearLayer[] gruRec;
     private final LinearLayer[] conv;
+    private final LinearLayer[] convDense;
 
     private final float[] featureBuffer = new float[2 * LpcnetEncoder.NB_TOTAL_FEATURES];
     private final float[] dframe = new float[2 * NUM_FEATURES];
     private final float[] buffer = new float[RdovaeEncModel.ENC_DENSE1_OUT_SIZE + 5 * GRU
             + 5 * RdovaeEncModel.ENC_CONV1_OUT_SIZE];
+    private final float[] convInput = new float[RdovaeEncModel.ENC_CONV_DENSE1_OUT_SIZE];
     private final float[] paddedLatents = new float[RdovaeEncModel.ENC_ZDENSE_OUT_SIZE];
     private final float[] paddedState = new float[RdovaeEncModel.GDENSE2_OUT_SIZE];
     private final float[] stateHidden = new float[RdovaeEncModel.GDENSE1_OUT_SIZE];
     private final float[] downmix = new float[960 * 2];
     private final RangeEncoder ec = new RangeEncoder();
     private final RangeEncoder ecBak = new RangeEncoder();
-    private final int[] q = new int[LATENT_DIM];
-    private final float[] xq = new float[LATENT_DIM];
-    private final float[] delta = new float[LATENT_DIM];
-    private final float[] deadzone = new float[LATENT_DIM];
+    /**
+     * The quantization scratch of a latent or of the initial state, the longer of the two.
+     */
+    private final int[] q = new int[Math.max(LATENT_DIM, STATE_DIM)];
+    private final float[] xq = new float[q.length];
+    private final float[] delta = new float[q.length];
+    private final float[] deadzone = new float[q.length];
     private final int[] signIcdf = new int[3];
     private final int[] icdf = new int[8];
 
@@ -133,6 +145,8 @@ public final class DredEncoder {
         this.gruRec = new LinearLayer[]{m.enc_gru1_recurrent, m.enc_gru2_recurrent, m.enc_gru3_recurrent,
             m.enc_gru4_recurrent, m.enc_gru5_recurrent};
         this.conv = new LinearLayer[]{m.enc_conv2, m.enc_conv3, m.enc_conv4, m.enc_conv5};
+        this.convDense = new LinearLayer[]{m.enc_conv_dense1, m.enc_conv_dense2, m.enc_conv_dense3,
+            m.enc_conv_dense4, m.enc_conv_dense5};
         reset();
     }
 
@@ -176,14 +190,18 @@ public final class DredEncoder {
         nnet.gru(gruIn[0], gruRec[0], gruState[0], 0, buffer, 0);
         System.arraycopy(gruState[0], 0, buffer, outputIndex, GRU);
         outputIndex += GRU;
-        nnet.conv1d(model.enc_conv1, buffer, outputIndex, conv1State, 0, buffer, 0, outputIndex, Nnet.ACTIVATION_TANH);
+        // Each convolution sees a dense projection of everything computed so far.
+        nnet.dense(convDense[0], convInput, 0, buffer, 0, Nnet.ACTIVATION_TANH);
+        nnet.conv1d(model.enc_conv1, buffer, outputIndex, conv1State, 0, convInput, 0,
+                RdovaeEncModel.ENC_CONV1_IN_SIZE, Nnet.ACTIVATION_TANH);
         outputIndex += RdovaeEncModel.ENC_CONV1_OUT_SIZE;
         for (var k = 1; k < 5; k++) {
             nnet.gru(gruIn[k], gruRec[k], gruState[k], 0, buffer, 0);
             System.arraycopy(gruState[k], 0, buffer, outputIndex, GRU);
             outputIndex += GRU;
-            nnet.conv1dDilation(conv[k - 1], buffer, outputIndex, convState[k - 1], 0, buffer, 0, outputIndex, 2,
-                    Nnet.ACTIVATION_TANH);
+            nnet.dense(convDense[k], convInput, 0, buffer, 0, Nnet.ACTIVATION_TANH);
+            nnet.conv1dDilation(conv[k - 1], buffer, outputIndex, convState[k - 1], 0, convInput, 0,
+                    RdovaeEncModel.ENC_CONV1_IN_SIZE, 2, Nnet.ACTIVATION_TANH);
             outputIndex += RdovaeEncModel.ENC_CONV1_OUT_SIZE;
         }
         nnet.dense(model.enc_zdense, paddedLatents, 0, buffer, 0, Nnet.ACTIVATION_LINEAR);
@@ -235,12 +253,12 @@ public final class DredEncoder {
         Arrays.fill(downmix, 0, up * inLen, 0);
         if (channels == 1) {
             for (var i = 0; i < inLen; i++) {
-                downmix[up * i] = MathOps.float2int16(up * in[inOffset + i]);
+                downmix[up * i] = MathOps.float2int16(up * in[inOffset + i]) + VERY_SMALL;
             }
         } else {
             for (var i = 0; i < inLen; i++) {
                 var mixed = (float) (.5 * up * (in[inOffset + 2 * i] + in[inOffset + 2 * i + 1]));
-                downmix[up * i] = MathOps.float2int16(mixed);
+                downmix[up * i] = MathOps.float2int16(mixed) + VERY_SMALL;
             }
         }
         switch (fs) {

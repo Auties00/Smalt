@@ -9,13 +9,21 @@ import java.util.Arrays;
  * <p>The decoder keeps the displayed and non-displayed memories of 15 rows of 32 columns, the cursor and the
  * attributes, and runs the pop-on, roll-up and paint-on styles. It commits a caption to the timeline at a memory
  * flip (End of Caption), an erase of displayed memory, a carriage return in roll-up style and a change of style.
+ * Before any style command it is in roll-up style of two rows with the cursor on row 11, as ffmpeg's decoder starts,
+ * so that the text of a stream picked up in the middle of a caption is shown.
  * Text mode, extended data services and the optional background attributes are read past and not shown; a byte
- * that fails its odd parity check makes its pair ignored, as does the repetition of a control code in the pair that
- * follows it.
+ * that fails its odd parity check makes its pair ignored, as does the repetition of a control code in the next pair
+ * of the field that is not padding (an encoder that carries more pairs a frame than the field uses may put null
+ * pairs between the two transmissions), as ffmpeg's decoder skips padding.
  */
 public final class Cea608Decoder implements CaptionStream {
     private static final int ROWS = 15;
     private static final int COLUMNS = 32;
+
+    /**
+     * The row (from 0) of the cursor before any preamble address code.
+     */
+    private static final int START_ROW = 10;
 
     /**
      * The rows (from 0) of the preamble address codes, by first byte (0x10 to 0x17) and by the bit 0x20 of the
@@ -55,7 +63,7 @@ public final class Cea608Decoder implements CaptionStream {
             + "\u00E4\u00D6\u00F6\u00DF\u00A5\u00A4\u2502\u00C5\u00E5\u00D8\u00F8\u250C\u2510\u2514\u2518";
 
     private enum Style {
-        NONE, POP_ON, ROLL_UP, PAINT_ON
+        POP_ON, ROLL_UP, PAINT_ON
     }
 
     private final CaptionTimeline timeline;
@@ -64,9 +72,9 @@ public final class Cea608Decoder implements CaptionStream {
 
     private int[][] displayed = new int[ROWS][COLUMNS];
     private int[][] hidden = new int[ROWS][COLUMNS];
-    private Style style = Style.NONE;
+    private Style style = Style.ROLL_UP;
     private int rollRows = 2;
-    private int row = ROWS - 1;
+    private int row = START_ROW;
     private int column;
     private int color = 0x3F;
     private boolean italic;
@@ -130,9 +138,9 @@ public final class Cea608Decoder implements CaptionStream {
     public void reset() {
         displayed = new int[ROWS][COLUMNS];
         hidden = new int[ROWS][COLUMNS];
-        style = Style.NONE;
+        style = Style.ROLL_UP;
         rollRows = 2;
-        row = ROWS - 1;
+        row = START_ROW;
         column = 0;
         resetAttributes();
         activeChannel = 0;
@@ -154,7 +162,7 @@ public final class Cea608Decoder implements CaptionStream {
         b1 &= 0x7F;
         b2 &= 0x7F;
         if (b1 == 0 && b2 == 0) {
-            lastControl = -1;
+            // padding: not a pair of the channel, so the repetition of a control code after it is still redundant
             return;
         }
         if (b1 >= 0x10 && b1 <= 0x1F) {
@@ -179,7 +187,7 @@ public final class Cea608Decoder implements CaptionStream {
             xds = b1 != 0x0F;
             return;
         }
-        if (xds || activeChannel != channel || !captionMode || style == Style.NONE) {
+        if (xds || activeChannel != channel || !captionMode) {
             return;
         }
         if (b1 >= 0x20 && parity1) {
@@ -209,13 +217,13 @@ public final class Cea608Decoder implements CaptionStream {
             case 0x11 -> {
                 if (b2 <= 0x2F) {
                     midRow(b2);
-                } else if (captionMode && style != Style.NONE) {
+                } else if (captionMode) {
                     character(SPECIAL.charAt(b2 - 0x30));
                 }
                 changed();
             }
             case 0x12, 0x13 -> {
-                if (captionMode && style != Style.NONE) {
+                if (captionMode) {
                     if (column > 0) {
                         column--;
                     }
@@ -269,7 +277,7 @@ public final class Cea608Decoder implements CaptionStream {
             color = COLORS[code];
             italic = false;
         }
-        if (captionMode && style != Style.NONE) {
+        if (captionMode) {
             put(' ');
         }
     }

@@ -181,14 +181,14 @@ public record UsacConfig(int samplingFrequency, int coreSbrFrameLengthIndex, int
     }
 
     /**
-     * Parses a {@code UsacConfig} at the reader's position, as the audio pre-roll embeds one.
+     * Parses a {@code UsacConfig}, as the audio pre-roll embeds one: padded to whole bytes.
      *
-     * @param reader the bit source
+     * @param data the configuration bytes
      * @return the configuration
-     * @throws MediaException.Malformed if the configuration is invalid
+     * @throws MediaException.Malformed if the configuration is truncated or invalid
      */
-    static UsacConfig parse(AacBitReader reader) {
-        return parse(reader, null, 0);
+    static UsacConfig parse(byte[] data) {
+        return parse(new AacBitReader(data), data, 0);
     }
 
     private static UsacConfig parse(AacBitReader reader, byte[] data, int start) {
@@ -303,7 +303,7 @@ public record UsacConfig(int samplingFrequency, int coreSbrFrameLengthIndex, int
             }
         }
         reader.checkNotOverrun();
-        var bytes = data == null ? new byte[0] : copyBits(data, start, (int) reader.bitPosition() - start);
+        var bytes = copyBits(data, start, (int) reader.bitPosition() - start);
         return new UsacConfig(frequency, coreSbr, channelConfiguration, positions, List.copyOf(elements), loudness,
                 bytes);
     }

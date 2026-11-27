@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.subtitle;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.ContainerFormat;
+import com.github.auties00.smalt.internal.subtitle.TextFiles;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
@@ -13,8 +14,8 @@ import java.nio.charset.StandardCharsets;
  * Demuxes a WebVTT ({@code .vtt}) file into one {@link Codec#WEBVTT} track.
  *
  * <p>The file is read whole and decoded like a SubRip file (a byte order mark, then the encoding of
- * {@link DemuxerOptions#charset()} or the one detected), and must start with the {@code WEBVTT}
- * signature. The track configuration is the
+ * {@link DemuxerOptions#charset()} or the one detected), must start with the {@code WEBVTT}
+ * signature and is parsed with the WebVTT parser algorithm of the W3C specification. The track configuration is the
  * file header: the {@code WEBVTT} block and the {@code STYLE}, {@code REGION} and {@code NOTE}
  * blocks before the first cue. Each packet is one cue payload, with the cue identifier and
  * settings as side data, in a millisecond time base; cues are returned in start order.
@@ -44,7 +45,7 @@ public final class WebVttDemuxer extends CueFileDemuxer {
      * @throws MediaException.Io if reading the source fails
      */
     public WebVttDemuxer(MediaSource source, DemuxerOptions options) {
-        this(WebVttText.parse(readText(source, options)));
+        this(WebVttText.parse(TextFiles.decodeVerbatim(readBytes(source, options), options.charset().orElse(null))));
     }
 
     /**

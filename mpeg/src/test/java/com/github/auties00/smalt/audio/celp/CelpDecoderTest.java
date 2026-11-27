@@ -237,13 +237,16 @@ class CelpDecoderTest {
             assertThrows(MediaException.Malformed.class, () -> new CelpDecoder(bare));
             assertThrows(IllegalArgumentException.class, () -> new CelpDecoder(List.of(),
                     CelpDecoderOptions.defaults()));
+            // an ER CELP bitrate scalable layer: of object type 8 its bits would read as a valid base layer in the
+            // syntax before Corrigendum 1, which CelpDecoder also accepts
             var writer = new MsbBitWriter();
-            writer.write(8, 5);
+            writer.write(24, 5);
             writer.write(11, 4);
             writer.write(1, 4);
             writer.write(0, 1);
             writer.write(0, 1);
             writer.write(1, 2);
+            writer.write(0, 2);
             writer.alignWithZeros();
             var layer = bare.toBuilder().codecConfig(writer.toByteArray()).build();
             assertThrows(MediaException.Malformed.class, () -> new CelpDecoder(layer));

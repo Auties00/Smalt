@@ -23,7 +23,7 @@ import static com.github.auties00.smalt.audio.opus.internal.OpusDefines.*;
  *
  * <p>A complexity of at least 5 ({@link #setComplexity}) puts the decoder in deep PLC mode for good: from then on it
  * behaves as libopus 1.5.2 built with {@code --enable-dred --enable-osce}, concealing with the deep PLC, decoding
- * DRED ({@link #decodeDred}) and, at complexity 6 and 7 or more, enhancing 16 kHz SILK speech with LACE and NoLACE.
+ * DRED ({@link #decodeDred}, the standardized DRED of libopus 1.6.1) and, at complexity 6 and 7 or more, enhancing 16 kHz SILK speech with LACE and NoLACE.
  * Below it the decoder behaves as the build without them.
  *
  * @implNote This implementation allocates the stack buffers of {@code opus_decode_frame} once per decoder; the single

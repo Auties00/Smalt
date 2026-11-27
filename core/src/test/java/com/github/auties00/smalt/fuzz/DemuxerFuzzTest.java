@@ -223,6 +223,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void mpegVideo(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.MPEG_VIDEO, data);
+    }
+
+    @FuzzTest
     void dv(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.DV, data);
     }

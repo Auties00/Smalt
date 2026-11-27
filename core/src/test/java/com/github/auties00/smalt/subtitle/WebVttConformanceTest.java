@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.subtitle;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.container.subtitle.WebVttDemuxer;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Conformance;
 import org.junit.jupiter.api.DisplayName;
@@ -90,16 +91,53 @@ class WebVttConformanceTest {
         assertTrue(checked > 0 || !script.contains("cues"), name + ": no assertion checked");
     }
 
-    /** Resolves the two-digit and four-digit hexadecimal escapes of the file part of a test. */
+    /**
+     * Resolves the escapes of the file part of a test as the suite's build script does ({@code tools/build.py}
+     * decodes it with Python's {@code unicode_escape} codec): the single-character escapes, a backslash
+     * and {@code x} with two hexadecimal digits or {@code u} with four, octal escapes, and a backslash before a line feed, which joins the lines.
+     */
     private static String resolveCodes(String text) {
-        var matcher = Pattern.compile("\\\\x([0-9A-Fa-f]{2})|\\\\u([0-9A-Fa-f]{4})").matcher(text);
-        var out = new StringBuilder();
-        while (matcher.find()) {
-            var code = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
-            matcher.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(
-                    String.valueOf((char) Integer.parseInt(code, 16))));
+        var out = new StringBuilder(text.length());
+        for (var index = 0; index < text.length(); index++) {
+            var c = text.charAt(index);
+            if (c != '\\' || index + 1 >= text.length()) {
+                out.append(c);
+                continue;
+            }
+            var next = text.charAt(++index);
+            switch (next) {
+                case '\n' -> { }
+                case '\\', '\'', '"' -> out.append(next);
+                case 'a' -> out.append('\u0007');
+                case 'b' -> out.append('\b');
+                case 'f' -> out.append('\f');
+                case 'n' -> out.append('\n');
+                case 'r' -> out.append('\r');
+                case 't' -> out.append('\t');
+                case 'v' -> out.append('\u000B');
+                case 'x' -> {
+                    out.append((char) Integer.parseInt(text.substring(index + 1, index + 3), 16));
+                    index += 2;
+                }
+                case 'u' -> {
+                    out.append((char) Integer.parseInt(text.substring(index + 1, index + 5), 16));
+                    index += 4;
+                }
+                default -> {
+                    if (next >= '0' && next <= '7') {
+                        var end = index + 1;
+                        while (end < text.length() && end < index + 3 && text.charAt(end) >= '0'
+                                && text.charAt(end) <= '7') {
+                            end++;
+                        }
+                        out.append((char) Integer.parseInt(text.substring(index, end), 8));
+                        index = end - 1;
+                    } else {
+                        out.append('\\').append(next);
+                    }
+                }
+            }
         }
-        matcher.appendTail(out);
         return out.toString();
     }
 
@@ -182,8 +220,8 @@ class WebVttConformanceTest {
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
-        assertThrows(MediaException.class, () -> Subtitles.read(MediaSource.of(bytes),
-                SubtitleReaderOptions.builder().sourceMarkup().build()), name);
+        // the test loads each file as a text track, which is parsed as WebVTT whatever it holds
+        assertThrows(MediaException.class, () -> new WebVttDemuxer(MediaSource.of(bytes)), name);
     }
 
     @Test

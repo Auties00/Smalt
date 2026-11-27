@@ -1,6 +1,8 @@
 package com.github.auties00.smalt.audio.fuzz;
 
 import com.github.auties00.smalt.audio.g722.G722Sequences;
+import com.github.auties00.smalt.audio.opus.OpusEncoder;
+import com.github.auties00.smalt.audio.opus.OpusEncoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
@@ -18,8 +20,8 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
 
 /**
  * Writes the committed seeds of the audio fuzz targets (tools/fuzz/README.md): short tones encoded by ffmpeg and
- * converted to the packet format through Smalt's demuxers, and single Opus packets taken from such streams or
- * joined by {@link OpusPackets#merge}. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
+ * converted to the packet format through Smalt's demuxers, single Opus packets taken from such streams or
+ * joined by {@link OpusPackets#merge}, and a DRED packet of Smalt's Opus encoder. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
         disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
@@ -215,6 +217,34 @@ class FuzzSeedWriter {
         write(AudioFuzzTest.class, "opusPackets", "valid-code2.bin", OpusPackets.merge(List.of(celt.get(3),
                 celt.get(4))));
         write(AudioFuzzTest.class, "opusPackets", "valid-code3.bin", OpusPackets.merge(celt.subList(2, 8)));
+    }
+
+    @Test
+    @DisplayName("writes the seed of the Opus DRED target")
+    void opusDred() {
+        // a second of a voiced 140 Hz tone at 48 kHz through Smalt's encoder with one second of DRED, which takes
+        // bitrate only with an expected loss: the first packet from 600 ms on that carries the redundancy, whose
+        // latents then cover the tone before it
+        var encoder = new OpusEncoder(OpusEncoderOptions.forVoip(48000, 1).toBuilder().bitrate(32000)
+                .packetLossPercent(20).dredDurationMillis(1000).build());
+        var pcm = new float[48000];
+        for (var i = 0; i < pcm.length; i++) {
+            var t = i / 48000.0;
+            var sample = 0.0;
+            for (var h = 1; h <= 8; h++) {
+                sample += Math.sin(2 * Math.PI * 140 * h * t) / h;
+            }
+            pcm[i] = (float) (0.2 * sample * (0.6 + 0.4 * Math.sin(2 * Math.PI * 3 * t)));
+        }
+        var packet = new byte[OpusEncoder.maxPacketBytes()];
+        for (var frame = 0; frame < pcm.length / 960; frame++) {
+            var length = encoder.encode(pcm, frame * 960, 960, packet, 0, packet.length);
+            if (frame >= 30 && OpusPackets.hasDred(packet, 0, length)) {
+                write(AudioFuzzTest.class, "opusDred", "valid-dred48.bin", java.util.Arrays.copyOf(packet, length));
+                return;
+            }
+        }
+        throw new AssertionError("no packet carries DRED");
     }
 
     // the packets of the Opus track of a file, as the packet format stores them

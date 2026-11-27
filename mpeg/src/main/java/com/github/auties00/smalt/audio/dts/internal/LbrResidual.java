@@ -59,14 +59,16 @@ final class LbrResidual {
     private static final int ALIAS_START = 12;
 
     /**
-     * The number of bits that must be left after an entry of the second channel below {@link #stereoStart} for its
-     * samples to be used.
+     * The number of bits that must be left before a scale factor, grid 3 value, second channel average or the
+     * mid/side flags of an entry are read, and after an entry of the second channel below {@link #stereoStart} for
+     * its samples to be used: with fewer, the rest of the chunk is skipped ({@link LbrDecoder.Bits#ensure}), as in
+     * ffmpeg's decoder.
      */
     private static final int PRESENT_BITS = 20;
 
     /**
-     * The number of bits that must be left in the second time samples chunk for its next entry to be read, as
-     * measured: ffmpeg's decoder ignores up to 27 trailing bits.
+     * The number of bits that must be left in the second time samples chunk for an entry that names its subband to
+     * be read, as measured: ffmpeg's decoder ignores up to 27 trailing bits.
      */
     private static final int ENTRY_BITS = 28;
 
@@ -398,9 +400,17 @@ final class LbrResidual {
     private final int[][][] stereoGrid = new int[2][STEREO_GROUPS][4];
 
     /**
-     * Whether the grid 1 chunk of the pair being decoded carries a partial stereo grid.
+     * Whether the grid 1 chunk of the pair being decoded carries a partial stereo grid that ends within the chunk,
+     * the grid the samples are scaled by.
      */
     private boolean stereo;
+
+    /**
+     * Whether the grid 1 chunk of the pair being decoded starts a partial stereo grid, complete or not: its last
+     * points are where the next frame's gains start, as in ffmpeg's decoder, which keeps the points of a grid the
+     * chunk cuts short for the next frame although it does not apply them.
+     */
+    private boolean stereoRead;
 
     /**
      * The quantizer level of each subband, from 1 (2 levels) to 5 (16 levels).
@@ -479,6 +489,16 @@ final class LbrResidual {
      * The noise generator state.
      */
     private int seed;
+
+    /**
+     * The state of the noise generator at the start of the chunks of each channel pair of the frame.
+     */
+    private final int[] readSeeds = new int[8];
+
+    /**
+     * Whether the channel pair {@link #readPair} read last has a high resolution grid chunk.
+     */
+    private boolean highResolution;
 
     /**
      * Creates the residual decoder of a stream.
@@ -582,9 +602,26 @@ final class LbrResidual {
      * @param firstBlock the block of the ring that ends the previous frame
      */
     void decode(byte[] data, float[][] spectrum, int ring, long firstBlock) {
-        for (var ch = 0; ch < channels; ch += 2) {
+        // the noise of the samples the chunks cut short is drawn as every pair's chunks are read, before the noise
+        // of the absent subbands of any pair, as in ffmpeg's decoder: a first pass reads every pair to place the
+        // generator, the second reads each pair again from the state its chunks started at and fills it from the
+        // state after every pair's chunks (a single pair, read last, is not read again)
+        var pairs = (channels + 1) / 2;
+        for (var index = 0; index < pairs; index++) {
+            readSeeds[index] = seed;
+            readPair(data, 2 * index, 2 * index + 1 < channels);
+        }
+        var fillSeed = seed;
+        for (var index = 0; index < pairs; index++) {
+            var ch = 2 * index;
             var pair = ch + 1 < channels;
-            decodePair(data, ch, pair);
+            if (pairs > 1) {
+                seed = readSeeds[index];
+                readPair(data, ch, pair);
+            }
+            seed = fillSeed;
+            finishPair(ch, pair);
+            fillSeed = seed;
             synthesize(ch, spectrum[ch], ring, firstBlock);
             if (pair) {
                 synthesize(ch + 1, spectrum[ch + 1], ring, firstBlock);
@@ -593,13 +630,13 @@ final class LbrResidual {
     }
 
     /**
-     * Reads the chunks of a channel pair, or of the last channel coded alone, and computes its output subband
-     * samples.
+     * Reads the chunks of a channel pair, or of the last channel coded alone.
      *
+     * @param data the bytes of the frame
      * @param ch the first channel
      * @param pair whether the second channel follows
      */
-    private void decodePair(byte[] data, int ch, boolean pair) {
+    private void readPair(byte[] data, int ch, boolean pair) {
         var index = ch >> 1;
         var count = pair ? 2 : 1;
         for (var c = 0; c < count; c++) {
@@ -623,6 +660,7 @@ final class LbrResidual {
             Arrays.fill(present, 2, monoStart, true);
         }
         stereo = false;
+        stereoRead = false;
         var size = chunkSizes[index];
         if (size >= 0) {
             bits.reset(data, chunkOffsets[index], size);
@@ -643,6 +681,19 @@ final class LbrResidual {
                 }
             }
         }
+        highResolution = hasHighResolution;
+    }
+
+    /**
+     * Computes the output subband samples of the channel pair, or of the last channel coded alone, that
+     * {@link #readPair} read last.
+     *
+     * @param ch the first channel
+     * @param pair whether the second channel follows
+     */
+    private void finishPair(int ch, boolean pair) {
+        var count = pair ? 2 : 1;
+        var hasHighResolution = highResolution;
         for (var c = 0; c < count; c++) {
             scaleAndFill(c);
         }
@@ -679,7 +730,7 @@ final class LbrResidual {
         if (pair) {
             for (var c = 0; c < 2; c++) {
                 for (var group = 0; group < stereoGroups; group++) {
-                    stereoState[ch + c][group] = stereo ? stereoGain(c, group, 3) : 1;
+                    stereoState[ch + c][group] = stereoRead ? stereoGain(c, group, 3) : 1;
                 }
             }
         }
@@ -705,11 +756,14 @@ final class LbrResidual {
             }
             return;
         }
-        readAverages(averages[0]);
-        if (bits.left() < 8) {
+        if (bits.left() < 1) {
             return;
         }
-        stereo = true;
+        readAverages(averages[0]);
+        if (!bits.ensure(8)) {
+            return;
+        }
+        stereoRead = true;
         var minimum0 = bits.read(4);
         var minimum1 = bits.read(4);
         for (var group = 0; group < stereoGroups; group++) {
@@ -720,14 +774,30 @@ final class LbrResidual {
                 }
             }
         }
+        stereo = bits.left() >= 0;
     }
 
     /**
-     * Reads the grid 3 averages of the subbands from 4 of a channel of a pair.
+     * Reads the grid 3 averages of the subbands from 4 of the first channel of a pair.
      */
     private void readAverages(int[] out) {
         for (var sb = 4; sb < subbands; sb++) {
             out[sb] = bits.variable(LbrTables.AVG_G3);
+        }
+    }
+
+    /**
+     * Reads the grid 3 averages of the subbands from 4 of the second channel of a pair, each when
+     * {@link #PRESENT_BITS} bits are left; from where the chunk is cut short the second channel keeps the averages
+     * of the first, as in ffmpeg's decoder.
+     */
+    private void readSecondAverages() {
+        System.arraycopy(averages[0], 4, averages[1], 4, subbands - 4);
+        for (var sb = 4; sb < subbands; sb++) {
+            if (!bits.ensure(PRESENT_BITS)) {
+                return;
+            }
+            averages[1][sb] = bits.variable(LbrTables.AVG_G3);
         }
     }
 
@@ -737,15 +807,18 @@ final class LbrResidual {
      * bits are left before a difference.
      */
     private void readScaleFactors(int[] out) {
-        if (bits.left() < 20) {
+        if (!bits.ensure(PRESENT_BITS)) {
             return;
         }
         var previous = bits.variable(LbrTables.FST_RSD_AMP);
         out[0] = previous;
         var slot = 0;
         while (slot < 7) {
+            if (!bits.ensure(PRESENT_BITS)) {
+                return;
+            }
             var distance = bits.variable(LbrTables.RSD_APPX) + 1;
-            if (bits.left() < 20 || distance <= 0 || slot + distance > 7) {
+            if (!bits.ensure(PRESENT_BITS) || distance <= 0 || slot + distance > 7) {
                 return;
             }
             var code = bits.variable(LbrTables.RSD_AMP);
@@ -767,19 +840,13 @@ final class LbrResidual {
     private void readHighResolution(boolean pair) {
         computeLevels(bits.read(8));
         var count = pair ? 2 : 1;
+        readLpc(0, 2, count);
         for (var sb = 0; sb < 2; sb++) {
-            for (var c = 0; c < count; c++) {
-                for (var i = 0; i < 2 * ORDER; i++) {
-                    lpcIndices[c][sb * 2 * ORDER + i] = bits.read(4);
-                }
-            }
-        }
-        for (var sb = 0; sb < 2; sb++) {
-            if (pair) {
-                midSide[sb] = bits.read(8);
+            if (!readMidSide(sb, pair)) {
+                break;
             }
             for (var c = 0; c < count; c++) {
-                readSamples(sb, sb, c);
+                readSamples(sb, sb, c, false);
             }
         }
         for (var sb = 0; sb < 2; sb++) {
@@ -796,35 +863,65 @@ final class LbrResidual {
      */
     private void readTimeSamples1(boolean pair) {
         var count = pair ? 2 : 1;
-        for (var c = 0; c < count; c++) {
-            for (var i = 0; i < ORDER; i++) {
-                lpcIndices[c][4 * ORDER + i] = bits.read(4);
-            }
-        }
+        readLpc(2, 3, count);
         Arrays.fill(grid3Read, false);
         for (var sb = 2; sb < 4; sb++) {
-            readMidSide(sb, pair);
-            readSamples(sb, sb, 0);
+            if (!readMidSide(sb, pair)) {
+                break;
+            }
+            readSamples(sb, sb, 0, false);
             if (pair && sb < monoStart) {
-                readSamples(sb, sb, 1);
+                readSamples(sb, sb, 1, false);
             }
         }
         readGrid2(grid2[0][0]);
         for (var sb = 4; sb < 6; sb++) {
             readGrid3(grid3[0][sb]);
             grid3Read[sb] = true;
-            readMidSide(sb, pair);
-            readSamples(sb, sb, 0);
+            if (!readMidSide(sb, pair)) {
+                break;
+            }
+            readSamples(sb, sb, 0, false);
+        }
+    }
+
+    /**
+     * Reads the LPC reflection coefficient indices of subbands of each channel, 16 for subbands 0 and 1, 8 for
+     * subband 2; a channel without room for all of them keeps the neutral indices, its filter off for the frame.
+     *
+     * @param start the first subband
+     * @param end the subband after the last
+     * @param count the number of channels
+     */
+    private void readLpc(int start, int end, int count) {
+        for (var sb = start; sb < end; sb++) {
+            var codes = sb < 2 ? 2 * ORDER : ORDER;
+            for (var c = 0; c < count; c++) {
+                if (!bits.ensure(4 * codes)) {
+                    return;
+                }
+                for (var i = 0; i < codes; i++) {
+                    lpcIndices[c][sb * 2 * ORDER + i] = bits.read(4);
+                }
+            }
         }
     }
 
     /**
      * Reads the mid/side flags of a subband of a pair.
+     *
+     * @return whether the entry goes on: false when a pair has fewer than {@link #PRESENT_BITS} bits left for the
+     *         flags, which ends the chunk
      */
-    private void readMidSide(int sb, boolean pair) {
-        if (pair) {
-            midSide[sb] = bits.read(8);
+    private boolean readMidSide(int sb, boolean pair) {
+        if (!pair) {
+            return true;
         }
+        if (!bits.ensure(PRESENT_BITS)) {
+            return false;
+        }
+        midSide[sb] = bits.read(8);
+        return true;
     }
 
     /**
@@ -840,14 +937,16 @@ final class LbrResidual {
         }
         var end = pair ? stereoStart : subbands;
         for (var index = 6; index < end; index++) {
-            if (bits.left() < ENTRY_BITS) {
+            if (!bits.ensure(ENTRY_BITS)) {
                 return;
             }
             var target = readTarget();
             targets[index] = target;
             readEntryGrid3(index, target, 0);
-            readMidSide(target, pair);
-            readSamples(index, target, 0);
+            if (!readMidSide(target, pair)) {
+                return;
+            }
+            readSamples(index, target, 0, false);
         }
         if (!pair) {
             return;
@@ -855,38 +954,50 @@ final class LbrResidual {
         for (var band = monoStart; band < grid1Bands; band++) {
             readScaleFactors(grid1[1][band]);
         }
-        readAverages(averages[1]);
+        readSecondAverages();
         for (var band = 0; band < grid2Bands; band++) {
             readGrid2(grid2[1][band]);
         }
         Arrays.fill(grid3Read, false);
         for (var index = monoStart; index < stereoStart; index++) {
-            if (bits.left() < ENTRY_BITS) {
-                return;
-            }
             var target = index < 6 ? index : targets[index];
             if (index >= 4) {
                 readEntryGrid3(index, target, 1);
             }
+            if (!bits.ensure(PRESENT_BITS)) {
+                return;
+            }
+            if (target >= stereoStart) {
+                midSide[target] = bits.read(8);
+            }
             swap[target] = bits.read(8);
-            readSamples(index, target >= 2 ? target : index, 1);
-            present[target] = bits.left() >= PRESENT_BITS;
-            if (!present[target]) {
+            var earlier = present[target];
+            if (readSamples(index, target >= 2 ? target : index, 1, true) && bits.left() >= PRESENT_BITS) {
+                present[target] = true;
+            } else if (earlier) {
+                // an earlier entry made the subband present: the samples this one read replace the start of the
+                // earlier ones, as in ffmpeg's decoder
+                coded[1][target] = SAMPLES;
+            } else {
                 // the samples of an entry without room after it are not used: the second channel draws noise there,
                 // which the copy of the first channel hides
                 coded[1][target] = 0;
             }
         }
         for (var index = stereoStart; index < subbands; index++) {
-            if (bits.left() < ENTRY_BITS) {
+            if (!bits.ensure(ENTRY_BITS)) {
                 return;
             }
             var target = readTarget();
-            midSide[target] = bits.read(8);
+            if (!bits.ensure(PRESENT_BITS)) {
+                return;
+            }
+            if (target >= stereoStart) {
+                midSide[target] = bits.read(8);
+            }
             swap[target] = bits.read(8);
-            readSamples(index, target, 0);
-            readSamples(index, target, 1);
-            present[target] = true;
+            readSamples(index, target, 0, false);
+            present[target] |= readSamples(index, target, 1, false);
         }
     }
 
@@ -996,6 +1107,9 @@ final class LbrResidual {
      */
     private void readGrid3(int[] out) {
         for (var slot = 0; slot < 8; slot++) {
+            if (!bits.ensure(PRESENT_BITS)) {
+                return;
+            }
             out[slot] = readGrid3Value();
         }
     }
@@ -1022,17 +1136,23 @@ final class LbrResidual {
 
     /**
      * Reads the time samples of one subband entry of a channel: the coding method bit, then the samples in the code
-     * of the entry's quantizer level. Samples the chunk ends before are left to the noise, all of them when fewer
-     * than {@link #SAMPLE_BITS} bits are left.
+     * of the entry's quantizer level. When fewer than {@link #SAMPLE_BITS} bits are left the rest of the chunk is
+     * skipped and the subband reads nothing: it keeps the samples an earlier entry read, or is left to the noise of
+     * {@link #scaleAndFill}; the samples the chunk ends before are filled with noise
+     * here, as they are read, except for an entry of the second channel below {@link #stereoStart} without
+     * {@link #PRESENT_BITS} bits after it, whose samples are not used. ffmpeg's decoder draws this noise while it
+     * parses the chunks of every channel pair, before the noise of any pair's absent subbands, so the order of the
+     * draws follows the order of the samples in the chunks.
      *
      * @param index the entry, whose level applies
      * @param target the subband the samples belong to
      * @param c the channel of the pair
+     * @param mono whether the entry is one of the second channel below {@link #stereoStart}
+     * @return whether the samples were read, {@link #SAMPLE_BITS} bits being left
      */
-    private void readSamples(int index, int target, int c) {
-        if (bits.left() < SAMPLE_BITS) {
-            coded[c][target] = 0;
-            return;
+    private boolean readSamples(int index, int target, int c, boolean mono) {
+        if (!bits.ensure(SAMPLE_BITS)) {
+            return false;
         }
         var method = bits.read(1);
         var level = levels[index];
@@ -1083,7 +1203,24 @@ final class LbrResidual {
                 }
             }
         }
+        if (count < SAMPLES && !(mono && bits.left() < PRESENT_BITS)) {
+            var noise = noiseLevel(target);
+            while (count < SAMPLES) {
+                out[count++] = noise * noise();
+            }
+        }
         coded[c][target] = count;
+        return true;
+    }
+
+    /**
+     * {@return the level of the noise of a subband before its scale factor}: none in subbands 0 and 1, rising in
+     * subbands 2 to 4 and {@link #noiseLevel} from subband 5.
+     *
+     * @param sb the subband
+     */
+    private float noiseLevel(int sb) {
+        return sb < 2 ? 0f : sb < 5 ? noiseLevel * (sb - 1) * 0.25f : noiseLevel;
     }
 
     /**
@@ -1096,7 +1233,7 @@ final class LbrResidual {
         for (var sb = 0; sb < subbands; sb++) {
             var out = channel[sb];
             var count = coded[c][sb];
-            var level = sb < 5 ? noiseLevel * (sb - 1) * 0.25f : noiseLevel;
+            var level = noiseLevel(sb);
             for (var n = 0; n < SAMPLES; n++) {
                 var factor = scaleFactor(c, sb, n);
                 var amplitude = factor < 0 || factor >= AMPLITUDE.length ? 0f : AMPLITUDE[factor];

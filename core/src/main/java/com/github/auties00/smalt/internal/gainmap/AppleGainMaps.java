@@ -21,9 +21,10 @@ import java.util.OptionalDouble;
  * photos".
  *
  * <p>Apple's gain map is a single-channel map encoded with the BT.709 transfer function: its linearized sample
- * {@code g} scales the linear base value as {@code hdr = sdr * (1 + (headroom - 1) * g)}. The headroom comes from
- * the floats of the tags 33 and 48 of the Apple maker note in the EXIF block, or without them from the
- * {@code HDRGainMap:HDRGainMapHeadroom} XMP property. The converted gain map stores
+ * {@code g} scales the linear base value as {@code hdr = sdr * (1 + (headroom - 1) * g)}. The headroom is the
+ * {@code HDRGainMap:HDRGainMapHeadroom} XMP property, which the newer files (gain map version 2, 131072) carry, as
+ * libavif reads it, or without it the one the floats of the tags 33 and 48 of the Apple maker note in the EXIF block
+ * give. The converted gain map stores
  * {@code log2(1 + (headroom - 1) * g) / log2(headroom)} as 16-bit gray samples, with a log2 gain range of 0 to
  * {@code log2(headroom)}, no offsets, and headrooms 0 and {@code log2(headroom)}, so that applying it in full
  * gives Apple's result exactly up to the 16-bit quantization. This class is thread-safe.
@@ -60,14 +61,14 @@ public final class AppleGainMaps {
      */
     public static Optional<GainMap> convert(Picture image, byte[] exif, List<XmpPacket> xmp) {
         var declared = false;
-        var fallback = OptionalDouble.empty();
+        var declaredHeadroom = OptionalDouble.empty();
         for (var packet : xmp) {
             if (packet == null) {
                 continue;
             }
             declared |= packet.text(XMP_NAMESPACE, "HDRGainMapVersion").isPresent();
-            if (fallback.isEmpty()) {
-                fallback = packet.text(XMP_NAMESPACE, "HDRGainMapHeadroom").map(String::strip).flatMap(text -> {
+            if (declaredHeadroom.isEmpty()) {
+                declaredHeadroom = packet.text(XMP_NAMESPACE, "HDRGainMapHeadroom").map(String::strip).flatMap(text -> {
                     try {
                         var value = Double.parseDouble(text);
                         return Double.isFinite(value) && value >= 1 ? Optional.of(value) : Optional.empty();
@@ -80,9 +81,9 @@ public final class AppleGainMaps {
         if (!declared) {
             return Optional.empty();
         }
-        var headroom = exif == null ? OptionalDouble.empty() : makerHeadroom(exif);
-        if (headroom.isEmpty()) {
-            headroom = fallback;
+        var headroom = declaredHeadroom;
+        if (headroom.isEmpty() && exif != null) {
+            headroom = makerHeadroom(exif);
         }
         if (headroom.isEmpty()) {
             return Optional.empty();

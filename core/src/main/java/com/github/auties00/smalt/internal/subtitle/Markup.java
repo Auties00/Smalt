@@ -442,6 +442,20 @@ public final class Markup {
                     index = close;
                     continue;
                 }
+            } else if (character == '{' && index + 2 < length && "CcFfoPSsYy".indexOf(text.charAt(index + 1)) >= 0
+                    && text.charAt(index + 2) == ':') {
+                // a MicroDVD control code ({y:i}, {c:$0000FF}, ...) carried over into SubRip text is hidden, as the
+                // SubRip capability tester asks
+                var close = text.indexOf('}', index + 3);
+                if (close > 0) {
+                    index = close;
+                    continue;
+                }
+            } else if (character == '\\' && index + 1 < length && (text.charAt(index + 1) == 'N'
+                    || text.charAt(index + 1) == 'h')) {
+                // the ASS forced line break and hard space, which SubRip files borrow
+                builder.append(text.charAt(++index) == 'N' ? '\n' : ' ');
+                continue;
             }
             builder.append(character);
         }
@@ -621,11 +635,11 @@ public final class Markup {
                             current.size(), current.karaoke()));
                 }
             } else if (character == '&') {
-                var semicolon = text.indexOf(';', index + 1);
-                var decoded = semicolon > 0 && semicolon - index <= 10 ? characterReference(text.substring(index + 1, semicolon)) : -1;
-                if (decoded >= 0) {
-                    builder.appendCodePoint(decoded);
-                    index = semicolon;
+                var decoded = new StringBuilder(2);
+                var last = HtmlEntities.decode(text, index, decoded);
+                if (last >= 0) {
+                    builder.append(decoded.toString());
+                    index = last;
                 } else {
                     builder.append(character);
                 }

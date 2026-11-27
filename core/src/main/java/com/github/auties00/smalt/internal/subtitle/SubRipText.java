@@ -17,7 +17,8 @@ import java.util.List;
  * tolerated; a line of digits directly above a timing line is taken for the next cue's counter
  * and dropped from the previous cue's text. Lines before the first timing line are ignored. Cues
  * are returned in start order, a stable sort keeping the file order of cues that start together;
- * a cue whose end precedes its start ends when it starts.
+ * a cue whose end precedes its start ends where the next cue starts (when it is the last, when it starts), as
+ * ffmpeg reads it.
  */
 public final class SubRipText {
     /**
@@ -38,6 +39,7 @@ public final class SubRipText {
     public static List<SubtitleCue> parse(String text) {
         var lines = text.split("\n", -1);
         var cues = new ArrayList<SubtitleCue>();
+        var reversed = new ArrayList<SubtitleCue>();
         var times = new long[2];
         var index = 0;
         while (index < lines.length && !parseTiming(lines[index], times)) {
@@ -46,6 +48,7 @@ public final class SubRipText {
         while (index < lines.length) {
             var start = times[0];
             var end = Math.max(times[0], times[1]);
+            var backwards = times[1] < times[0];
             var body = new ArrayList<String>();
             index++;
             var nextStart = 0L;
@@ -64,11 +67,21 @@ public final class SubRipText {
             if (found && !body.isEmpty() && isCounter(body.getLast())) {
                 body.removeLast();
             }
-            cues.add(SubtitleCue.of(start, end, join(body)));
+            var cue = SubtitleCue.of(start, end, join(body));
+            cues.add(cue);
+            if (backwards) {
+                reversed.add(cue);
+            }
             times[0] = nextStart;
             times[1] = nextEnd;
         }
         cues.sort(Comparator.comparingLong(SubtitleCue::startMicros));
+        for (var at = 0; at + 1 < cues.size() && !reversed.isEmpty(); at++) {
+            var cue = cues.get(at);
+            if (reversed.removeIf(held -> held == cue)) {
+                cues.set(at, cue.withTiming(cue.startMicros(), cues.get(at + 1).startMicros()));
+            }
+        }
         return cues;
     }
 

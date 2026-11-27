@@ -16,8 +16,8 @@ import java.util.Map;
  * Instances are stateful (a Vorbis packet's duration depends on the previous packet) and belong
  * to one stream.
  */
-abstract sealed class OggMapping permits OpusMapping, VorbisMapping, FlacMapping, SpeexMapping, TheoraMapping, SkeletonMapping,
-        OpaqueMapping {
+abstract sealed class OggMapping permits OpusMapping, VorbisMapping, FlacMapping, SpeexMapping, TheoraMapping,
+        Vp8Mapping, SkeletonMapping, OpaqueMapping {
     /**
      * Receives the chapters and pictures of the stream's comment header, or {@code null} when
      * they are not collected (streams after the first link).
@@ -53,6 +53,9 @@ abstract sealed class OggMapping permits OpusMapping, VorbisMapping, FlacMapping
         }
         if (first.length >= 7 && (first[0] & 0xFF) == 0x80 && startsWith(first, 1, "theora")) {
             return new TheoraMapping();
+        }
+        if (first.length >= 6 && Vp8Mapping.isVp8Header(first) && first[5] == 0x01) {
+            return new Vp8Mapping();
         }
         if (startsWith(first, 0, "fishead\0")) {
             return new SkeletonMapping();

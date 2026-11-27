@@ -83,10 +83,17 @@ final class TopLevelScan {
     long firstMdat = -1;
 
     /**
-     * The absolute offsets, header sizes, total sizes and types of the movie fragment boxes, four
-     * values per box: {@link BoxTypes#MOOF} or {@link BoxTypes#COMPRESSED_MOOF}.
+     * The absolute offsets, header sizes, total sizes and types of the movie fragment boxes, and the offsets of the
+     * segments that hold them, five values per box: the type is {@link BoxTypes#MOOF} or
+     * {@link BoxTypes#COMPRESSED_MOOF}, the segment offset that of the last {@code styp} box before the fragment, or
+     * {@code -1}.
      */
     final List<long[]> fragments = new ArrayList<>();
+
+    /**
+     * The absolute offset of the last {@code styp} box walked, or {@code -1}.
+     */
+    long segmentStart = -1;
 
     /**
      * The offset of the first top-level box the walk did not examine because it stopped early,
@@ -221,8 +228,9 @@ final class TopLevelScan {
                 }
                 case BoxTypes.COMPRESSED_SIDX, BoxTypes.COMPRESSED_SSIX ->
                         scan.compressedIndexes.add(new long[]{position, headerSize, boxSize, type});
+                case BoxTypes.STYP -> scan.segmentStart = position;
                 case BoxTypes.MOOF, BoxTypes.COMPRESSED_MOOF -> {
-                    scan.fragments.add(new long[]{position, headerSize, boxSize, type});
+                    scan.fragments.add(new long[]{position, headerSize, boxSize, type, scan.segmentStart});
                     scan.fragmentPayloads.add(scan.prefetch(source, size, position, headerSize, boxSize, header, read));
                 }
                 case BoxTypes.MDAT -> {

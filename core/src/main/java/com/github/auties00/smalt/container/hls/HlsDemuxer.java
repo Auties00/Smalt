@@ -58,7 +58,7 @@ import java.util.Set;
  * {@code com.apple.streaming.transportStreamTimestamp} frame); byte ranges
  * ({@code EXT-X-BYTERANGE}) are honored and gaps ({@code EXT-X-GAP}) skipped. An I-frame playlist read on its own
  * gives its key frames: those of transport stream segments, each range read on its own behind the program tables of
- * its {@code EXT-X-MAP}, and
+ * its {@code EXT-X-MAP} (without one, those that open the range's resource), and
  * for fragmented MP4 the first sample of each range's movie fragment, timed by its {@code tfdt} and composition
  * offset alone and not decrypted. The tracks of all streams are numbered from one in stream order, and their
  * packets are interleaved in decoding order on one timeline: transport streams and packed audio share their MPEG-2

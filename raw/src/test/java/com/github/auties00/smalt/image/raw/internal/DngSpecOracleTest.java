@@ -167,7 +167,7 @@ class DngSpecOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"rawpixls-fujifilm-finepix-s2pro-3-2", "rawpixls-fujifilm-finepix-s6500fd-4-3"})
+    @ValueSource(strings = {"rawpixls-fujifilm-finepix-s5000-4-3", "rawpixls-fujifilm-finepix-s6500fd-4-3"})
     @DisplayName("a SuperCCD file of staggered photosites renders like the converter's preview")
     void staggered(String stem) {
         var dng = oracle(stem);
@@ -192,7 +192,7 @@ class DngSpecOracleTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"rawpixls-fujifilm-finepix-s2pro-3-2", "rawpixls-fujifilm-finepix-s6500fd-4-3"})
+    @ValueSource(strings = {"rawpixls-fujifilm-finepix-s5000-4-3", "rawpixls-fujifilm-finepix-s6500fd-4-3"})
     @DisplayName("the staggered rendering matches the preview better with the layout's half-row offsets than without")
     void staggeredOffsets(String stem) {
         var dng = oracle(stem);

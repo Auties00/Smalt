@@ -156,13 +156,14 @@ final class Psi {
      * @param name the first string of an ATSC component name descriptor (tag {@code 0xA3}), or {@code null}
      * @param dolbyVision the configuration of a DOVI video stream descriptor (tag {@code 0xB0}), or {@code null}
      * @param sampleAes the HLS {@code SAMPLE-AES} signaling of the stream, or {@code null} when it has none
+     * @param ttml whether a DVB TTML subtitling descriptor (extension tag {@code 0x20}, ETSI EN 303 560) is present
      */
     record StreamEntry(int pid, int trackId, int streamType, List<Integer> registrations,
                        List<Integer> programRegistrations, String language, boolean ac3Descriptor,
                        boolean eac3Descriptor, boolean dtsDescriptor, int opusChannels, boolean id3Metadata,
                        byte[] subtitling,
                        byte[] teletextPages, int audioType, String name, DolbyVision dolbyVision,
-                       SampleAesSetup sampleAes) {
+                       SampleAesSetup sampleAes, boolean ttml) {
         /**
          * Returns whether a DVB subtitling descriptor is present.
          *
@@ -210,7 +211,7 @@ final class Psi {
         StreamEntry withTrackId(int id) {
             return new StreamEntry(pid, id, streamType, registrations, programRegistrations, language, ac3Descriptor,
                     eac3Descriptor, dtsDescriptor, opusChannels, id3Metadata, subtitling, teletextPages, audioType, name,
-                    dolbyVision, sampleAes);
+                    dolbyVision, sampleAes, ttml);
         }
 
         /**
@@ -228,7 +229,8 @@ final class Psi {
                     && opusChannels == other.opusChannels
                     && id3Metadata == other.id3Metadata && Arrays.equals(subtitling, other.subtitling)
                     && Arrays.equals(teletextPages, other.teletextPages)
-                    && Objects.equals(dolbyVision, other.dolbyVision) && Objects.equals(sampleAes, other.sampleAes);
+                    && Objects.equals(dolbyVision, other.dolbyVision) && Objects.equals(sampleAes, other.sampleAes)
+                    && ttml == other.ttml;
         }
     }
 
@@ -351,7 +353,7 @@ final class Psi {
                     List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
                     descriptors.eac3, descriptors.dts, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
                     descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision,
-                    descriptors.sampleAes()));
+                    descriptors.sampleAes(), descriptors.ttml));
         }
         return new PmtSection(number, version, pcrPid, streams);
     }
@@ -367,7 +369,7 @@ final class Psi {
      */
     static StreamEntry plainEntry(int trackId, int streamType, String language) {
         return new StreamEntry(trackId, trackId, streamType, List.of(), List.of(), language, false, false, false, -1,
-                false, null, null, -1, null, null, null);
+                false, null, null, -1, null, null, null, false);
     }
 
     /**
@@ -412,7 +414,7 @@ final class Psi {
                     List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
                     descriptors.eac3, descriptors.dts, descriptors.opusChannels, descriptors.id3,
                     descriptors.subtitles, descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision,
-                    descriptors.sampleAes()));
+                    descriptors.sampleAes(), descriptors.ttml));
         }
         return streams;
     }
@@ -481,6 +483,11 @@ final class Psi {
          * The configuration of the DOVI video stream descriptor, or {@code null}.
          */
         private DolbyVision dolbyVision;
+
+        /**
+         * Whether a DVB TTML subtitling descriptor is present.
+         */
+        private boolean ttml;
 
         /**
          * The {@code private_data_indicator}, or {@code 0}.
@@ -563,6 +570,9 @@ final class Psi {
                         }
                         if (size >= 1 && (data[body] & 0xFF) == 0x0E) {
                             dts = true;
+                        }
+                        if (size >= 1 && (data[body] & 0xFF) == 0x20) {
+                            ttml = true;
                         }
                     }
                     default -> {

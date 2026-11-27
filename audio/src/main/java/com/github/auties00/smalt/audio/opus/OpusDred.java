@@ -1,4 +1,4 @@
-/* Ports libopus 1.5.2 (src/opus_decoder.c: opus_dred_parse, opus_dred_process). Copyright Xiph.Org Foundation and
+/* Ports libopus 1.6.1 (src/opus_decoder.c: opus_dred_parse, opus_dred_process). Copyright Xiph.Org Foundation and
    Amazon.com, Inc.; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.audio.opus;
 
@@ -16,8 +16,9 @@ import java.util.Objects;
  * <p>A receiver that lost packets parses the redundancy of the first packet that arrives after the gap with
  * {@link #parse}, then rebuilds each lost span with {@link OpusDecoder#recover(OpusDred, int, float[], int, int)},
  * which decodes it with the deep PLC of a decoder whose {@linkplain OpusDecoderOptions#complexity() complexity} is at
- * least 5. The bitstream is the experimental DRED of libopus 1.5.2 (extension 126, version 10): packets from other
- * DRED versions parse as carrying none.
+ * least 5. The bitstream is the standardized DRED of draft-ietf-mlcodec-opus-dred as libopus 1.6.1 codes it
+ * (extension 126, version 12): packets from other DRED versions, such as the experimental version 10 of libopus 1.5,
+ * parse as carrying none.
  *
  * {@snippet :
  * var dred = new OpusDred();

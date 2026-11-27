@@ -40,7 +40,8 @@ import java.util.Objects;
  * sample aspect ratio, {@code I} the interlacing ({@code p}, {@code t}, {@code b}, {@code m}) and the
  * {@code XCOLORRANGE} extension the color range (limited by default, full for gray). Every frame becomes one key
  * frame packet; the time base is one frame period and packet {@code n} has presentation and decoding time {@code n}.
- * Frame parameters are ignored. A frame cut short by the end of the file ends the stream.
+ * Frame parameters are ignored. A frame cut short by the end of the file ends the stream, as does a blank last
+ * line.
  *
  * <p>The demuxer is seekable; the first {@link #seek(long)} of a file whose frame lines carry parameters reads every
  * frame line once. The source is not closed. Instances are not thread-safe.
@@ -321,7 +322,8 @@ public final class Y4mDemuxer implements Demuxer {
             return null;
         }
         var line = readLine();
-        if (line == null) {
+        if (line == null || line.isBlank() && reader.atEnd()) {
+            ended = true;
             return null;
         }
         if (!line.startsWith("FRAME") || (line.length() > 5 && line.charAt(5) != ' ')) {

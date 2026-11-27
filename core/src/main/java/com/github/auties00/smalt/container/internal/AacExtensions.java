@@ -19,8 +19,9 @@ import com.github.auties00.smalt.track.Packet;
  * and its first packet to {@link #refine(AudioTrack, byte[])}, which decodes the packet with the
  * registered AAC decoder, as players do, and declares the rate and layout the decoder outputs.
  * Only tracks that can carry the extensions are decoded: those whose configuration signals them
- * explicitly (object types 5 and 29), and Low Complexity tracks at a core rate of at most 24 kHz,
- * where implicit HE-AAC is found. The time base, and with it every timestamp, stays as the
+ * explicitly (object types 5 and 29, or the backward-compatible sync extension after a Low Complexity
+ * configuration, whatever rate the container declares), and Low Complexity tracks at a core rate of at most
+ * 24 kHz, where implicit HE-AAC is found. The time base, and with it every timestamp, stays as the
  * container declares it.
  */
 public final class AacExtensions {
@@ -67,8 +68,8 @@ public final class AacExtensions {
      * Returns whether a track may decode to another rate or layout than it declares.
      *
      * <p>That is an AAC track with an {@code AudioSpecificConfig} that signals spectral band
-     * replication explicitly, or a Low Complexity one at a core rate of at most
-     * {@link #MAX_IMPLICIT_CORE_RATE}, that declares no rate or the core rate.
+     * replication backward-compatibly, or one that declares no rate or the core rate and signals it
+     * explicitly or is Low Complexity at a core rate of at most {@link #MAX_IMPLICIT_CORE_RATE}.
      *
      * @param track a track as the container declares it
      * @return {@code true} when {@link #refine(AudioTrack, byte[])} should look at its first packet
@@ -92,6 +93,9 @@ public final class AacExtensions {
             if (coreRate <= 0) {
                 return false;
             }
+            if (objectType == AOT_LC && signalsBackwardCompatible(reader)) {
+                return true;
+            }
             var declared = track.sampleRate();
             if (declared != 0 && declared != coreRate) {
                 return false;
@@ -101,6 +105,32 @@ public final class AacExtensions {
         } catch (RuntimeException exception) {
             return false;
         }
+    }
+
+    /**
+     * Returns whether a Low Complexity {@code AudioSpecificConfig} ends with the backward-compatible signaling of
+     * spectral band replication (the sync extension {@code 0x2B7} of ISO/IEC 14496-3 clause 1.6.5 with the object
+     * type of SBR and {@code sbrPresentFlag} set), after which the
+     * parametric stereo sync extension {@code 0x548} may follow: the container then usually declares the output
+     * rate, and a mono core may decode to stereo.
+     *
+     * @param reader the reader, after the sampling frequency index
+     * @return {@code true} for a backward-compatible signaling of present SBR
+     */
+    private static boolean signalsBackwardCompatible(MsbBitReader reader) {
+        var channels = reader.read(4);
+        if (channels == 0) {
+            // a program config element, whose length is not needed here: no backward-compatible signaling is read
+            return false;
+        }
+        reader.read(1);
+        if (reader.read(1) == 1) {
+            reader.read(14);
+        }
+        reader.read(1);
+        // ffmpeg's encoder writes the extension with sbrPresentFlag 0 to signal plain Low Complexity
+        return reader.bitsLeft() >= 17 && reader.read(11) == 0x2B7 && reader.read(5) == AOT_SBR
+                && reader.read(1) == 1;
     }
 
     /**

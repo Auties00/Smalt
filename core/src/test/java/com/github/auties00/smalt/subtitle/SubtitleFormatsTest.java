@@ -467,7 +467,8 @@ class SubtitleFormatsTest {
         static String normalize(String text) {
             // ffmpeg's SubRip writer escapes a brace after an empty override block and writes ASS hard spaces
             var unescaped = text.replace("\\{{}", "{").replace("\\{", "{").replace("\\h", " ");
-            var plain = unescaped.replaceAll("<[^>]*>", "").replaceAll("\\{\\\\[^}]*}", "").replace(' ', ' ')
+            // only tags: the text of FATE's capability tester keeps "2<3,5>1,4<6" between its <u> tags
+            var plain = unescaped.replaceAll("</?[A-Za-z][^<>]*>", "").replaceAll("\\{\\\\[^}]*}", "").replace(' ', ' ')
                     .replaceAll("[ \\t]+", " ").replaceAll(" *\\n *", "\n").strip();
             return java.text.Normalizer.normalize(plain, java.text.Normalizer.Form.NFC);
         }
@@ -487,11 +488,20 @@ class SubtitleFormatsTest {
                     com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(1), arguments),
                     StandardCharsets.UTF_8).replace("\r", "");
             var cues = new ArrayList<Cue>();
-            for (var block : srt.split("\n\n")) {
-                var lines = block.strip().split("\n");
-                if (lines.length < 2 || !lines[1].contains("-->")) {
-                    continue;
+            // a cue starts at a counter line followed by a timing line: the text of a cue holds a blank line where
+            // the source forces an empty line (\N at the start of a line)
+            var all = srt.split("\n", -1);
+            var starts = new ArrayList<Integer>();
+            for (var line = 0; line + 1 < all.length; line++) {
+                if (all[line].strip().matches("\\d+") && all[line + 1].contains("-->")
+                        && (line == 0 || all[line - 1].isBlank())) {
+                    starts.add(line);
                 }
+            }
+            for (var cue = 0; cue < starts.size(); cue++) {
+                var from = starts.get(cue);
+                var to = cue + 1 < starts.size() ? starts.get(cue + 1) : all.length;
+                var lines = String.join("\n", java.util.Arrays.copyOfRange(all, from, to)).strip().split("\n");
                 var times = lines[1].split("-->");
                 var text = String.join("\n", java.util.Arrays.copyOfRange(lines, 2, lines.length));
                 var normalized = normalize(text);

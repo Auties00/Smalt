@@ -9,6 +9,13 @@ import com.github.auties00.smalt.audio.aac.internal.ep.ErrorProtectionConfig;
  * 8 (CELP) or 24 (ER CELP) with its {@code CelpSpecificConfig} or {@code ErrorResilientCelpSpecificConfig}
  * (ISO/IEC 14496-3 Tables 3.10 to 3.12, 3.23 and 3.24).
  *
+ * <p>A configuration reads in the syntax of ISO/IEC 14496-3 as its Corrigendum 1 changed it, which added
+ * {@code isBaseLayer}, {@code isBWSLayer} and {@code CELP-BRS-id}, or in the earlier syntax of the alternative-format
+ * streams of ISO/IEC 14496-26 ({@code ceNNa}): there the base layer has the {@code CelpHeader} alone, the bandwidth
+ * scalable layer {@code BWS_configuration} alone and a bitrate scalable layer no specific configuration, the layer of
+ * a stream following from its dependency on the others (the {@code CORRIGENDUM1} switch of
+ * {@code advanceAudioSpecificConfig} in the reference software).
+ *
  * @param objectType the audio object type, 8 or 24
  * @param sampleRate the sampling frequency of the stream
  * @param layer the kind of layer: {@link #BASE}, {@link #BITRATE} or {@link #BANDWIDTH}
@@ -50,7 +57,7 @@ public record CelpConfig(int objectType, int sampleRate, int layer, int enhancem
             8000, 7350};
 
     /**
-     * Parses an {@code AudioSpecificConfig} of object type 8 or 24.
+     * Parses an {@code AudioSpecificConfig} of object type 8 or 24 in the syntax of Corrigendum 1.
      *
      * @param data the configuration
      * @return the configuration
@@ -59,6 +66,32 @@ public record CelpConfig(int objectType, int sampleRate, int layer, int enhancem
      * not mapped directly to category instances
      */
     public static CelpConfig parse(byte[] data) {
+        return parse(data, -1, 0);
+    }
+
+    /**
+     * Parses an {@code AudioSpecificConfig} of object type 8 or 24 in the syntax before Corrigendum 1, which leaves
+     * the kind of layer to the position of the stream in the object. The configuration must take the bytes its
+     * fields need, padded with zeros, as the reference software writes it.
+     *
+     * @param data the configuration
+     * @param layer the kind of layer: {@link #BASE}, {@link #BITRATE} or {@link #BANDWIDTH}
+     * @param enhancementId the number of a bitrate scalable layer, from 1 to 3; ignored for the other layers
+     * @return the configuration
+     * @throws MediaException.Malformed if the configuration is truncated, longer than its fields or declares reserved
+     * values
+     * @throws MediaException.Unsupported if the object type is neither 8 nor 24, or the error protection classes are
+     * not mapped directly to category instances
+     */
+    public static CelpConfig parseEarlier(byte[] data, int layer, int enhancementId) {
+        return parse(data, layer, enhancementId);
+    }
+
+    /**
+     * Parses an {@code AudioSpecificConfig} in the syntax of Corrigendum 1 when {@code earlierLayer} is negative,
+     * else in the earlier syntax as a layer of that kind.
+     */
+    private static CelpConfig parse(byte[] data, int earlierLayer, int earlierId) {
         if (data.length == 0) {
             throw new MediaException.Malformed("empty AudioSpecificConfig");
         }
@@ -88,7 +121,8 @@ public record CelpConfig(int objectType, int sampleRate, int layer, int enhancem
             throw new MediaException.Malformed("CELP configuration with channel configuration " + channels);
         }
         var errorResilient = objectType == 24;
-        var layer = BASE;
+        var corrected = earlierLayer < 0;
+        var layer = corrected ? reader.readFlag() ? BASE : reader.readFlag() ? BANDWIDTH : BITRATE : earlierLayer;
         var enhancementId = 0;
         var rpe = false;
         var wideband = false;
@@ -98,7 +132,7 @@ public record CelpConfig(int objectType, int sampleRate, int layer, int enhancem
         var enhancementLayers = 0;
         var bandwidthScalable = false;
         var bandwidthConfiguration = 0;
-        if (reader.readFlag()) {
+        if (layer == BASE) {
             rpe = reader.readFlag();
             wideband = reader.readFlag();
             fineRateControl = reader.readFlag();
@@ -128,15 +162,15 @@ public record CelpConfig(int objectType, int sampleRate, int layer, int enhancem
                     throw new MediaException.Malformed("bitrate scalability with MPE_Configuration 27");
                 }
             }
-        } else if (reader.readFlag()) {
-            layer = BANDWIDTH;
+        } else if (layer == BANDWIDTH) {
             bandwidthConfiguration = reader.read(2);
-        } else {
-            layer = BITRATE;
+        } else if (corrected) {
             enhancementId = reader.read(2);
             if (enhancementId == 0) {
                 throw new MediaException.Malformed("CELP-BRS-id 0");
             }
+        } else {
+            enhancementId = earlierId;
         }
         var epConfig = 0;
         ErrorProtectionConfig errorProtection = null;
@@ -151,6 +185,13 @@ public record CelpConfig(int objectType, int sampleRate, int layer, int enhancem
             }
         }
         reader.checkNotOverrun();
+        if (!corrected) {
+            var end = reader.bitPosition();
+            if (data.length != (end + 7) >>> 3 || (end & 7) != 0 && reader.read((int) (-end & 7)) != 0) {
+                throw new MediaException.Malformed("CELP configuration of the earlier syntax with "
+                        + (8L * data.length - end) + " bits after its fields");
+            }
+        }
         return new CelpConfig(objectType, sampleRate, layer, enhancementId, rpe, wideband, fineRateControl,
                 silenceCompression, configuration, enhancementLayers, bandwidthScalable, bandwidthConfiguration,
                 epConfig, errorProtection);

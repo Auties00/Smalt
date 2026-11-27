@@ -32,7 +32,10 @@ import java.util.zip.Inflater;
  * method), {@code iprp} ({@code ipco} and every {@code ipma}), {@code iref} (versions 0 and 1)
  * and {@code idat} children into {@link HeifItem}s, its {@code grpl} child into
  * {@link EntityGroup}s and the {@code dref} of its {@code dinf} child into the data references of
- * the items stored in other files. It stops as soon as the boxes the brands
+ * the items stored in other files. A low-overhead image file (brand {@code mif3}) keeps its items in a
+ * {@code mini} box instead, which is transformed into the equivalent {@code meta} box (ISO/IEC 23008-12 Amendment 2,
+ * clause O.4) and parsed as one; the brand its {@code ftyp} minor version names counts as a compatible brand of the
+ * file. It stops as soon as the boxes the brands
  * require are seen: the {@code meta} box for the {@code avif}, {@code mif1} and HEIC brands and
  * the {@code moov} box for the sequence brands ({@code avis}, {@code msf1}, {@code heis}). Item
  * data is read on demand with {@link #readItem(MediaSource, HeifItem, MediaLimits)}.
@@ -81,9 +84,10 @@ public final class HeifFile {
     private static final Set<String> ESSENTIAL_TYPES = Set.of("a1op", "lsel", "clap", "irot", "imir");
 
     /**
-     * The brands whose files keep their images in a file-level {@code meta} box.
+     * The brands whose files keep their images in a file-level {@code meta} box, or in the {@code mini} box that
+     * stands for one ({@code mif3}).
      */
-    private static final Set<String> ITEM_BRANDS = Set.of("avif", "avio", "mif1", "mif2", "heic", "heix",
+    private static final Set<String> ITEM_BRANDS = Set.of("avif", "avio", "mif1", "mif2", "mif3", "heic", "heix",
             "heim", "heis", "hevc", "hevx", "miaf", "avci", "jpeg", "j2ki");
 
     /**
@@ -246,6 +250,7 @@ public final class HeifFile {
         long movieSize = 0;
         var needsMeta = false;
         var needsMovie = false;
+        var minorVersion = "";
         for (var count = 0; ; count++) {
             if (count == MAX_TOP_LEVEL_BOXES) {
                 throw new MediaException.Malformed("heif: more than " + MAX_TOP_LEVEL_BOXES + " top-level boxes");
@@ -295,6 +300,14 @@ public final class HeifFile {
                 for (var offset = 8; offset + 4 <= ftyp.length; offset += 4) {
                     parsed.add(new String(ftyp, offset, 4, StandardCharsets.ISO_8859_1));
                 }
+                if (parsed.contains("mif3") && ByteArrays.u32be(ftyp, 4) != 0) {
+                    // ISO/IEC 23008-12 clause O.2.1.2: the brand the file conforms to once its mini box is
+                    // transformed into the equivalent meta box
+                    minorVersion = new String(ftyp, 4, 4, StandardCharsets.ISO_8859_1);
+                    if (!parsed.contains(minorVersion)) {
+                        parsed.add(minorVersion);
+                    }
+                }
                 brands = List.copyOf(parsed);
                 for (var brand : brands) {
                     needsMeta |= ITEM_BRANDS.contains(brand);
@@ -302,11 +315,23 @@ public final class HeifFile {
                 }
             } else if (type.equals("ftyp")) {
                 throw new MediaException.Malformed("heif: duplicate ftyp box");
-            } else if (type.equals("meta")) {
+            } else if (type.equals("meta") || type.equals("mini")) {
                 if (meta != null) {
-                    throw new MediaException.Malformed("heif: duplicate file-level meta box");
+                    throw new MediaException.Malformed("heif: duplicate file-level meta or mini box");
                 }
-                meta = readPayload(source, size, "meta", payloadOffset, payloadSize, limits);
+                meta = readPayload(source, size, type, payloadOffset, payloadSize, limits);
+                if (type.equals("mini")) {
+                    if (!brands.contains("mif3")) {
+                        throw new MediaException.Malformed("heif: a mini box in a file without the mif3 brand");
+                    }
+                    var transformed = MinimizedImageBox.toMeta(meta, payloadOffset, minorVersion);
+                    meta = transformed.meta();
+                    if (transformed.toneMapped() && !brands.contains("tmap")) {
+                        var extended = new ArrayList<>(brands);
+                        extended.add("tmap");
+                        brands = List.copyOf(extended);
+                    }
+                }
             } else if (type.equals("moov")) {
                 if (movieOffset >= 0) {
                     throw new MediaException.Malformed("heif: duplicate moov box");
@@ -823,7 +848,8 @@ public final class HeifFile {
     /**
      * Returns the brands of the {@code ftyp} box.
      *
-     * @return the major brand followed by the compatible brands
+     * @return the major brand followed by the compatible brands, and for a {@code mif3} file the brand its minor
+     * version names and {@code tmap} when its {@code mini} box codes a gain map
      */
     public List<String> brands() {
         return brands;

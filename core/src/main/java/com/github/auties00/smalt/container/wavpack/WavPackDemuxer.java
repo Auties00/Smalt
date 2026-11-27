@@ -100,6 +100,8 @@ public final class WavPackDemuxer implements Demuxer {
      *
      * @param source the input, not closed by this demuxer
      * @throws MediaException.Malformed if the input holds no WavPack block
+     * @throws MediaException.Unsupported if the first block is of a stream version before 4 (0x402) or after 5
+     *         (0x410)
      * @throws MediaException.Io if reading fails
      */
     public WavPackDemuxer(MediaSource source) {
@@ -112,6 +114,8 @@ public final class WavPackDemuxer implements Demuxer {
      * @param source the input, not closed by this demuxer
      * @param options the demuxing options
      * @throws MediaException.Malformed if the input holds no WavPack block
+     * @throws MediaException.Unsupported if the first block is of a stream version before 4 (0x402) or after 5
+     *         (0x410)
      * @throws MediaException.LimitExceeded if the channel count exceeds the limits of {@code options}
      * @throws MediaException.Io if reading fails
      */
@@ -126,6 +130,8 @@ public final class WavPackDemuxer implements Demuxer {
      * @param correction the correction file ({@code .wvc}), not closed by this demuxer, or {@code null} for none
      * @param options the demuxing options
      * @throws MediaException.Malformed if the input holds no WavPack block
+     * @throws MediaException.Unsupported if the first block is of a stream version before 4 (0x402) or after 5
+     *         (0x410)
      * @throws MediaException.LimitExceeded if the channel count exceeds the limits of {@code options}
      * @throws MediaException.Io if reading fails
      */
@@ -254,6 +260,11 @@ public final class WavPackDemuxer implements Demuxer {
             var start = reader.position();
             if (!readHeader(reader, header)) {
                 throw new MediaException.Malformed("WavPack file without audio");
+            }
+            var version = (header[8] & 0xFF) | (header[9] & 0xFF) << 8;
+            if (version < 0x402 || version > 0x410) {
+                var name = "WavPack stream version 0x" + Integer.toHexString(version);
+                throw new MediaException.Unsupported(name, name + " (only versions 4 and 5 are supported)");
             }
             var size = blockSize(header);
             if (i32(header, 20) == 0) {

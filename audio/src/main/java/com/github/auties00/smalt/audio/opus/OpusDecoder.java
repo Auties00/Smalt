@@ -857,7 +857,7 @@ public final class OpusDecoder implements AudioDecoder {
      * before it, call this method for each lost packet in playback order, with the offset of its first sample.
      * The decoder's history moves on as if the span had been decoded. An empty {@code dred} conceals the span with
      * the deep PLC alone. Samples are bit-identical to those of {@code opus_decoder_dred_decode_float} of
-     * libopus 1.5.2 built with DRED.
+     * libopus 1.5.2 built with DRED, with the standardized DRED networks of libopus 1.6.1.
      *
      * @param dred the redundancy, parsed at this decoder's output rate
      * @param offset the start of the lost span, in samples before the start of the packet that carried
