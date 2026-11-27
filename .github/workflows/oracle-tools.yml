@@ -6,9 +6,10 @@
 # with libxaac and FDK AAC, mps-oracle.py with the MPEG Surround reference decoder, and svs-oracle.py with OpenSlide
 # and imagecodecs, all on Windows, from the hosted test data that .github/actions/testdata pulls) into cross-OS cache
 # entries keyed by their script, which .github/actions/oracle-data restores on every test runner (and, with
-# data-artifact, uploads them for the jobs of the run that find an entry evicted from the 10 GB cache). ci.yml,
-# nightly.yml, package.yml and warm-caches.yml call it; it can also be run by hand to warm the caches of a branch
-# (the pkg/* branches only restore them, see .github/scripts/cache-policy.sh).
+# data-artifact, uploads them for the jobs of the run that find an entry evicted from the 10 GB cache); and writes
+# the goldens of the Opus tests with the libopus harnesses of tools/testdata/opus-oracle (the opus-goldens
+# artifact). ci.yml, nightly.yml, package.yml and warm-caches.yml call it; it can also be run by hand to warm the
+# caches of a branch (the pkg/* branches only restore them, see .github/scripts/cache-policy.sh).
 name: Oracle tools
 
 on:
@@ -318,4 +319,74 @@ jobs:
           include-hidden-files: true
           retention-days: 1
           compression-level: 1
+          if-no-files-found: error
+
+  # The libopus reference harnesses of tools/testdata/opus-oracle (build.py, with MSYS2's gcc, the toolchain of the
+  # committed goldens) print the goldens of the Opus tests, which are committed in audio/src/test, so no test job
+  # restores them: the opus-goldens artifact carries them for a change of the oracle (a libopus version move) to copy
+  # into the tests. goldens.txt holds the lines of OpusEncoderGoldenTest (check_), OpusMultistreamGoldenTest and
+  # OpusProjectionGoldenTest (p), traces.txt those of OpusPacketLossGoldenTest, downmix.txt those of
+  # OpusDownmixTest, dnn-goldens.txt those of OpusDnnGoldenTest, and dnn-units.bin is OpusDnnUnitTest's reference.
+  data-opus:
+    name: oracle data (libopus goldens)
+    if: inputs.data != false
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Look up the Opus goldens
+        id: opus
+        uses: actions/cache/restore@v4
+        with:
+          path: .oracle-data/opus-goldens
+          key: oracle-data-opus-${{ hashFiles('tools/testdata/opus-oracle/**') }}
+          enableCrossOsArchive: true
+
+      # The goldens' inputs are built from the RFC 8251 test vectors of the hosted test data.
+      - name: Pull the Opus test vectors
+        if: steps.opus.outputs.cache-hit != 'true'
+        uses: ./.github/actions/testdata
+        with:
+          areas: open-audio
+
+      # Relative paths: the Git Bash tar reads a drive letter's colon as a remote host.
+      - name: Run the libopus reference harnesses
+        if: steps.opus.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          /c/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-ucrt-x86_64-gcc
+          export PATH="/c/msys64/ucrt64/bin:$PATH"
+          gcc --version
+          mkdir -p opus-oracle/vectors .oracle-data/opus-goldens
+          tar -xzf ~/.smalt/testdata/vectors/opus_testvectors-rfc8251.tar.gz --strip-components=1 -C opus-oracle/vectors
+          out=.oracle-data/opus-goldens
+          tools=tools/testdata/opus-oracle
+          python -I $tools/build.py opus-oracle
+          python -I $tools/goldens.py opus-oracle/vectors 'opus-oracle\msenc.exe' opus-oracle/io > "$out/goldens.txt"
+          python -I $tools/traces.py opus-oracle/vectors opus-oracle opus-oracle/io > "$out/traces.txt"
+          python -I $tools/downmix.py opus-oracle/vectors opus-oracle opus-oracle/io > "$out/downmix.txt"
+          python -I $tools/dnn_goldens.py opus-oracle/vectors opus-oracle opus-oracle/dnn > "$out/dnn-goldens.txt"
+          ./opus-oracle/dnnunit.exe "$out/dnn-units.bin"
+          wc -l "$out"/*.txt
+
+      - name: Save the Opus goldens
+        if: steps.opus.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .oracle-data/opus-goldens
+          key: oracle-data-opus-${{ hashFiles('tools/testdata/opus-oracle/**') }}
+          enableCrossOsArchive: true
+
+      - name: Upload the Opus goldens
+        uses: actions/upload-artifact@v4
+        with:
+          name: opus-goldens
+          path: .oracle-data/opus-goldens/
+          include-hidden-files: true
+          retention-days: 14
           if-no-files-found: error

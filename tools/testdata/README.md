@@ -943,6 +943,10 @@ activations, the LPCNet features, the Burg cepstrum, FARGAN, the deep PLC, the R
 deterministic inputs and writes `dnnunit <file>`, the self-generated `dnn-units.bin` of `OpusDnnUnitTest`
 (`audio/src/test/resources/.../opus/internal/dnn`, pinned by its `.sha256` file there).
 
+CI runs all of these: the `oracle data (libopus goldens)` job of `.github/workflows/oracle-tools.yml` builds the
+harnesses on Windows with MSYS2's gcc and uploads the `opus-goldens` artifact (`goldens.txt`, `traces.txt`,
+`downmix.txt`, `dnn-goldens.txt` and `dnn-units.bin`), cached until a file of `opus-oracle/` changes.
+
 ## Vorbis oracle
 
 `VorbisEncoderTest` and `VorbisBitrateManagementTest` compare the SHA-256 of the Vorbis encoder's
