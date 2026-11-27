@@ -134,7 +134,7 @@ public final class TsKeyFrames implements Demuxer {
      * Returns the program tables that open the resource of a range that starts after them, its initialization
      * section when the playlist has no {@code EXT-X-MAP}.
      *
-     * @param range the range
+     * @param range the part of the resource the range reads
      * @return the part of the leading table packets, or {@code null} when the range starts its resource, is encrypted
      * whole or the resource opens with no table
      */

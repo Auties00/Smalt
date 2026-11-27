@@ -30,7 +30,15 @@ runs:
             continue
           fi
           repository="${reference%@*}"
-          for layer in $(oras manifest fetch "$reference" | python3 -c 'import json,sys; print(" ".join(l["digest"] for l in json.load(sys.stdin)["layers"]))'); do
+          # A failed fetch inside the loop's word list would not stop the step: fetch first. "not found" for a
+          # pinned digest the package holds means this repository's token may not read the private package: link
+          # the package to the repository, or grant the repository read access in its Actions access settings.
+          if ! manifest="$(oras manifest fetch "$reference")"; then
+            echo "::error::cannot fetch the $area test data ($reference)"
+            exit 1
+          fi
+          layers="$(python3 -c 'import json,sys; print(" ".join(l["digest"] for l in json.load(sys.stdin)["layers"]))' <<< "$manifest")"
+          for layer in $layers; do
             oras blob fetch --output - "$repository@$layer" | tar -x -C "$root"
           done
           echo "$area: pulled"

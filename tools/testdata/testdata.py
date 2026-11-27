@@ -52,6 +52,7 @@ CLIP_COLUMNS = ['name', 'size', 'sha256', 'source_url', 'source_sha256', 'start'
 LICENCE_COLUMNS = ['prefix', 'licence']
 ARTIFACT_COLUMNS = ['area', 'reference']
 REPOSITORY = 'ghcr.io/auties00/smalt-testdata'
+SOURCE = 'org.opencontainers.image.source=https://github.com/Auties00/Smalt'
 SHARD = 1 << 30
 LAYER = 'application/vnd.oci.image.layer.v1.tar'
 ARTIFACT_TYPE = 'application/vnd.smalt.testdata.v1'
@@ -326,8 +327,10 @@ def command_push(arguments):
         if not files:
             sys.exit(f'nothing packed for {area} in {directory}')
         reference = f'{REPOSITORY}:{area}'
-        result = subprocess.run(['oras', 'push', '--artifact-type', ARTIFACT_TYPE, '--format', 'go-template',
-                                 '--template', '{{.digest}}', reference] + [f'{f}:{LAYER}' for f in files],
+        # The source annotation links the package to the repository, whose workflow token can then read it.
+        result = subprocess.run(['oras', 'push', '--artifact-type', ARTIFACT_TYPE, '--annotation', SOURCE,
+                                 '--format', 'go-template', '--template', '{{.digest}}', reference]
+                                + [f'{f}:{LAYER}' for f in files],
                                 cwd=directory, check=True, capture_output=True, text=True)
         digest = result.stdout.strip().splitlines()[-1]
         pinned[area] = {'area': area, 'reference': f'{REPOSITORY}@{digest}'}

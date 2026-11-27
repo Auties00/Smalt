@@ -35,14 +35,30 @@ import java.util.Objects;
  * factors, and is Huffman coded (with optimized tables when it is 12-bit) or, on request, arithmetic coded.
  * Every DCT-coded image the {@link JpegDecoder} decodes can be transformed, except a hierarchical one.
  * The marker segments the output keeps (EXIF, XMP, ICC, comments) are chosen by
- * {@link JpegTransformOptions#markerCopy()}, except a Multi-Picture Format index: the secondary images that follow
- * the source's end of image (gain maps, depth maps, stereo views) are not written, so neither is the index that
- * locates them; an EXIF thumbnail is transformed with the image and
+ * {@link JpegTransformOptions#markerCopy()}; an EXIF thumbnail is transformed with the image and
  * {@link #autoOrient(MediaSource)} resets the EXIF orientation.
- * Under {@link JpegTransformOptions#jpegtran()} the output is byte-identical to libjpeg-turbo's
- * {@code jpegtran} given the same transformation. Components that cannot share one interleaved scan
- * (more than four, or an MCU of more than 10 blocks), which {@code jpegtran} refuses to write, are
- * written one scan per component where its scan script would interleave them.
+ *
+ * <p>The secondary images that follow the source's end of image (the gain map of an Ultra HDR, ISO 21496-1 or
+ * Apple HDR photo, depth maps, stereo views, every image a Multi-Picture Format index lists) go through the same
+ * transformation, each on its own: rotated, flipped and transcoded as the primary image is, with its own marker
+ * segments (its gain map metadata among them) and the same {@link JpegTransformOptions#trim()} and
+ * {@link JpegTransformOptions#perfect()} rules on its own MCU grid. When the sizes of the base image and its gain
+ * map are multiples of their MCU sizes, the transformed gain map covers the transformed base image exactly;
+ * otherwise each loses its own partial edge MCUs under {@link JpegTransformOptions#trim()}. The Multi-Picture
+ * Format index ({@code APP2 MPF}) and the {@code Item:Length} and {@code Item:Padding} fields of the XMP
+ * container directory are rewritten to locate the transformed images. A grayscale conversion
+ * applies to the primary image only. The secondary images are left out, and with them the index that locates
+ * them, when the transformation crops, wipes or drops an image into the source (which would leave a secondary
+ * image covering a different area or revealing the wiped content), when the copied marker segments do not
+ * include that index, or when an image the index lists is missing or cannot be transformed; under
+ * {@link JpegTransformOptions#perfect()} a secondary image the transform is not perfect for fails the
+ * transformation instead.
+ *
+ * <p>Under {@link JpegTransformOptions#jpegtran()} the output is byte-identical to libjpeg-turbo's
+ * {@code jpegtran} given the same transformation, image by image: the primary image is its output with the
+ * index fields above rewritten, and each secondary image its output for that image alone. Components that
+ * cannot share one interleaved scan (more than four, or an MCU of more than 10 blocks), which {@code jpegtran}
+ * refuses to write, are written one scan per component where its scan script would interleave them.
  *
  * <p>This class is thread-safe.
  */
@@ -71,7 +87,8 @@ public final class JpegTransforms {
      * @throws MediaException.Malformed if the source or the dropped image is not a valid JPEG stream
      * @throws MediaException.Unsupported if the source or the dropped image uses a coding feature
      * the lossless transforms lack (a lossless, JPEG-LS or hierarchical frame), if
-     * {@link JpegTransformOptions#perfect()} is set and the transform is not perfect for the image, if a grayscale
+     * {@link JpegTransformOptions#perfect()} is set and the transform is not perfect for the image or for a
+     * secondary image it carries, if a grayscale
      * conversion is asked of an
      * image that is not YCbCr or gray, or if the dropped image's precision or sampling differs from the
      * source's

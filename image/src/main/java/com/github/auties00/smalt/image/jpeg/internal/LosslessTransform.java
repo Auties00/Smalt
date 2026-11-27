@@ -33,6 +33,11 @@ import java.util.Arrays;
  */
 final class LosslessTransform {
     /**
+     * The format name of the {@link MediaException.Unsupported} that rejects a transform that is not perfect.
+     */
+    static final String IMPERFECT = "jpeg imperfect transform";
+
+    /**
      * The largest width or height a JPEG frame header can record.
      */
     private static final int MAX_DIMENSION = 0xFFFF;
@@ -202,7 +207,7 @@ final class LosslessTransform {
             var blockX = components == 1 ? 8 : sourceMaxX * 8;
             var blockY = components == 1 ? 8 : sourceMaxY * 8;
             if (!isPerfect(sourceWidth, sourceHeight, blockX, blockY, transform)) {
-                throw new MediaException.Unsupported("jpeg imperfect transform", "a " + sourceWidth + "x"
+                throw new MediaException.Unsupported(IMPERFECT, "a " + sourceWidth + "x"
                         + sourceHeight + " image with " + blockX + "x" + blockY
                         + " MCUs cannot be transformed perfectly by " + transform);
             }

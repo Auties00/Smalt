@@ -136,7 +136,7 @@ public final class CueMerger {
     /**
      * A held-back cue.
      *
-     * @param cue the cue
+     * @param cue the cue held back
      * @param open whether it ends where the next cue starts
      */
     private record Held(SubtitleCue cue, boolean open) {

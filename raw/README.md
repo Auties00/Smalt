@@ -122,7 +122,7 @@ try (var source = MediaSource.of(Path.of("IMG_0001.CR2"))) {
 | Canon CR3 | ✅ | ❌ | Lossless and lossy C-RAW, dual pixel |
 | Canon CR2 | ✅ | ❌ | Includes sRAW and mRAW |
 | Canon CRW | ✅ | ❌ | Older CIFF files |
-| Nikon NEF, NRW | ✅ | ❌ | Lossless, lossy, High Efficiency (HE, HE*) |
+| Nikon NEF, NRW | ✅ | ❌ | Lossless, lossy, High Efficiency (HE, HE*), small raw |
 | Sony ARW, ARQ, SR2 | ✅ | ❌ | Lossy cRAW, lossless, ARQ pixel shift |
 | Fujifilm RAF | ✅ | ❌ | Bayer, X-Trans, SuperCCD, EXR |
 | Olympus and OM System ORF | ✅ | ❌ | Compressed and uncompressed |
@@ -151,6 +151,7 @@ Every format in this table converts to DNG with `DngEncoder.convert`. `Images.en
 - **CR2:** sliced lossless JPEG; sRAW (4:2:2) and mRAW (4:2:0) for ColorData versions 3, 6, 7, 9-13 and 15.
 - **CRW:** Canon lossless compression with Huffman table sets 0-2; 10 and 12 bit; the G1 is a 4-color GMYC sensor.
 - **NEF and NRW:** lossless and lossy Huffman, split-row lossy, linearization curves, uncompressed 16-bit and 12-bit packed.
+- **NEF small raw:** YCbCr 4:2:2 samples (NEFCompression 8) converted to 3-sample linear raw RGB.
 - **Coolpix NEF:** interlaced rows of the E-series models; the 4-color E5700 sensor.
 - **Nikon HE and HE*:** JPEG XS-syntax codestream, 4 components, 5/3 wavelet, decoded to 14-bit.
 - **ARW:** cRAW with tone curve, uncompressed 16-bit, Sony lossless, DSLR-A900 12-bit packed, DSLR-A100 to A390 coding.
@@ -232,6 +233,7 @@ Every format in this table converts to DNG with `DngEncoder.convert`. `Images.en
 - **CR2:** sRAW and mRAW of ColorData versions other than 3, 6, 7, 9-13 and 15 are not decoded.
 - **Nikon HE and HE*:** header or component parameters outside the samples throw `Unsupported`.
 - **SRF:** the sensor data of the four-color DSC-F828 is not decoded.
+- **ARW:** lossless compressed RAW at the S and M sizes (YCbCr 4:2:2 tiles) and the ILCE-7M5 coding (compression 32766) are not decoded.
 - **ARQ:** only uncompressed or lossless JPEG with RGGB sample colors.
 - **RW2:** only versions 2, 4-8 and versionless; v8 gain and offset tags 0x39/0x3A are not applied.
 - **SRW:** a 32773 strip with another coding is not decoded.

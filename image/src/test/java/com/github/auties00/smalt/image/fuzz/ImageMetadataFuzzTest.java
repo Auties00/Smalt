@@ -12,6 +12,7 @@ import com.github.auties00.smalt.image.exif.ExifWriter;
 import com.github.auties00.smalt.image.jpeg.JpegFill;
 import com.github.auties00.smalt.image.jpeg.JpegTransformOptions;
 import com.github.auties00.smalt.image.jpeg.JpegTransforms;
+import com.github.auties00.smalt.image.jpeg.internal.JpegContainer;
 import com.github.auties00.smalt.image.metadata.ImageMetadata;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEdit;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEditor;
@@ -19,6 +20,7 @@ import com.github.auties00.smalt.image.metadata.IptcData;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.image.webp.WebpContainer;
+import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
 import com.github.auties00.smalt.testkit.fuzz.FuzzRun;
@@ -39,7 +41,8 @@ import java.util.function.UnaryOperator;
  *
  * <p>Besides the exception contract they check properties: a block Smalt writes is read back, an image whose
  * metadata was edited still decodes when the original did and holds no metadata after {@code stripAll}, a WebP
- * chunk edit keeps the image chunks byte for byte, and a transformed JPEG decodes.
+ * chunk edit keeps the image chunks byte for byte, and a transformed JPEG decodes, with a Multi-Picture Format index
+ * that locates images inside it.
  */
 class ImageMetadataFuzzTest {
     /** The transforms the JPEG target applies, each to the original input. */
@@ -218,9 +221,41 @@ class ImageMetadataFuzzTest {
                         } catch (MediaException exception) {
                             throw new AssertionError("a transformed JPEG does not decode", exception);
                         }
+                        if (!indexInside(output)) {
+                            throw new AssertionError("the Multi-Picture Format index of a transformed JPEG locates "
+                                    + "an image outside it");
+                        }
                         run.output();
                     });
         }
+    }
+
+    /**
+     * {@return whether every image the Multi-Picture Format index of a JPEG file lists, if it has one, starts with an
+     * SOI marker and ends inside the file}
+     */
+    private static boolean indexInside(byte[] jpeg) {
+        for (var segment : JpegContainer.headers(jpeg, 0, jpeg.length)) {
+            if (segment.marker() != 0xE2 || !segment.startsWith(jpeg, JpegContainer.MPF_ID)) {
+                continue;
+            }
+            var entries = JpegContainer.entries(jpeg, segment);
+            if (entries == null) {
+                return false;
+            }
+            for (var image = 0; image < entries.fields().length; image++) {
+                var field = entries.fields()[image];
+                var size = ByteArrays.u32(jpeg, field + 4, entries.little());
+                var offset = ByteArrays.u32(jpeg, field + 8, entries.little());
+                var start = image == 0 ? 0 : entries.header() + offset;
+                if (size < 2 || start + size > jpeg.length || (jpeg[(int) start] & 0xFF) != 0xFF
+                        || (jpeg[(int) start + 1] & 0xFF) != 0xD8) {
+                    return false;
+                }
+            }
+            return entries.listed() == entries.fields().length;
+        }
+        return true;
     }
 
     private static void edit(FuzzRun run, byte[] data, ImageMetadataEdit edit, boolean decodes, boolean strip,

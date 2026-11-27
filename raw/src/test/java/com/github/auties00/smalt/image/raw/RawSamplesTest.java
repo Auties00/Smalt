@@ -162,7 +162,9 @@ class RawSamplesTest {
             "NEF_Z6_UNCOMPRESSED_14, NEF, 6048, 4024, RGGB, 14, true, NIKON Z 6, 100",
             "NEF_Z7II_UNCOMPRESSED_12, NEF, 8256, 5504, RGGB, 12, true, NIKON Z 7_2, 100",
             "NRW_P7800, NEF, 4000, 3000, RGGB, 12, true, COOLPIX P7800, 80",
-            "NRW_B700, NEF, 5184, 3888, RGGB, 12, true, COOLPIX B700, 100"
+            "NRW_B700, NEF, 5184, 3888, RGGB, 12, true, COOLPIX B700, 100",
+            // a NEF small raw image of YCbCr samples, converted to linear red, green and blue
+            "NEF_D810_SMALL_RAW, NEF, 3680, 2456, -, 16, true, NIKON D810, 100"
     })
     void sample(RawSamples sample, RawFormat format, int width, int height, String cfa, int bits, boolean decodable,
                 String model, long iso) {

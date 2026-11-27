@@ -13,12 +13,11 @@
 #                     ~/.smalt/<package>-<version>, whose bin directory goes on PATH; CI caches it apart, keyed
 #                     by the script's hash
 #   provides  the executables the row puts on PATH, comma separated; "name=file" installs file under name.
-# Versions: every runner has the same version of every tool a test runs. ffmpeg is 7.1.2 (the clips and the
-# swscale-based color tests need 7.1; 7.1.1 decodes some small H.264 pictures wrongly on arm64) with the components of
+# Versions: every runner has the same version of every tool a test runs. ffmpeg is 8.0.3 (8.0 is the first release
+# whose Matroska demuxer maps the registry's V_JPEG2000 codec ID, which Smalt's muxer writes) with the components of
 # tools/testdata/ffmpeg-oracle/features.tsv, which "oracles.py versions" checks; tools/testdata/ffmpeg-oracle/build.py
 # builds it and each of those libraries from pinned source releases on every runner (under MSYS2 on Windows), as no
-# prebuilt 7.1.2 has all of them (Ubuntu's and BtbN's lack libvo_amrwbenc and libspeex, Homebrew's libvo_amrwbenc,
-# and gyan.dev's full builds stop at 7.1.1).
+# prebuilt ffmpeg has all of them (Ubuntu's and BtbN's lack libvo_amrwbenc and libspeex, Homebrew's libvo_amrwbenc).
 # libwebp 1.6.0, exiftool 13.59, libjxl 0.11.2 and libjpeg-turbo 3.1.3 come from official builds where one exists;
 # libjxl is built from source on Linux arm64 (no release build) and macOS (Homebrew's version moves), libjpeg-turbo
 # on Windows (its official build there is an installer). OpenJPEG is 2.5.3, the version Smalt's JPEG 2000 codec
@@ -60,7 +59,7 @@
 # HEIC encoder's tests) comes from the package managers (apt with its libde265 plugin, Homebrew, MSYS2): its HEVC
 # decode is normative, and the tests compare its RGB output within a PSNR bound, so its version, which the managers
 # set, does not change their outcome.
-linux-x64	ffmpeg	7.1.2	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
+linux-x64	ffmpeg	8.0.3	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
 linux-x64	libwebp	1.6.0	archive	https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-linux-x86-64.tar.gz	1c5ffab71efecefa0e3c23516c3a3a1dccb45cc310ae1095c6f14ae268e38067	libwebp-1.6.0-linux-x86-64/bin	cwebp,dwebp,webpmux,img2webp,gif2webp,webpinfo
 linux-x64	libjxl	0.11.2	archive	https://github.com/libjxl/libjxl/releases/download/v0.11.2/jxl-linux-x86_64-static.zip	f8f8c031881d4a76845d3b3482a4e0138bb017568dc76d33abd79d24856a4dec	release_file.tar.gz!tools	cjxl,djxl
 linux-x64	openjpeg	2.5.3	build	https://codeload.github.com/uclouvain/openjpeg/tar.gz/refs/tags/v2.5.3	368fe0468228e767433c9ebdea82ad9d801a3ad1e4234421f352c8b06e7aa707	-	opj_compress,opj_decompress,opj_dump
@@ -86,7 +85,7 @@ linux-x64	libultrahdr	1.4.0	build	https://codeload.github.com/google/libultrahdr
 linux-x64	libavif	1.3.0	build	https://codeload.github.com/AOMediaCodec/libavif/tar.gz/refs/tags/v1.3.0	0a545e953cc049bf5bcf4ee467306a2f113a75110edf59e61248873101cd26c1	-	avifgainmaputil,avifdec
 linux-x64	smalt-hmdec	18.0	build	https://vcgit.hhi.fraunhofer.de/jvet/HM/-/archive/HM-18.0/HM-HM-18.0.tar.gz	c91b0f678cf8a77599cfcd72484c2ef1c10cbbf3850982fb7d43f2b54c3edfd8	-	smalt-hmdec
 linux-x64	dng_validate	1.7.1-2802	build	https://download.adobe.com/pub/adobe/dng/dng_sdk_1_7_1_2802_20261110.zip	e9bb04e956da3605d8ef4f821bdb979a250c22546b0332b7f81a93b11da7cceb	-	dng_validate
-linux-arm64	ffmpeg	7.1.2	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
+linux-arm64	ffmpeg	8.0.3	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
 linux-arm64	libwebp	1.6.0	archive	https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-linux-aarch64.tar.gz	69f5eebe203e0f3942fe37986209a1725741be19c152950a4283b376c95ec798	libwebp-1.6.0-linux-aarch64/bin	cwebp,dwebp,webpmux,img2webp,gif2webp,webpinfo
 linux-arm64	libjpeg-turbo	3.1.3	deb	https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-official_3.1.3_arm64.deb	05d1edece68b54e97f834b0956901dcb6734f4ac67e203f126b4836cc833a34e	/opt/libjpeg-turbo/bin	cjpeg,djpeg,jpegtran
 linux-arm64	tsduck	3.45-4798	deb	https://github.com/tsduck/tsduck/releases/download/v3.45-4798/tsduck_3.45-4798.ubuntu24_arm64.deb	332ae85ec2fce378ae9d2ae872606a38192aeb62da6edcf784ce6466b780295f	/usr/bin	tsp
@@ -112,7 +111,7 @@ linux-arm64	libultrahdr	1.4.0	build	https://codeload.github.com/google/libultrah
 linux-arm64	libavif	1.3.0	build	https://codeload.github.com/AOMediaCodec/libavif/tar.gz/refs/tags/v1.3.0	0a545e953cc049bf5bcf4ee467306a2f113a75110edf59e61248873101cd26c1	-	avifgainmaputil,avifdec
 linux-arm64	smalt-hmdec	18.0	build	https://vcgit.hhi.fraunhofer.de/jvet/HM/-/archive/HM-18.0/HM-HM-18.0.tar.gz	c91b0f678cf8a77599cfcd72484c2ef1c10cbbf3850982fb7d43f2b54c3edfd8	-	smalt-hmdec
 linux-arm64	dng_validate	1.7.1-2802	build	https://download.adobe.com/pub/adobe/dng/dng_sdk_1_7_1_2802_20261110.zip	e9bb04e956da3605d8ef4f821bdb979a250c22546b0332b7f81a93b11da7cceb	-	dng_validate
-windows-x64	ffmpeg	7.1.2	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
+windows-x64	ffmpeg	8.0.3	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
 windows-x64	libwebp	1.6.0	archive	https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-windows-x64.zip	48886f506b21f62e4661f0f4cbfca19800897c385128e8902542d29a950c93f1	libwebp-1.6.0-windows-x64/bin	cwebp,dwebp,webpmux,img2webp,gif2webp,webpinfo
 windows-x64	libjxl	0.11.2	archive	https://github.com/libjxl/libjxl/releases/download/v0.11.2/jxl-x64-windows-static.zip	97dc815bdd99ba243d8502050357342cf649251a5df069f8c3daee6828cbe0ce	bin	cjxl,djxl
 windows-x64	openjpeg	2.5.3	archive	https://github.com/uclouvain/openjpeg/releases/download/v2.5.3/openjpeg-v2.5.3-windows-x64.zip	75972014687abd706ddbdd0080523bfeb819d92b0ed33de51792d565ff7bf9b4	openjpeg-v2.5.3-windows-x64/bin	opj_compress,opj_decompress,opj_dump
@@ -140,7 +139,7 @@ windows-x64	libultrahdr	1.4.0	build	https://codeload.github.com/google/libultrah
 windows-x64	libavif	1.3.0	build	https://codeload.github.com/AOMediaCodec/libavif/tar.gz/refs/tags/v1.3.0	0a545e953cc049bf5bcf4ee467306a2f113a75110edf59e61248873101cd26c1	-	avifgainmaputil,avifdec
 windows-x64	smalt-hmdec	18.0	build	https://vcgit.hhi.fraunhofer.de/jvet/HM/-/archive/HM-18.0/HM-HM-18.0.tar.gz	c91b0f678cf8a77599cfcd72484c2ef1c10cbbf3850982fb7d43f2b54c3edfd8	-	smalt-hmdec
 windows-x64	dng_validate	1.7.1-2802	build	https://download.adobe.com/pub/adobe/dng/dng_sdk_1_7_1_2802_20261110.zip	e9bb04e956da3605d8ef4f821bdb979a250c22546b0332b7f81a93b11da7cceb	-	dng_validate
-macos-arm64	ffmpeg	7.1.2	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
+macos-arm64	ffmpeg	8.0.3	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
 macos-arm64	libwebp	1.6.0	archive	https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-mac-arm64.tar.gz	bc6bf84cc70f3f8574fba797d1e4a7dea4feebe9fa4be919f202413ea2b3b8f2	libwebp-1.6.0-mac-arm64/bin	cwebp,dwebp,webpmux,img2webp,gif2webp,webpinfo
 macos-arm64	openjpeg	2.5.3	build	https://codeload.github.com/uclouvain/openjpeg/tar.gz/refs/tags/v2.5.3	368fe0468228e767433c9ebdea82ad9d801a3ad1e4234421f352c8b06e7aa707	-	opj_compress,opj_decompress,opj_dump
 macos-arm64	libjpeg-turbo	3.1.3	macpkg	https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3.dmg	7f3cf924e51349b1219ab0e702ec56634b99788a1828319588878572977ec175	/opt/libjpeg-turbo/bin	cjpeg,djpeg,jpegtran

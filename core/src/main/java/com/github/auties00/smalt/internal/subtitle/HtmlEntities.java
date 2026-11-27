@@ -75,7 +75,7 @@ public final class HtmlEntities {
     /**
      * Decodes the character reference that starts at an ampersand.
      *
-     * @param text the text
+     * @param text the text holding the reference
      * @param ampersand the index of the ampersand
      * @param out the destination of the decoded characters
      * @return the index of the reference's last character, or {@code -1} when no reference starts there (nothing
@@ -100,7 +100,7 @@ public final class HtmlEntities {
     /**
      * Decodes a numeric character reference.
      *
-     * @param text the text
+     * @param text the text holding the reference
      * @param at the index after {@code &#}
      * @param out the destination
      * @return the index of the reference's last character, or {@code -1} without digits

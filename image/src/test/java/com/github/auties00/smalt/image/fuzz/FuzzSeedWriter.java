@@ -472,6 +472,8 @@ class FuzzSeedWriter {
                 VECTORS.resolve("jpeg/cjpeg/227x149-yuv411-baseline-rst3.jpg"));
         copy(ImageMetadataFuzzTest.class, "jpegTransform", "five-components.jpg",
                 VECTORS.resolve("jpeg/lossless/variants/23x17-5ch-baseline.jpg"));
+        copy(ImageMetadataFuzzTest.class, "jpegTransform", "valid-iso21496-gain-map.jpg",
+                vector("jpeg-wpt-iso21496-1-base_srgb-altr_none-use_base.jpg"));
         // two-components-12-blocks.jpg and six-components.jpg are written by
         // tools/fuzz/make-jpeg-component-seeds.py
     }

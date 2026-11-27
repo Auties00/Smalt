@@ -119,13 +119,13 @@ comment of `oracles.tsv` explains each choice of version.
 
 ### ffmpeg
 
-Every runner has ffmpeg 7.1.2 with the same components: those of ffmpeg itself and the external-library components
+Every runner has ffmpeg 8.0.3 (8.0 is the first release whose Matroska demuxer maps `V_JPEG2000`, the codec ID
+Smalt's muxer writes for JPEG 2000) with the same components: those of ffmpeg itself and the external-library components
 of `ffmpeg-oracle/features.tsv` (LAME, opencore-amr and vo-amrwbenc, Speex, Opus, Vorbis, Theora, libvpx with high
 bit depth, libwebp, x264, x265 for 8, 10 and 12 bits, Xvid, libaom, dav1d, rav1e, SVT-AV1, OpenJPEG, zimg, and
-libxml2 for the DASH demuxer). No prebuilt 7.1.2 has all of them (Ubuntu's and BtbN's lack `libvo_amrwbenc` and
-`libspeex`, Homebrew's `libvo_amrwbenc`, and gyan.dev's full builds stop at 7.1.1, which decodes some small H.264
-pictures wrongly on arm64), so `ffmpeg-oracle/build.py` builds ffmpeg and each library, static, from pinned source
-releases into `~/.smalt/ffmpeg-7.1.2` (it installs its build tools with apt, Homebrew or MSYS2's pacman, and Rust
+libxml2 for the DASH demuxer). No prebuilt ffmpeg has all of them (Ubuntu's and BtbN's lack `libvo_amrwbenc` and
+`libspeex`, Homebrew's `libvo_amrwbenc`), so `ffmpeg-oracle/build.py` builds ffmpeg and each library, static, from pinned source
+releases into `~/.smalt/ffmpeg-8.0.3` (it installs its build tools with apt, Homebrew or MSYS2's pacman, and Rust
 through rustup for rav1e; the first build takes most of an hour, and CI caches the prefix under a key of the
 script's hash). On Windows it runs under MSYS2 (UCRT64, with MSYS2's Python, Rust and cargo-c). On Linux and macOS
 ffmpeg allocates through `ffmpeg-oracle/quarantine.c` (`--malloc-prefix`), which holds back the small blocks ffmpeg
@@ -143,7 +143,7 @@ Where `smalt.test.requireOracles` names ffmpeg, as on CI, it fails instead, and 
 To get the CI build locally (on Windows from an MSYS2 UCRT64 shell, with MSYS2's `python3`):
 
 ```
-python tools/testdata/ffmpeg-oracle/build.py --prefix ~/.smalt/ffmpeg-7.1.2   # then put its bin first on PATH
+python tools/testdata/ffmpeg-oracle/build.py --prefix ~/.smalt/ffmpeg-8.0.3   # then put its bin first on PATH
 ```
 
 ## Skip reasons and the skip baseline

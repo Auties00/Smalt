@@ -101,7 +101,8 @@ class RawRobustnessTest {
     @ParameterizedTest(name = "{0}")
     @EnumSource(value = RawSamples.class, names = {"DNG_5D3_14BIT_SMALL", "DNG_5D3_16BIT_SMALL", "CR2_5D3",
             "NEF_D70S_LOSSY_12", "ARW_NEX6_CRAW_12", "PEF_PENTAX_KX", "RAF_XA1", "ORF_XZ2", "RW2_GF6", "CR3_250D", "CR3_EOS_R5",
-            "MRW_DYNAX_7D", "MRW_DIMAGE_5", "CRW_D30", "CRW_G1", "X3F_DP1", "X3F_SD14"})
+            "MRW_DYNAX_7D", "MRW_DIMAGE_5", "CRW_D30", "CRW_G1", "X3F_DP1", "X3F_SD14",
+            "NEF_D810_SMALL_RAW"})
     @DisplayName("damaged sample files only raise MediaException")
     void samples(RawSamples sample) throws IOException {
         var original = Files.readAllBytes(sample.path());
@@ -116,10 +117,8 @@ class RawRobustnessTest {
 
     @ParameterizedTest(name = "{0}")
     @CsvSource({
-            // a NEF small raw image, whose samples are YCbCr rather than photosites (NEFCompression 8)
-            "NEF_D810_SMALL_RAW, small raw",
             // an ARW of Sony's lossless compression at a reduced size, of three samples per pixel
-            "ARW_A9M3, no raw image",
+            "ARW_A9M3, S and M sizes",
             // the new ARW coding of the ILCE-7M5 (TIFF compression 32766)
             "ARW_A7M5, compression 32766",
             // a Phase One IIQ Sv2 file (compression 6)

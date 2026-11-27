@@ -16,19 +16,20 @@ import java.util.List;
  *
  * <p>A {@code mini} box codes in a few bits what a {@code meta} box spells out: one coded image item (identifier 1)
  * with its codec configuration, {@code ispe}, {@code pixi} and {@code colr} properties (the nclx values and an ICC
- * profile), an alpha auxiliary item when the box codes alpha data (2, with {@code auxl} and, for premultiplied alpha, {@code prem}
- * references), an optional gain map (a {@code tmap} item 3 derived from the image and the gain map item 4, an
- * alternative to the image in an {@code altr} group), the HDR properties ({@code clli}, {@code mdcv}, {@code cclv},
- * {@code amve}, {@code reve}, {@code ndwt}), the orientation as {@code irot} and {@code imir} properties, and
- * {@code Exif} (6) and XMP (7) metadata items that describe the image. The item data follows the header in a fixed
- * order: the ICC profiles, the gain map metadata, the alpha, gain map and main image data, the EXIF and the XMP data.
+ * profile), an alpha auxiliary item when the box codes alpha data (2, with {@code auxl} and, for premultiplied alpha,
+ * {@code prem} references), an optional gain map (a {@code tmap} item 3 derived from the image and the gain map item
+ * 4, an alternative to the image in an {@code altr} group), the HDR properties ({@code clli}, {@code mdcv},
+ * {@code cclv}, {@code amve}, {@code reve}, {@code ndwt}), the orientation as {@code irot} and {@code imir}
+ * properties, and {@code Exif} (6) and XMP (7) metadata items that describe the image. The item data follows the
+ * header in a fixed order: the ICC profiles, the gain map metadata, the alpha, gain map and main image data, the EXIF
+ * and the XMP data.
  * The coded items are located in the file; the EXIF item, which the box stores without the offset of its TIFF header,
  * and the tone map item, which the box stores without its version byte, are built in an {@code idat} box.
  *
  * <p>Without explicit codec types the minor version of the {@code ftyp} box gives the coding: {@code avif} for AV1
  * ({@code av01} items, {@code av1C} configuration) and {@code heic} for HEVC ({@code hvc1}, {@code hvcC}).
  *
- * @implNote The syntax and the transformation follow libavif's {@code avifParseMinimizedImageBox} ({@code src/read.c},
+ * @implNote This implementation follows libavif's {@code avifParseMinimizedImageBox} ({@code src/read.c},
  * BSD 2-clause), including its mapping of the orientation to {@code irot} and {@code imir}.
  */
 final class MinimizedImageBox {
@@ -490,7 +491,7 @@ final class MinimizedImageBox {
      * Returns a box.
      *
      * @param type the box type
-     * @param payload the payload
+     * @param payload the box's content after its header
      * @return the box, header included
      */
     private static byte[] box(String type, byte[] payload) {
@@ -504,8 +505,8 @@ final class MinimizedImageBox {
     /**
      * Returns an image spatial extents property.
      *
-     * @param width the width
-     * @param height the height
+     * @param width the image width in pixels
+     * @param height the image height in pixels
      * @return the {@code ispe} box
      */
     private static byte[] extent(int width, int height) {
@@ -588,7 +589,7 @@ final class MinimizedImageBox {
      * Writes the {@code meta} box payload.
      *
      * @param items the items, in increasing identifier order
-     * @param properties the properties
+     * @param properties the properties and their associations
      * @param idat the {@code idat} payload
      * @param hasAlpha whether item 2 is an alpha item
      * @param premultiplied whether the image is premultiplied by its alpha

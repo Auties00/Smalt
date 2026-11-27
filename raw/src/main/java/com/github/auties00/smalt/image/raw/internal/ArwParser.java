@@ -57,6 +57,12 @@ import java.util.Set;
  * otherwise have it estimated from the camera's embedded preview (see {@link PreviewBalance}). The files whose
  * compression 32767 data is not decoded still report the white balance they record.
  *
+ * <p>Two codings are reported unsupported. The lossless compressed RAW of the S and M sizes stores YCbCr samples
+ * (4:2:2, chroma centered on 16384) in lossless JPEG tiles; Adobe DNG Converter turns them into linear red, green and
+ * blue through a chroma upsampling of its own, which neither the file's tags nor a specification define and which a
+ * single CC0 sample (ILCE-9M3) does not pin down exactly. The coding of TIFF compression 32766 (ILCE-7M5) has no
+ * specification under a license this project can port from, and the converter does not read the CC0 sample.
+ *
  * @implNote This implementation follows Henry Dietz's description of the cRAW format ("Sony ARW2
  * Compression: Artifacts And Credible Repair", Electronic Imaging 2016) and the block
  * layout of the {@code arw} Go package by Sjon Kosse; the tone curve
@@ -64,8 +70,8 @@ import java.util.Set;
  * value, which makes the curve span the 14-bit range. Sony's lossless compression (TIFF
  * compression 7) goes through the generic lossless JPEG reader; its frames of four components at half the
  * tile's width and height hold a two-by-two cell of photosites per pixel, an order found from the CC0 ILCE-1M2
- * file, in which only this placement gives each color's photosites the smoothness of the scene. The levels of the models
- * without level tags and the white levels were derived from the values Adobe DNG Converter, run as
+ * file, in which only this placement gives each color's photosites the smoothness of the scene. The levels of
+ * the models without level tags and the white levels were derived from the values Adobe DNG Converter, run as
  * a black box, stores for CC0 sample files of every model of the raw.pixls.us archive, and so was the
  * A900's packing, which reproduces the converter's photosites exactly. So were the variable-length coding, its
  * models' levels and the DSLR-A100's layout. Which files hold the variable-length coding comes from a list of models
@@ -101,6 +107,11 @@ final class ArwParser {
      * The photometric interpretation (sequential color filter) of the raw directory of an ARQ file.
      */
     private static final int PHOTOMETRIC_SEQUENTIAL = 32892;
+
+    /**
+     * The photometric interpretation (YCbCr) of the raw directory of the lossless compressed RAW at the S and M sizes.
+     */
+    private static final int PHOTOMETRIC_YCBCR = 6;
 
     /**
      * The samples of each pixel of an ARQ file.
@@ -232,7 +243,11 @@ final class ArwParser {
         }
         var raw = TiffEpParser.rawDirectory(tree);
         if (raw == null) {
-            if (!arq(reader, tree, file)) {
+            if (ycbcr(tree)) {
+                // TODO: convert the YCbCr samples once a second reference pins down the chroma upsampling and the
+                //  levels Adobe DNG Converter applies (the raw module's bug log, item 11, holds the analysis)
+                file.unsupported = "Sony lossless compressed RAW at the S and M sizes (YCbCr samples) is not supported";
+            } else if (!arq(reader, tree, file)) {
                 file.unsupported = "the ARW file holds no raw image";
             }
             return;
@@ -475,6 +490,23 @@ final class ArwParser {
         return sensor.width > 2 * DELTA_BORDER && sensor.height > 2 * DELTA_BORDER
                 ? new double[]{DELTA_BORDER, DELTA_BORDER, sensor.width - 2 * DELTA_BORDER,
                 sensor.height - 2 * DELTA_BORDER} : null;
+    }
+
+    /**
+     * Returns whether a file holds Sony's lossless compressed RAW at a reduced size: a raw directory, marked by tag
+     * {@code 0x7000}, of YCbCr samples (photometric interpretation 6) in lossless JPEG tiles.
+     *
+     * @param tree the directories
+     * @return whether the file holds such a directory
+     */
+    private static boolean ycbcr(TiffTree tree) {
+        for (var ifd : tree.directories) {
+            if (ifd.has(SONY_RAW_TYPE) && ifd.intValue(TiffSamples.PHOTOMETRIC, 0) == PHOTOMETRIC_YCBCR
+                    && ifd.intValue(TiffSamples.COMPRESSION, 1) == LOSSLESS_JPEG) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

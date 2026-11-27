@@ -57,10 +57,11 @@ import java.util.function.Consumer;
  *   field is the top field unless the track's {@linkplain VideoTrack#interlacing() scan} is
  *   {@link Interlacing#BOTTOM_FIELD_FIRST} or {@link Interlacing#BOTTOM_FIELD_FIRST_SEPARATED}. The
  *   picture is as high as the two fields together, or as the track when the track is lower and
- *   higher than one field (keeping the top rows, or the bottom rows of an Avid frame). The second image is ignored, and the frame decoded as one holding a
- *   single field image, when the first image is already as high as the track, when the second
- *   image cannot be decoded, or when the fields differ in kind (Y'CbCr or RGB), width, chroma
- *   format, depth or alpha, or in height other than by the top field having one more row.</li>
+ *   higher than one field (keeping the top rows, or the bottom rows of an Avid frame). The second
+ *   image is ignored, and the frame decoded as one holding a single field image, when the first
+ *   image is already as high as the track, when the second image cannot be decoded, or when the
+ *   fields differ in kind (Y'CbCr or RGB), width, chroma format, depth or alpha, or in height other
+ *   than by the top field having one more row.</li>
  *   <li>A frame holding a single field image, marked by an {@code AVI1} segment as one field or
  *   belonging to an interlaced track, whose track is higher than the image but at most twice as
  *   high, decodes to the track height with the field supplying both fields.</li>

@@ -21,7 +21,9 @@ import java.util.List;
  * quantization tables (or, for a drop, tables that also fit the dropped image). Frames of any number of
  * components are transformed, each component on the grid of its own sampling factors; a frame of two or
  * more than four components, which has no color space, is written without a JFIF or Adobe header and with
- * every component on Huffman tables 0, as {@code jpegtran} writes it.
+ * every component on Huffman tables 0, as {@code jpegtran} writes it. The images that follow the primary image
+ * (gain maps, depth maps, the other images of a Multi-Picture Format index) are transformed one by one as
+ * {@link JpegSecondaries} describes.
  *
  * @implNote This implementation follows the sequence of jpegtran: the marker segments of
  * {@code jcopy_markers_setup}, the parameters of {@code jpeg_copy_critical_parameters} and
@@ -78,7 +80,8 @@ public final class JpegTranscoder {
     }
 
     /**
-     * Transforms a JPEG file, taking the transform from its EXIF orientation when asked.
+     * Transforms a JPEG file, taking the transform from its EXIF orientation when asked, with the images that
+     * follow its primary image.
      *
      * @param data the file
      * @param options the transformation
@@ -92,6 +95,40 @@ public final class JpegTranscoder {
             options = options.toBuilder().transform(ExifReader.orientation(reader.exif())).resetOrientation(true)
                     .build();
         }
+        var secondaryOptions = options.toBuilder().grayscale(false).markerCopy(JpegMarkerCopy.ALL).build();
+        var secondaries = JpegSecondaries.transform(data, options, image -> image(image, secondaryOptions, true));
+        var primary = write(data, reader, coefficients, options, secondaries, false);
+        return secondaries == null ? primary : secondaries.assemble(primary);
+    }
+
+    /**
+     * Transforms a JPEG file holding one image.
+     *
+     * @param data the file
+     * @param options the transformation
+     * @param keepIndex whether a copied {@code APP2 MPF} segment is kept as it is
+     * @return the transformed image
+     */
+    private static byte[] image(byte[] data, JpegTransformOptions options, boolean keepIndex) {
+        var reader = new JpegReader(data, 0, data.length, options.limits());
+        return write(data, reader, reader.decodeCoefficients(), options, null, keepIndex);
+    }
+
+    /**
+     * Transforms the primary image of a JPEG file.
+     *
+     * @param data the file
+     * @param reader the reader of the file
+     * @param coefficients the coefficients of the primary image
+     * @param options the transformation
+     * @param secondaries the images carried after the primary image, whose index the output keeps, or
+     * {@code null} for none
+     * @param keepIndex whether a copied {@code APP2 MPF} segment is kept as it is when {@code secondaries} is
+     * {@code null}; otherwise it is dropped, as the images it locates are not written
+     * @return the transformed primary image
+     */
+    private static byte[] write(byte[] data, JpegReader reader, JpegCoefficients coefficients,
+                                JpegTransformOptions options, JpegSecondaries secondaries, boolean keepIndex) {
         var frame = coefficients.frame();
         var colorSpace = reader.colorSpace();
         var frameComponents = frame.components;
@@ -214,6 +251,8 @@ public final class JpegTranscoder {
         var densityX = 1;
         var densityY = 1;
         var copy = options.markerCopy();
+        var indexKept = false;
+        var xmpSeen = false;
         for (var segment : segments) {
             var marker = segment.marker();
             var bytes = segment.data();
@@ -231,10 +270,15 @@ public final class JpegTranscoder {
                 case ICC -> marker == 0xE2;
                 case ALL -> true;
             };
-            // the secondary images after the source's end of image (gain maps, depth maps) are not carried over,
-            // so the Multi-Picture Format index that locates them would point past the output
-            if (marker == 0xE2 && segment.startsWith("MPF ")) {
-                copied = false;
+            if (marker == 0xE2 && segment.startsWith("MPF\0")) {
+                // the index locates the images after the primary one: kept for the carried images, which
+                // JpegSecondaries locates again in the output, and dropped when they are not written
+                copied = copied && (secondaries != null ? !indexKept : keepIndex);
+                indexKept |= copied;
+            } else if (copied && secondaries != null && !xmpSeen && marker == 0xE1
+                    && segment.startsWith("http://ns.adobe.com/xap/1.0/\0")) {
+                xmpSeen = true;
+                segment = secondaries.xmp(segment);
             }
             if (copied) {
                 markers.add(segment);
@@ -325,7 +369,7 @@ public final class JpegTranscoder {
                             .build();
                     byte[] transformed;
                     try {
-                        transformed = transcode(thumbnail.get(), thumbnailOptions);
+                        transformed = image(thumbnail.get(), thumbnailOptions, false);
                     } catch (MediaException | IllegalArgumentException exception) {
                         transformed = null;
                     }

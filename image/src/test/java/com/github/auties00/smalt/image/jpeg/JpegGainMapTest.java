@@ -419,30 +419,22 @@ class JpegGainMapTest {
         }
 
         @Test
-        @DisplayName("drops the Multi-Picture Format index with the secondary images a lossless transform leaves out")
-        void transformDropsDanglingIndex() {
-            // the transform writes the primary image only; an index copied with ALL would locate the gain map past
-            // the end of the output (as jpegtran -copy all leaves it)
-            var data = vector("jpeg-commons-pixel9-ultrahdr-heysong-1.jpg");
-            var transcoded = JpegTransforms.transform(MediaSource.of(data), JpegTransformOptions.builder()
-                    .progressive(true).build());
-            assertFalse(new String(transcoded, StandardCharsets.ISO_8859_1).contains("MPF "), "no MPF index");
-            assertTrue(JpegDecoder.auxiliaryImages(MediaSource.of(transcoded)).isEmpty());
-            assertTrue(JpegDecoder.decodeGainMap(MediaSource.of(transcoded)).isEmpty());
-            assertEquals(4080, JpegDecoder.decode(MediaSource.of(transcoded)).picture().width());
-        }
-
-        @Test
-        @DisplayName("never leaves a gain map that no longer fits the base after a lossless rotation")
+        @DisplayName("keeps the gain map aligned with the base through a lossless rotation")
         void rotationKeepsGainMapConsistent() {
+            // the conformance of every image against jpegtran is in JpegTransformSecondaryTest
             var data = vector("jpeg-commons-pixel9-ultrahdr-heysong-1.jpg");
+            var before = JpegDecoder.decodeGainMap(MediaSource.of(data)).orElseThrow();
             var rotated = JpegTransforms.transform(MediaSource.of(data), JpegTransformOptions.of(
                     Orientation.ROTATE_90));
             var base = JpegDecoder.decode(MediaSource.of(rotated)).picture();
             assertEquals(3072, base.width());
-            var gainMap = JpegDecoder.decodeGainMap(MediaSource.of(rotated));
-            gainMap.ifPresent(map -> assertEquals((double) base.width() / base.height(),
-                    (double) map.image().width() / map.image().height(), 0.01, "gain map aspect ratio"));
+            var gainMap = JpegDecoder.decodeGainMap(MediaSource.of(rotated)).orElseThrow();
+            assertClose(before.metadata(), gainMap.metadata(), 0);
+            // the 512x386 gain map loses its partial bottom row of blocks, which the rotation would leave in place
+            assertEquals(384, gainMap.image().width());
+            assertEquals(512, gainMap.image().height());
+            assertEquals((double) base.width() / base.height(),
+                    (double) gainMap.image().width() / gainMap.image().height(), 0.01, "gain map aspect ratio");
         }
 
         /** {@return the headroom, as stops, Apple's formula gives from the maker note tags 33 and 48} */

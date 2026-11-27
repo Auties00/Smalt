@@ -28,7 +28,8 @@ import java.util.regex.Pattern;
  * uncompressed, the Z-series cameras' 12-bit and 14-bit data packed least significant bit first in
  * little-endian order with each row padded to the strip's row size (values 6, 9 and 10) and the Coolpix
  * NRW files' 12-bit samples in the high bits of 16-bit big-endian words (value 7); the small raw images
- * (value 8) hold YCbCr samples rather than photosites and are not supported.
+ * (value 8) hold YCbCr samples rather than photosites, which {@link NikonSmallRaw} converts to linear red, green
+ * and blue.
  *
  * @implNote This implementation follows the structure as the ExifTool tag documentation and Bill
  * Claff's description of NEF compression present it. The Huffman tables of
@@ -146,7 +147,10 @@ final class NefParser {
                 return;
             }
         } else if (compression == NIKON_COMPRESSION && storage(note) == SMALL_RAW) {
-            file.unsupported = "NEF small raw images (NEFCompression 8, YCbCr samples) are not supported";
+            sensor.reader = NikonSmallRaw.describe(raw, sensor);
+            smallRawBalance(note, file);
+            sensor.defaultCrop = previewCrop(file, sensor);
+            file.sensor = sensor;
             return;
         } else if (compression == NIKON_COMPRESSION && PACKED.contains(storage(note))) {
             try {
@@ -697,6 +701,22 @@ final class NefParser {
             return note.directory(note.firstDirectory());
         } catch (MediaException.Malformed exception) {
             return null;
+        }
+    }
+
+    /**
+     * Records the white balance of a small raw image, whose samples the camera balanced with the maker note's red
+     * and blue multipliers (tag {@code 0x000C}): those multipliers as the analog balance and a neutral as-shot
+     * white balance, as Adobe DNG Converter stores them.
+     *
+     * @param note the maker note's directory, or {@code null}
+     * @param file the description to fill
+     */
+    private static void smallRawBalance(Ifd note, RawFile file) {
+        var balance = note == null ? null : note.doubles(0x0C);
+        if (balance != null && balance.length >= 2 && balance[0] > 0 && balance[1] > 0) {
+            file.color.analogBalance = new double[]{balance[0], 1, balance[1]};
+            file.color.asShotNeutral = new double[]{1, 1, 1};
         }
     }
 

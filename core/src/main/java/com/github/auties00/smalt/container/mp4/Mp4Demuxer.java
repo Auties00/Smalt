@@ -78,8 +78,8 @@ import java.util.Set;
  * ({@code vvc1}, {@code vvi1}), VP8/VP9
  * ({@code vp08}/{@code vp09}), AV1 ({@code av01}, Dolby Vision {@code dav1}), MPEG-4 Part 2 ({@code mp4v}), H.263
  * ({@code s263}), Motion JPEG (Media 100 {@code dtPA} frames rewritten as format B frames, as ffmpeg's
- * {@code media100_to_mjpegb} filter does) and ProRes for video; AAC, MPEG-4 CELP, TwinVQ and HVXC, MP3 and MP2 ({@code mp4a}
- * with the matching object type, {@code .mp3}), Opus, FLAC, ALAC, AMR-NB/WB, AC-3/E-AC-3 and every PCM
+ * {@code media100_to_mjpegb} filter does) and ProRes for video; AAC, MPEG-4 CELP, TwinVQ and HVXC, MP3 and MP2
+ * ({@code mp4a} with the matching object type, {@code .mp3}), Opus, FLAC, ALAC, AMR-NB/WB, AC-3/E-AC-3 and every PCM
  * layout of the ISO and QuickTime sound descriptions for audio. The image sequence ({@code pict})
  * and auxiliary video ({@code auxv}) tracks of HEIF and AVIF sequences are video tracks too. Every
  * other handler (text, subtitles, timecode, timed metadata, hint) becomes a

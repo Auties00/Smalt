@@ -198,7 +198,8 @@ Open a block for the exact profiles and options of each codec.
 - **JPEG-LS:** interleave none/line/sample, preset parameters, mapping tables, HP1-3 color transforms, SPIFF.
 - **JPEG-LS encoder:** byte-identical to CharLS without restart intervals.
 - **Transforms:** rotate, flip, transpose, crop by MCU (8x8 or 16x16 block), extend, wipe, drop, grayscale, progressive and sequential.
-- **Transform output:** byte-identical to `jpegtran` under `JpegTransformOptions.jpegtran()`.
+- **Transform output:** byte-identical to `jpegtran` under `JpegTransformOptions.jpegtran()`, image by image.
+- **Transforms with gain maps:** the gain map (Ultra HDR, ISO 21496-1, Apple) and every other image of a Multi-Picture Format index is rotated, flipped and transcoded with the base image; the MPF index and the XMP container lengths are rewritten.
 - **Via `Images`:** default quality 75; `ImageEncoderOptions.lossless()` writes lossless JPEG (SOF3).
 
 </details>
@@ -302,6 +303,7 @@ Open a block for the exact profiles and options of each codec.
 - JPEG-LS part 2 (T.870) extensions are rejected.
 - Lossless transforms refuse lossless, JPEG-LS and hierarchical files.
 - Transforms trim partial edge MCUs by default; `JpegTransformOptions` `perfect(true)` refuses such images instead.
+- Crop, wipe and drop transforms leave the gain map and the other secondary images out, with their index.
 - 12-bit Huffman transform output always gets optimized tables.
 
 </details>

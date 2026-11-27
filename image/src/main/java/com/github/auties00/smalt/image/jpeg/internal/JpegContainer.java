@@ -208,6 +208,66 @@ public final class JpegContainer {
     }
 
     /**
+     * The image entries of a Multi-Picture Format index.
+     *
+     * @param little whether the index is little-endian
+     * @param header the index in the file of the index's TIFF header, which the image offsets are relative to
+     * @param fields the index in the file of each sixteen-byte entry, in order, at most 256
+     * @param listed the number of entries the index lists, which exceeds the length of {@code fields} when it lists
+     * more than 256
+     */
+    public record MpEntries(boolean little, int header, int[] fields, long listed) {
+    }
+
+    /**
+     * Locates the image entries of a Multi-Picture Format index.
+     *
+     * @param data the file
+     * @param segment the {@code APP2 MPF} segment
+     * @return the entries, or {@code null} when the segment holds no valid {@code MPEntry} list
+     */
+    public static MpEntries entries(byte[] data, Segment segment) {
+        var header = segment.offset() + MPF_ID.length;
+        var end = segment.offset() + segment.length();
+        if (header + 8 > end) {
+            return null;
+        }
+        boolean little;
+        if (data[header] == 'I' && data[header + 1] == 'I') {
+            little = true;
+        } else if (data[header] == 'M' && data[header + 1] == 'M') {
+            little = false;
+        } else {
+            return null;
+        }
+        var ifd = header + ByteArrays.u32(data, header + 4, little);
+        if (ifd < header || ifd + 2 > end) {
+            return null;
+        }
+        var count = ByteArrays.u16(data, (int) ifd, little);
+        for (var i = 0; i < count; i++) {
+            var entry = (int) ifd + 2 + 12 * i;
+            if (entry + 12 > end) {
+                return null;
+            }
+            if (ByteArrays.u16(data, entry, little) != MP_ENTRY) {
+                continue;
+            }
+            var length = ByteArrays.u32(data, entry + 4, little);
+            var at = header + ByteArrays.u32(data, entry + 8, little);
+            if (length < 16 || at < header || at + length > end) {
+                return null;
+            }
+            var fields = new int[(int) Math.min(length / 16, MAX_IMAGES)];
+            for (var image = 0; image < fields.length; image++) {
+                fields[image] = (int) at + image * 16;
+            }
+            return new MpEntries(little, header, fields, length / 16);
+        }
+        return null;
+    }
+
+    /**
      * Reads the images of a Multi-Picture Format index.
      *
      * @param data the file
@@ -216,54 +276,26 @@ public final class JpegContainer {
      * @param images the list the images are added to
      */
     private static void index(byte[] data, Segment segment, List<String[]> semantics, List<Image> images) {
-        var header = segment.offset() + MPF_ID.length;
-        var end = segment.offset() + segment.length();
-        if (header + 8 > end) {
+        var entries = entries(data, segment);
+        if (entries == null) {
             return;
         }
-        boolean little;
-        if (data[header] == 'I' && data[header + 1] == 'I') {
-            little = true;
-        } else if (data[header] == 'M' && data[header + 1] == 'M') {
-            little = false;
-        } else {
-            return;
-        }
-        var ifd = header + ByteArrays.u32(data, header + 4, little);
-        if (ifd < header || ifd + 2 > end) {
-            return;
-        }
-        var count = ByteArrays.u16(data, (int) ifd, little);
-        for (var i = 0; i < count; i++) {
-            var entry = (int) ifd + 2 + 12 * i;
-            if (entry + 12 > end) {
-                return;
+        var little = entries.little();
+        var header = entries.header();
+        for (var image = 0; image < entries.fields().length; image++) {
+            var field = entries.fields()[image];
+            var attribute = ByteArrays.u32(data, field, little);
+            var size = ByteArrays.u32(data, field + 4, little);
+            var offset = ByteArrays.u32(data, field + 8, little);
+            var start = image == 0 && offset == 0 ? 0 : header + offset;
+            if (image == 0 && offset == 0 && (size == 0 || size > data.length)) {
+                size = imageEnd(data, 0);
             }
-            if (ByteArrays.u16(data, entry, little) != MP_ENTRY) {
+            if (size == 0 || start + size > data.length || !isSoi(data, (int) start)) {
                 continue;
             }
-            var length = ByteArrays.u32(data, entry + 4, little);
-            var at = header + ByteArrays.u32(data, entry + 8, little);
-            if (length < 16 || at < header || at + length > end) {
-                return;
-            }
-            var entries = (int) Math.min(length / 16, MAX_IMAGES);
-            for (var image = 0; image < entries; image++) {
-                var field = (int) at + image * 16;
-                var attribute = ByteArrays.u32(data, field, little);
-                var size = ByteArrays.u32(data, field + 4, little);
-                var offset = ByteArrays.u32(data, field + 8, little);
-                var start = image == 0 && offset == 0 ? 0 : header + offset;
-                if (image == 0 && offset == 0 && (size == 0 || size > data.length)) {
-                    size = imageEnd(data, 0);
-                }
-                if (size == 0 || start + size > data.length || !isSoi(data, (int) start)) {
-                    continue;
-                }
-                var semantic = image < semantics.size() ? semantics.get(image)[0] : null;
-                images.add(new Image((int) start, (int) size, (int) (attribute & 0xFFFFFF), semantic));
-            }
-            return;
+            var semantic = image < semantics.size() ? semantics.get(image)[0] : null;
+            images.add(new Image((int) start, (int) size, (int) (attribute & 0xFFFFFF), semantic));
         }
     }
 

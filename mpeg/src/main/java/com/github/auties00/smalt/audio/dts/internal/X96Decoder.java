@@ -393,7 +393,7 @@ final class X96Decoder {
      * the frame is decoded, as in dcadec and ffmpeg, whose 64-band synthesis adds the two.
      *
      * @param buffer the subband buffer of the core
-     * @param plane the plane
+     * @param plane the plane of subband samples
      * @param band the subband
      */
     private float[] samples(SubbandBuffer buffer, int plane, int band) {

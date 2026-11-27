@@ -658,7 +658,7 @@ public final class MxfDemuxer implements Demuxer {
      * after the pack and covers every packet of the header metadata, dark sets of a private dictionary (as Avid
      * writes) and fill included.
      *
-     * @param partition the partition
+     * @param partition the partition whose pack declares the header byte count
      * @return the file offset past the declared header metadata, or {@code -1} when the pack declares none
      */
     private static long metadataEnd(PartitionInfo partition) {

@@ -2,11 +2,11 @@
 
 Usage: python tools/testdata/ffmpeg-oracle/build.py --prefix DIR [--jobs N]
 
-Builds ffmpeg 7.1.2 with every external library the tests need (features.tsv next to this script lists the
+Builds ffmpeg 8.0.3 with every external library the tests need (features.tsv next to this script lists the
 components), each library a static build of a pinned source release, into one prefix whose bin directory holds
 ffmpeg and ffprobe. Runs on Linux (x64 and arm64), on macOS (arm64) and on Windows (x64) under MSYS2, where it is
 started by MSYS2's own Python in a UCRT64 shell (tools/testdata/oracles.py does that), so that the configure scripts
-run; no prebuilt ffmpeg 7.1.2 has all of the components.
+run; no prebuilt ffmpeg has all of the components.
 
 The script installs the build tools it needs: nasm, the autotools, pkg-config, cmake and the zlib and bzip2
 headers with the platform's package manager (apt, Homebrew or pacman), meson and ninja in a virtual environment of
@@ -40,9 +40,9 @@ import zipfile
 
 # name: (version, source URL, SHA-256)
 SOURCES = {
-    # 7.1.1 decodes some small H.264 pictures wrongly on arm64, even with -cpuflags 0; 7.1.2 does not.
-    'ffmpeg': ('7.1.2', 'https://ffmpeg.org/releases/ffmpeg-7.1.2.tar.xz',
-               '089bc60fb59d6aecc5d994ff530fd0dcb3ee39aa55867849a2bbc4e555f9c304'),
+    # 8.0 is the first release whose Matroska demuxer maps V_JPEG2000 (libavformat/matroska.c).
+    'ffmpeg': ('8.0.3', 'https://ffmpeg.org/releases/ffmpeg-8.0.3.tar.xz',
+               '6136812ea6d4e68bdba27e33c2a94382711cdf4f8602ffef056ff792bd6f9818'),
     'lame': ('3.100', 'https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz',
              'ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e'),
     'opencore-amr': ('0.1.6',

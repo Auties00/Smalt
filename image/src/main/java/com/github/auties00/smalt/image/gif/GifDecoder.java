@@ -69,8 +69,8 @@ public final class GifDecoder {
      * exact (1 for a datastream without any image) and {@link ImageInfo#animated()} is
      * {@code true} when there is more than one image. {@link ImageInfo#hasAlpha()} is {@code true}
      * when an image has a transparent index, the first image does not cover the canvas, an image is
-     * disposed to background, the last image is truncated, or there is no image. The size is the canvas size, reported without checking it against any
-     * limit.
+     * disposed to background, the last image is truncated, or there is no image. The size is the canvas
+     * size, reported without checking it against any limit.
      *
      * @param source the input, read from offset zero
      * @return the image summary

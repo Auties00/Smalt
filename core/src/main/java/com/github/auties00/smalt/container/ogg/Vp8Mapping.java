@@ -52,7 +52,7 @@ final class Vp8Mapping extends OggMapping {
     /**
      * Returns whether a packet is a header of the mapping.
      *
-     * @param packet the packet
+     * @param packet the Ogg packet's data
      * @return {@code true} for an {@code OVP80} packet
      */
     static boolean isVp8Header(byte[] packet) {

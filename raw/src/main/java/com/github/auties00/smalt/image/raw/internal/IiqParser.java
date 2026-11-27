@@ -129,7 +129,8 @@ final class IiqParser {
             //  two one bits and eight 14-bit values, as does any group with a large step; the code of the other
             //  groups is unknown, and it is lossy (fewer bits per photosite than the entropy of the IIQ L residuals
             //  of the same scene, the dark rows included), so without a reader to compare against (Adobe DNG
-            //  Converter writes nothing for these files) a reconstruction rule cannot be checked
+            //  Converter 18.0 writes nothing for these files) a reconstruction rule cannot be checked; the open
+            //  decoders of this coding are licensed under the LGPL or the CDDL, which this project does not port from
             file.unsupported = "the sensor data of Phase One IIQ compression " + compression + " is not supported";
             return;
         }
